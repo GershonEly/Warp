@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Adaptive icon foreground.
+
+    Canvas is 108x108dp; only the centre 72x72dp is guaranteed visible (the
+    outer 18dp on each side gets masked or used for parallax). The bolt below
+    sits inside x:41-67, y:26-82 so it stays well within that safe zone.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M59,26 L41,58 L53,58 L47,82 L67,50 L55,50 Z" />
+
+</vector>
