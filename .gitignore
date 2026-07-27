@@ -1,0 +1,68 @@
+# ─────────────────────────────────────────────────────────────
+#  SECRETS — never commit these. Warp ships with NO API keys.
+# ─────────────────────────────────────────────────────────────
+local.properties
+secrets.properties
+*.jks
+*.keystore
+keystore.properties
+google-services.json
+.env
+.env.*
+**/api_keys.xml
+**/apikeys.xml
+*.pem
+*.p12
+*.p8
+
+# ─────────────────────────────────────────────────────────────
+#  Toolchain — fetched from GitHub Releases, never committed
+#  (~350 MB; GitHub rejects files over 100 MB)
+# ─────────────────────────────────────────────────────────────
+app/src/main/assets/toolchain/
+app/src/main/assets/toolchain.tar.*
+toolchain/build/
+toolchain/staging/
+toolchain/dist/
+
+# ─────────────────────────────────────────────────────────────
+#  Gradle / Android build output
+# ─────────────────────────────────────────────────────────────
+.gradle/
+build/
+*/build/
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+release/
+
+# ─────────────────────────────────────────────────────────────
+#  IDE
+# ─────────────────────────────────────────────────────────────
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.kotlin/
+
+# ─────────────────────────────────────────────────────────────
+#  OS
+# ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─────────────────────────────────────────────────────────────
+#  Logs / temp
+# ─────────────────────────────────────────────────────────────
+*.log
+*.hprof
+tmp/
+temp/
