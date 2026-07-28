@@ -1,0 +1,190 @@
+package dev.ely.warp.ai
+
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import java.util.UUID
+import kotlin.random.Random
+
+/**
+ * 🎭 A fake AI that behaves like a real one.
+ *
+ * This is what makes "build the app now, add a key later" work. It implements
+ * the same [AiProvider] interface as a real model, streams word by word with
+ * believable pauses, and can fake tool calls and errors on request.
+ *
+ * Everything above this layer — chat UI, streaming, tool cards, error states —
+ * is built and tested against this. Swapping in a real provider changes one
+ * setting, not any of that code.
+ *
+ * Its replies are scripted and chosen by keyword. It is not pretending to be
+ * clever; it is pretending to be *present*, so the plumbing can be exercised.
+ */
+class MockProvider(
+    /** Fixed seed keeps demo runs reproducible; null for varied timing. */
+    seed: Long? = null,
+) : AiProvider {
+
+    override val id = "mock"
+    override val displayName = "Mock AI"
+    override val requiresKey = false
+
+    private val random = seed?.let { Random(it) } ?: Random.Default
+
+    override suspend fun listModels(): Result<List<AiModel>> {
+        delay(300)  // pretend to reach the network
+        return Result.success(
+            listOf(
+                AiModel("mock-fast", "Mock · fast", contextTokens = 200_000),
+                AiModel("mock-thorough", "Mock · thorough", contextTokens = 200_000),
+            )
+        )
+    }
+
+    override suspend fun testConnection(): Result<String> {
+        delay(500)
+        return Result.success("Connected to the mock AI · 2 models")
+    }
+
+    override fun stream(request: AiRequest): Flow<AiEvent> = flow {
+        val prompt = request.messages.lastOrNull { it.role == Role.USER }?.text.orEmpty()
+
+        // Deliberate escape hatches so error states can be tested on purpose,
+        // without unplugging the network or breaking a key.
+        forcedError(prompt)?.let {
+            delay(400)
+            emit(AiEvent.Failed(it))
+            return@flow
+        }
+
+        // Models take a moment before the first token. Without this the UI
+        // never shows its "thinking" state, so it never gets tested.
+        delay(if (request.effort == Effort.LOW) 350 else 900)
+
+        val script = scriptFor(prompt)
+
+        for (segment in script.segments) {
+            when (segment) {
+                is Segment.Text -> emitWords(segment.text)
+                is Segment.Tool -> {
+                    emit(
+                        AiEvent.ToolCallRequested(
+                            ToolCall(
+                                id = UUID.randomUUID().toString(),
+                                name = segment.name,
+                                argumentsJson = segment.argumentsJson,
+                            )
+                        )
+                    )
+                    delay(500)
+                }
+            }
+        }
+
+        emit(AiEvent.Completed())
+    }
+
+    /** Emit text a word at a time, with pauses that feel like typing. */
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<AiEvent>.emitWords(text: String) {
+        val words = text.split(" ")
+        for ((index, word) in words.withIndex()) {
+            val chunk = if (index == words.lastIndex) word else "$word "
+            emit(AiEvent.TextDelta(chunk))
+            // Longer pause after sentence ends reads more naturally than a
+            // constant tick.
+            val pause = when {
+                word.endsWith(".") || word.endsWith(":") -> random.nextInt(90, 180)
+                word.endsWith(",") -> random.nextInt(50, 100)
+                else -> random.nextInt(18, 55)
+            }
+            delay(pause.toLong())
+        }
+    }
+
+    private fun forcedError(prompt: String): AiError? {
+        val p = prompt.lowercase()
+        return when {
+            "pretend bad key" in p || "fake bad key" in p -> AiError.BadKey
+            "pretend offline" in p -> AiError.Offline
+            "pretend rate limit" in p -> AiError.RateLimited
+            "pretend error" in p -> AiError.Server("mock failure, on request")
+            else -> null
+        }
+    }
+
+    // ── the scripts ──────────────────────────────────────────────────────
+
+    private sealed interface Segment {
+        data class Text(val text: String) : Segment
+        data class Tool(val name: String, val argumentsJson: String) : Segment
+    }
+
+    private class Script(val segments: List<Segment>)
+
+    private fun scriptFor(prompt: String): Script {
+        val p = prompt.lowercase()
+
+        return when {
+            p.isBlank() -> Script(listOf(Segment.Text(GREETING)))
+
+            "hello" in p || "hi" in p || "היי" in p || "שלום" in p ->
+                Script(listOf(Segment.Text(GREETING)))
+
+            "build" in p || "compile" in p || "apk" in p ->
+                Script(listOf(Segment.Text(BUILD_ANSWER)))
+
+            // Anything that sounds like "make me an app" shows the tool flow,
+            // because that is the interaction the real product is built around.
+            "app" in p || "create" in p || "make" in p || "write" in p ->
+                Script(
+                    listOf(
+                        Segment.Text(CREATE_INTRO),
+                        Segment.Tool(
+                            "write_file",
+                            """{"path":"src/MainActivity.kt","summary":"a one-screen counter app"}""",
+                        ),
+                        Segment.Text(CREATE_OUTRO),
+                    )
+                )
+
+            "who are you" in p || "what are you" in p ->
+                Script(listOf(Segment.Text(IDENTITY)))
+
+            else -> Script(listOf(Segment.Text(FALLBACK)))
+        }
+    }
+
+    private companion object {
+        const val GREETING =
+            "Hello. I'm the mock AI standing in until a real key is added. " +
+                "I don't actually think — I replay scripted answers — but every " +
+                "part of the app around me is real: streaming, tool calls, and " +
+                "error handling all work exactly as they will with a live model."
+
+        const val IDENTITY =
+            "I'm a placeholder. Warp's AI layer is built against an interface, " +
+                "and I'm the implementation that needs no API key. Swap the " +
+                "provider in Settings and the same chat talks to a real model."
+
+        const val BUILD_ANSWER =
+            "Warp compiles on the phone itself. The pipeline is aapt2 for " +
+                "resources, javac for the generated R class, kotlinc for your " +
+                "Kotlin, d8 to make dex, then zipalign and signing. On a Redmi " +
+                "Note 13 Pro+ a small app takes about 18 seconds once the " +
+                "Kotlin runtime is cached."
+
+        const val CREATE_INTRO =
+            "Sure. I'll write a small counter app — one screen, a number, and " +
+                "a button that increases it. Creating the file now."
+
+        const val CREATE_OUTRO =
+            "Done. That's the file written. Tap Build to compile it, and Warp " +
+                "will produce an installable APK without leaving the phone."
+
+        const val FALLBACK =
+            "I'm the mock AI, so my answers are scripted rather than thought " +
+                "through. Try asking me to make an app, or about how building " +
+                "works. You can also type \"pretend bad key\" or \"pretend " +
+                "offline\" to see how Warp handles those failures."
+    }
+}

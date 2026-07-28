@@ -6,8 +6,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -38,6 +41,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.ely.warp.diag.DeviceProbe
 import dev.ely.warp.ui.BuildScreen
+import dev.ely.warp.ui.ChatScreen
+import dev.ely.warp.ui.Ltr
 import dev.ely.warp.ui.theme.WarpMono
 import dev.ely.warp.ui.theme.WarpSuccess
 import dev.ely.warp.ui.theme.WarpTheme
@@ -62,29 +67,53 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** Two tabs for now: the device checks, and the build screen. */
+/**
+ * Chat, Build, Device.
+ *
+ * Chat is first because it is the app's front door — the build tools exist to
+ * serve it, not the other way round.
+ */
 @Composable
 private fun WarpApp() {
     var tab by remember { mutableIntStateOf(0) }
+    val titles = listOf("Chat", "Build", "Device")
 
-    Scaffold { inner ->
-        Column(modifier = Modifier.padding(inner)) {
-            TabRow(selectedTabIndex = tab) {
-                Tab(
-                    selected = tab == 0,
-                    onClick = { tab = 0 },
-                    text = { Text("Device") },
-                )
-                Tab(
-                    selected = tab == 1,
-                    onClick = { tab = 1 },
-                    text = { Text("Build") },
-                )
-            }
+    // The whole UI is forced left-to-right. Every label in Warp is English, and
+    // on a Hebrew phone Android mirrors the layout: tabs reverse, chat bubbles
+    // swap sides, and English placeholders render with their punctuation at the
+    // wrong end. Real right-to-left support means translating the app, not
+    // flipping English text — that is separate work.
+    Ltr {
+        // safeDrawing covers the status bar, the navigation bar, the display
+        // cutout AND the keyboard, so the Scaffold is the single place insets
+        // are handled. The earlier version combined Scaffold's system-bar
+        // padding with a separate imePadding(), which double-counted the bottom
+        // inset — the keyboard inset already includes the navigation bar.
+        Scaffold(contentWindowInsets = WindowInsets.safeDrawing) { inner ->
+            Column(
+                modifier = Modifier
+                    .padding(inner)
+                    .fillMaxSize(),
+            ) {
+                TabRow(selectedTabIndex = tab) {
+                    titles.forEachIndexed { index, title ->
+                        Tab(
+                            selected = tab == index,
+                            onClick = { tab = index },
+                            text = { Text(title) },
+                        )
+                    }
+                }
 
-            when (tab) {
-                0 -> PreflightScreen()
-                else -> BuildScreen()
+                // weight(1f) rather than fillMaxSize: the screen must take the
+                // space *left over* after the tabs, not the entire window.
+                Box(modifier = Modifier.weight(1f)) {
+                    when (tab) {
+                        0 -> ChatScreen()
+                        1 -> BuildScreen()
+                        else -> PreflightScreen()
+                    }
+                }
             }
         }
     }

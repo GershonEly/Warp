@@ -23,7 +23,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -33,9 +32,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import dev.ely.warp.build.BuildEngine
 import dev.ely.warp.build.ApkSigner
@@ -395,21 +392,6 @@ private fun StageTimes(stages: List<BuildEngine.StageResult>) = Ltr {
 @Composable
 private fun Status(text: String, tint: androidx.compose.ui.graphics.Color) {
     Text(text, style = MaterialTheme.typography.titleSmall, color = tint, fontWeight = FontWeight.Medium)
-}
-
-/**
- * Forces left-to-right layout for its content.
- *
- * The rest of the UI should mirror properly on a right-to-left phone, but
- * compiler output, file paths and timings must not: code always reads
- * left-to-right, and mirroring it moves punctuation to the wrong end and makes
- * paths unreadable.
- */
-@Composable
-private fun Ltr(content: @Composable () -> Unit) {
-    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-        content()
-    }
 }
 
 /**
