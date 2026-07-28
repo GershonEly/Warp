@@ -64,6 +64,16 @@
         "version": "1.3.2",
         "sha256": "75e7d0af17fcc3b40004309fdc00a1ddb9ae08346dce5e269902c34ac3966ac9",
         "needed_by": "lib/libjli.so (as libz.so.1)"
+      },
+      {
+        "_why": "The NDK C++ runtime. Android does NOT provide it — apps ship it.",
+        "_why2": "Missing this made the JVM fail on the device with:",
+        "_why3": "  dlopen failed: library 'libc++_shared.so' not found",
+        "name": "libc++",
+        "url": "https://packages.termux.dev/apt/termux-main/pool/main/libc/libc%2B%2B/libc%2B%2B_29_aarch64.deb",
+        "version": "29",
+        "sha256": "bb9f12113c137aa0e8513bb51cc49fe77a5ce3ca39ab9e92c57d228ecdf00222",
+        "needed_by": "lib/libandroid-spawn.so"
       }
     ]
   },

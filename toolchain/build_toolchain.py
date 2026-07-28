@@ -200,11 +200,18 @@ def elf_info(path: Path):
 
 # Libraries Android itself always provides. Anything required but not in this
 # set has to be shipped inside the bundle, or the JVM will fail to start.
+#
+# libc++_shared.so is deliberately NOT here. It is the NDK C++ runtime, which
+# every app is expected to ship itself — it is not part of the platform. It was
+# wrongly listed as a system library at first, so this check passed while the
+# JVM still failed on the device with:
+#     dlopen failed: library "libc++_shared.so" not found
+# Only put a name here if Android genuinely guarantees it.
 ANDROID_SYSTEM_LIBS = {
     "libc.so", "libm.so", "libdl.so", "liblog.so", "libz.so", "libstdc++.so",
     "libandroid.so", "libjnigraphics.so", "libEGL.so", "libGLESv2.so",
     "libGLESv3.so", "libGLESv1_CM.so", "libOpenSLES.so", "libvulkan.so",
-    "libmediandk.so", "libnativewindow.so", "libaaudio.so", "libc++_shared.so",
+    "libmediandk.so", "libnativewindow.so", "libaaudio.so",
 }
 
 
