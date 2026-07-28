@@ -32,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,10 +40,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import dev.ely.warp.ai.ChatEngine
+import dev.ely.warp.ai.ProviderRegistry
 import dev.ely.warp.diag.DeviceProbe
 import dev.ely.warp.ui.BuildScreen
 import dev.ely.warp.ui.ChatScreen
 import dev.ely.warp.ui.Ltr
+import dev.ely.warp.ui.SettingsScreen
 import dev.ely.warp.ui.theme.WarpMono
 import dev.ely.warp.ui.theme.WarpSuccess
 import dev.ely.warp.ui.theme.WarpTheme
@@ -76,7 +80,23 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun WarpApp() {
     var tab by remember { mutableIntStateOf(0) }
-    val titles = listOf("Chat", "Build", "Device")
+    val titles = listOf("Chat", "Build", "Device", "Settings")
+
+    // The engine lives here, not inside ChatScreen: switching tabs disposes
+    // the screen, and a conversation should survive a trip to Settings.
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val registry = remember { ProviderRegistry(context) }
+    val engine = remember { ChatEngine(scope, registry.selected) }
+
+    // Pick up a provider, model or effort change made in Settings.
+    LaunchedEffect(tab) {
+        if (tab == 0) {
+            engine.provider = registry.selected
+            engine.model = registry.modelFor(registry.selected)
+            engine.effort = registry.effort
+        }
+    }
 
     // The whole UI is forced left-to-right. Every label in Warp is English, and
     // on a Hebrew phone Android mirrors the layout: tabs reverse, chat bubbles
@@ -109,9 +129,10 @@ private fun WarpApp() {
                 // space *left over* after the tabs, not the entire window.
                 Box(modifier = Modifier.weight(1f)) {
                     when (tab) {
-                        0 -> ChatScreen()
+                        0 -> ChatScreen(engine)
                         1 -> BuildScreen()
-                        else -> PreflightScreen()
+                        2 -> PreflightScreen()
+                        else -> SettingsScreen()
                     }
                 }
             }

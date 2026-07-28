@@ -26,7 +26,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -50,10 +49,7 @@ import dev.ely.warp.ui.theme.WarpWarning
  * the harness: this screen never learns which AI is behind it.
  */
 @Composable
-fun ChatScreen(modifier: Modifier = Modifier) {
-    val scope = rememberCoroutineScope()
-    val engine = remember { ChatEngine(scope, MockProvider()) }
-
+fun ChatScreen(engine: ChatEngine, modifier: Modifier = Modifier) {
     val messages by engine.messages.collectAsState()
     val busy by engine.busy.collectAsState()
     var input by remember { mutableStateOf("") }
@@ -69,7 +65,9 @@ fun ChatScreen(modifier: Modifier = Modifier) {
     // pushed the chat up over the status bar whenever the keyboard opened.
     Column(modifier = modifier.fillMaxSize()) {
 
-        DemoBanner(providerName = engine.provider.displayName)
+        if (!engine.provider.requiresKey) {
+            DemoBanner(providerName = engine.provider.displayName)
+        }
 
         if (messages.isEmpty()) {
             EmptyState(modifier = Modifier.weight(1f), onPick = { input = it })
