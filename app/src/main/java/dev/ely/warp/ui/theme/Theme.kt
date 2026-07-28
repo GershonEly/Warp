@@ -8,6 +8,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
@@ -24,17 +25,20 @@ private val WarpLightColors = lightColorScheme(
     surfaceVariant = LightSurfaceContainer,
     onSurfaceVariant = LightOnSurfaceVariant,
     surfaceContainer = LightSurfaceContainer,
+    surfaceContainerHigh = LightSurfaceHigh,
     outline = LightOutline,
-    outlineVariant = LightOutlineVariant,
+    outlineVariant = LightHairline,
     error = WarpError,
     onError = Color.White,
+    errorContainer = Color(0xFFFDE7E7),
+    onErrorContainer = Color(0xFF6E1A1C),
 )
 
 private val WarpDarkColors = darkColorScheme(
     primary = WarpPrimary,
     onPrimary = Color.White,
     primaryContainer = DarkPrimaryContainer,
-    onPrimaryContainer = DarkOnSurface,
+    onPrimaryContainer = Color(0xFFCFE8FA),
     background = DarkBackground,
     onBackground = DarkOnSurface,
     surface = DarkSurface,
@@ -42,15 +46,23 @@ private val WarpDarkColors = darkColorScheme(
     surfaceVariant = DarkSurfaceContainer,
     onSurfaceVariant = DarkOnSurfaceVariant,
     surfaceContainer = DarkSurfaceContainer,
+    surfaceContainerHigh = DarkSurfaceHigh,
     outline = DarkOutline,
-    outlineVariant = DarkOutlineVariant,
+    outlineVariant = DarkHairline,
     error = WarpError,
     onError = Color.White,
+    errorContainer = Color(0xFF3A1416),
+    onErrorContainer = Color(0xFFFFC9CB),
 )
 
+/** The hairline colour for the current theme — depth comes from this, not shadow. */
+val LocalHairline = compositionLocalOf { DarkHairline }
+
 /**
- * Note: no dynamic colour. Warp deliberately keeps the Antigravity palette on
- * every device so it looks the same everywhere, like the desktop IDE does.
+ * Warp's theme.
+ *
+ * No dynamic colour. Warp keeps its own palette on every device, the way a
+ * desktop IDE does — the app should look like itself, not like the wallpaper.
  */
 @Composable
 fun WarpTheme(
@@ -68,14 +80,18 @@ fun WarpTheme(
         }
     }
 
-    // Read once here so every animation in the app can honour the system's
-    // reduce-animations setting without each one having to remember to check.
+    // Read once here so every animation can honour the system's
+    // reduce-animations setting without each one having to check.
     val animationsEnabled = rememberAnimationsEnabled()
 
-    CompositionLocalProvider(LocalAnimationsEnabled provides animationsEnabled) {
+    CompositionLocalProvider(
+        LocalAnimationsEnabled provides animationsEnabled,
+        LocalHairline provides if (darkTheme) DarkHairline else LightHairline,
+    ) {
         MaterialTheme(
             colorScheme = colors,
             typography = WarpTypography,
+            shapes = WarpShapes,
             content = content,
         )
     }

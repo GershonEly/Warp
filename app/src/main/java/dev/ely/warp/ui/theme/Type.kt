@@ -1,6 +1,6 @@
 // Variable-font settings are still an experimental API. Opting in knowingly:
-// one file per family instead of one per weight is worth it, and the fallback
-// if it ever changes is simply declaring the weights separately.
+// one file per family instead of one per weight, and the fallback if it ever
+// changes is simply declaring the weights separately.
 @file:OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
 
 package dev.ely.warp.ui.theme
@@ -11,107 +11,117 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import dev.ely.warp.R
 
 /**
- * Warp's type, as specified in the plan.
+ * Warp's type.
  *
- * Both faces are variable fonts, so every weight comes from one file rather
- * than one file per weight — the whole family costs a single download.
+ * Geist, not Roboto. Roboto is the Android system font, so an app set in it
+ * inherits the look of stock Android and cannot read as its own product — which
+ * was the single largest reason the first design pass still looked dated.
  *
- * Roboto Flex stands in for Google Sans, which is licensed for Google's own
- * apps only. It is near-identical and keeps the repository legally clean.
+ * Six styles, not twenty. Hierarchy comes from size and colour, never from
+ * bolding inside a paragraph.
+ *
+ * The two details doing most of the work here are **negative tracking on large
+ * text** and a **generous body line height**. Default tracking at large sizes is
+ * exactly what makes headings look untouched, and cramped body text is what
+ * makes an interface feel like a form.
  */
 
 private fun weight(w: Int) = FontVariation.Settings(FontVariation.weight(w))
 
-/** UI face. */
-val RobotoFlex = FontFamily(
-    Font(R.font.roboto_flex, FontWeight.Normal, variationSettings = weight(400)),
-    Font(R.font.roboto_flex, FontWeight.Medium, variationSettings = weight(500)),
-    Font(R.font.roboto_flex, FontWeight.SemiBold, variationSettings = weight(600)),
-    Font(R.font.roboto_flex, FontWeight.Bold, variationSettings = weight(700)),
+/** UI face — drawn for developer products, openly licensed. */
+val Geist = FontFamily(
+    Font(R.font.geist, FontWeight.Normal, variationSettings = weight(400)),
+    Font(R.font.geist, FontWeight.Medium, variationSettings = weight(500)),
+    Font(R.font.geist, FontWeight.SemiBold, variationSettings = weight(600)),
 )
 
-/** Code face — the real one from the desktop IDE, and openly licensed. */
-val GoogleSansCode = FontFamily(
-    Font(R.font.google_sans_code, FontWeight.Normal, variationSettings = weight(400)),
-    Font(R.font.google_sans_code, FontWeight.Medium, variationSettings = weight(500)),
+/** Code face — same family, so logs and prose belong to one voice. */
+val GeistMono = FontFamily(
+    Font(R.font.geist_mono, FontWeight.Normal, variationSettings = weight(400)),
+    Font(R.font.geist_mono, FontWeight.Medium, variationSettings = weight(500)),
 )
 
-val WarpTypography = Typography(
-    displaySmall = TextStyle(
-        fontFamily = RobotoFlex,
-        fontWeight = FontWeight.Normal,
-        fontSize = 34.sp,
-        lineHeight = 42.sp,
-    ),
-    headlineMedium = TextStyle(
-        fontFamily = RobotoFlex,
-        fontWeight = FontWeight.Normal,
-        fontSize = 26.sp,
-        lineHeight = 32.sp,
-    ),
-    headlineSmall = TextStyle(
-        fontFamily = RobotoFlex,
-        fontWeight = FontWeight.Normal,
-        fontSize = 22.sp,
-        lineHeight = 28.sp,
-    ),
-    titleMedium = TextStyle(
-        fontFamily = RobotoFlex,
-        fontWeight = FontWeight.Medium,
-        fontSize = 16.sp,
-        lineHeight = 22.sp,
-    ),
-    titleSmall = TextStyle(
-        fontFamily = RobotoFlex,
-        fontWeight = FontWeight.Medium,
-        fontSize = 14.sp,
-        lineHeight = 20.sp,
-    ),
-    bodyLarge = TextStyle(
-        fontFamily = RobotoFlex,
-        fontWeight = FontWeight.Normal,
-        fontSize = 15.sp,
-        lineHeight = 23.sp,
-    ),
-    bodyMedium = TextStyle(
-        fontFamily = RobotoFlex,
-        fontWeight = FontWeight.Normal,
-        fontSize = 14.sp,
-        lineHeight = 21.sp,
-    ),
-    bodySmall = TextStyle(
-        fontFamily = RobotoFlex,
-        fontWeight = FontWeight.Normal,
-        fontSize = 12.sp,
-        lineHeight = 18.sp,
-    ),
-    labelLarge = TextStyle(
-        fontFamily = RobotoFlex,
-        fontWeight = FontWeight.Medium,
-        fontSize = 14.sp,
-        lineHeight = 20.sp,
-    ),
-    labelMedium = TextStyle(
-        fontFamily = RobotoFlex,
-        fontWeight = FontWeight.Medium,
-        fontSize = 12.sp,
-        lineHeight = 16.sp,
-    ),
-    labelSmall = TextStyle(
-        fontFamily = RobotoFlex,
-        fontWeight = FontWeight.Medium,
-        fontSize = 11.sp,
-        lineHeight = 16.sp,
-    ),
+// ── the six ──────────────────────────────────────────────────────────────
+
+private val Display = TextStyle(
+    fontFamily = Geist,
+    fontWeight = FontWeight.Medium,
+    fontSize = 32.sp,
+    lineHeight = 37.sp,
+    letterSpacing = (-0.02).em,
 )
 
-/** Logs, file paths, JSON, and anything the build engine prints. */
+private val Headline = TextStyle(
+    fontFamily = Geist,
+    fontWeight = FontWeight.Medium,
+    fontSize = 24.sp,
+    lineHeight = 30.sp,
+    letterSpacing = (-0.015).em,
+)
+
+private val Title = TextStyle(
+    fontFamily = Geist,
+    fontWeight = FontWeight.Medium,
+    fontSize = 17.sp,
+    lineHeight = 22.sp,
+    letterSpacing = (-0.01).em,
+)
+
+private val Body = TextStyle(
+    fontFamily = Geist,
+    fontWeight = FontWeight.Normal,
+    fontSize = 16.sp,
+    // 1.55 — the difference between text that reads and text that is merely
+    // legible. Most interfaces sit near 1.2 and feel tight without anyone
+    // being able to say why.
+    lineHeight = 25.sp,
+)
+
+private val Label = TextStyle(
+    fontFamily = Geist,
+    fontWeight = FontWeight.Medium,
+    fontSize = 13.sp,
+    lineHeight = 16.sp,
+    letterSpacing = 0.01.em,
+)
+
+/** Logs, file paths, JSON — anything the machine wrote. */
 val WarpMono = TextStyle(
-    fontFamily = GoogleSansCode,
-    fontSize = 12.sp,
-    lineHeight = 18.sp,
+    fontFamily = GeistMono,
+    fontWeight = FontWeight.Normal,
+    fontSize = 13.sp,
+    lineHeight = 20.sp,
+)
+
+/**
+ * Material's slots, filled from the six above.
+ *
+ * Several slots share a style on purpose: the scale is the design, and the slot
+ * names are only how Material components ask for it.
+ */
+val WarpTypography = Typography(
+    displayLarge = Display,
+    displayMedium = Display,
+    displaySmall = Display,
+
+    headlineLarge = Headline,
+    headlineMedium = Headline,
+    headlineSmall = Headline.copy(fontSize = 21.sp, lineHeight = 27.sp),
+
+    titleLarge = Title.copy(fontSize = 20.sp, lineHeight = 26.sp),
+    titleMedium = Title,
+    titleSmall = Title.copy(fontSize = 15.sp, lineHeight = 20.sp),
+
+    bodyLarge = Body,
+    bodyMedium = Body.copy(fontSize = 15.sp, lineHeight = 23.sp),
+    bodySmall = Body.copy(fontSize = 13.sp, lineHeight = 19.sp),
+
+    labelLarge = Label.copy(fontSize = 14.sp, lineHeight = 18.sp),
+    labelMedium = Label,
+    labelSmall = Label.copy(fontSize = 12.sp, lineHeight = 15.sp),
 )

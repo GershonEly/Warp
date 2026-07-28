@@ -1,7 +1,10 @@
 package dev.ely.warp.ui
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -39,9 +43,14 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import dev.ely.warp.ui.theme.HairlineWidth
+import dev.ely.warp.ui.theme.WarpSpace
 import dev.ely.warp.ai.AiError
 import dev.ely.warp.ai.ChatEngine
 import dev.ely.warp.ai.ChatMessage
@@ -87,8 +96,11 @@ fun ChatScreen(engine: ChatEngine, modifier: Modifier = Modifier) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                contentPadding = PaddingValues(
+                    horizontal = WarpSpace.screen,
+                    vertical = WarpSpace.large,
+                ),
+                verticalArrangement = Arrangement.spacedBy(WarpSpace.message),
             ) {
                 items(messages, key = { it.id }) { message ->
                     // animateItem moves neighbours smoothly when the list grows;
@@ -159,30 +171,61 @@ private fun DemoBanner(providerName: String) {
 @Composable
 private fun EmptyState(modifier: Modifier = Modifier, onPick: (String) -> Unit) {
     Column(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 24.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = WarpSpace.screen),
         verticalArrangement = Arrangement.Center,
     ) {
-        WarpMark(size = 40.dp)
-        Spacer(Modifier.size(20.dp))
+        // One of only two places in the app allowed to glow. Restraint is what
+        // makes this moment land; an app that glows everywhere glows nowhere.
+        Box(contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .size(160.dp)
+                    .background(
+                        Brush.radialGradient(
+                            listOf(
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                                Color.Transparent,
+                            )
+                        )
+                    )
+            )
+            WarpMark(size = 52.dp)
+        }
+
+        Spacer(Modifier.size(WarpSpace.section))
+
         Text(
             "What would you like to build today?",
-            style = MaterialTheme.typography.headlineSmall,
+            style = MaterialTheme.typography.headlineMedium,
             color = MaterialTheme.colorScheme.onSurface,
         )
 
-        Spacer(Modifier.size(24.dp))
+        Spacer(Modifier.size(WarpSpace.section))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SUGGESTIONS.forEach { suggestion ->
-                SuggestionChip(
-                    onClick = { onPick(suggestion) },
-                    label = { Text(suggestion, style = MaterialTheme.typography.labelLarge) },
-                    shape = CircleShape,
-                )
-            }
+        Row(horizontalArrangement = Arrangement.spacedBy(WarpSpace.small)) {
+            SUGGESTIONS.forEach { suggestion -> SuggestionPill(suggestion) { onPick(suggestion) } }
         }
     }
 }
+
+/** Hairline, no fill — a suggestion should invite, not compete with the answer. */
+@Composable
+private fun SuggestionPill(text: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = CircleShape,
+        color = Color.Transparent,
+        border = BorderStroke(HairlineWidth, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = WarpSpace.large, vertical = 10.dp),
+        )
+    }
+}
+
 
 /**
  * The mark that stands in front of everything the AI says.
@@ -350,30 +393,65 @@ private fun Composer(
     onSend: () -> Unit,
     onStop: () -> Unit,
 ) {
+    var focused by remember { mutableStateOf(false) }
+
+    // The border eases to the accent on focus rather than switching, so the
+    // field wakes up instead of blinking.
+    val border by animateColorAsState(
+        targetValue = if (focused) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.outlineVariant,
+        animationSpec = warpTween(WarpMotion.NORMAL),
+        label = "composerBorder",
+    )
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = WarpSpace.large, vertical = WarpSpace.medium),
         verticalAlignment = Alignment.Bottom,
     ) {
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
+        Surface(
             modifier = Modifier.weight(1f),
-            placeholder = {
-                Text("Message Warp", style = MaterialTheme.typography.bodyLarge)
-            },
-            maxLines = 5,
             shape = CircleShape,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                focusedBorderColor = Color.Transparent,
-                unfocusedBorderColor = Color.Transparent,
-            ),
-        )
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            border = BorderStroke(HairlineWidth, border),
+        ) {
+            Box(
+                modifier = Modifier
+                    .heightIn(min = 52.dp)
+                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                // BasicTextField rather than OutlinedTextField: the stock field
+                // brings a label, a container and an outline that cannot be
+                // fully removed, and its shape is one of the things that reads
+                // as a generic Android app.
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { focused = it.isFocused },
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        color = MaterialTheme.colorScheme.onSurface,
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    maxLines = 6,
+                    decorationBox = { field ->
+                        if (value.isEmpty()) {
+                            Text(
+                                "Message Warp",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        field()
+                    },
+                )
+            }
+        }
 
-        Spacer(Modifier.size(8.dp))
+        Spacer(Modifier.size(WarpSpace.small))
 
         SendButton(busy = busy, enabled = busy || value.isNotBlank()) {
             if (busy) onStop() else onSend()
