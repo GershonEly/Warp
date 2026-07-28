@@ -21,6 +21,7 @@ google-services.json
 # ─────────────────────────────────────────────────────────────
 app/src/main/assets/toolchain/
 app/src/main/assets/toolchain.tar.*
+app/src/main/assets/toolchain.zip
 toolchain/build/
 toolchain/staging/
 toolchain/dist/

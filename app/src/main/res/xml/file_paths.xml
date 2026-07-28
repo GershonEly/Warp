@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Lets Warp hand a built APK to Android's package installer.
+
+  Since API 24 an app may not pass a raw file:// URI to another app, so the
+  APK is shared through a FileProvider instead. Only the build work directory
+  is exposed — not the whole of Warp's storage.
+-->
+<paths>
+    <files-path name="builds" path="work/" />
+</paths>

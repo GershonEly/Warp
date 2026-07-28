@@ -20,10 +20,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -34,6 +37,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.ely.warp.diag.DeviceProbe
+import dev.ely.warp.ui.BuildScreen
 import dev.ely.warp.ui.theme.WarpMono
 import dev.ely.warp.ui.theme.WarpSuccess
 import dev.ely.warp.ui.theme.WarpTheme
@@ -51,8 +55,36 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    PreflightScreen()
+                    WarpApp()
                 }
+            }
+        }
+    }
+}
+
+/** Two tabs for now: the device checks, and the build screen. */
+@Composable
+private fun WarpApp() {
+    var tab by remember { mutableIntStateOf(0) }
+
+    Scaffold { inner ->
+        Column(modifier = Modifier.padding(inner)) {
+            TabRow(selectedTabIndex = tab) {
+                Tab(
+                    selected = tab == 0,
+                    onClick = { tab = 0 },
+                    text = { Text("Device") },
+                )
+                Tab(
+                    selected = tab == 1,
+                    onClick = { tab = 1 },
+                    text = { Text("Build") },
+                )
+            }
+
+            when (tab) {
+                0 -> PreflightScreen()
+                else -> BuildScreen()
             }
         }
     }
@@ -67,44 +99,41 @@ private fun PreflightScreen() {
         checks = withContext(Dispatchers.IO) { DeviceProbe.runAll(context) }
     }
 
-    Scaffold { inner ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(inner)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 24.dp),
-        ) {
-            Text(
-                text = "⚡ Warp",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.size(4.dp))
-            Text(
-                text = "Step 0 · pre-flight checks",
-                style = MaterialTheme.typography.bodyMedium,
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 24.dp),
+    ) {
+        Text(
+            text = "⚡ Warp",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.size(4.dp))
+        Text(
+            text = "Step 0 · pre-flight checks",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Spacer(Modifier.size(24.dp))
+
+        when (val result = checks) {
+            null -> Text(
+                text = "Running checks…",
+                style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
-            Spacer(Modifier.size(24.dp))
-
-            when (val result = checks) {
-                null -> Text(
-                    text = "Running checks…",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-
-                else -> {
-                    result.forEach { check ->
-                        CheckRow(check)
-                        Spacer(Modifier.size(12.dp))
-                    }
-
+            else -> {
+                result.forEach { check ->
+                    CheckRow(check)
                     Spacer(Modifier.size(12.dp))
-                    Verdict(result)
                 }
+
+                Spacer(Modifier.size(12.dp))
+                Verdict(result)
             }
         }
     }

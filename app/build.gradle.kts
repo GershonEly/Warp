@@ -53,6 +53,13 @@ android {
         compose = true
     }
 
+    androidResources {
+        // The toolchain asset is already a compressed zip. Storing it without
+        // a second round of compression keeps the build fast and lets us
+        // stream it straight out of the APK at install time.
+        noCompress += "zip"
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -79,6 +86,77 @@ android {
         jvmToolchain(17)
     }
 }
+
+// ── Toolchain asset ─────────────────────────────────────────────────────────
+//
+// The 172 MB toolchain is not in the repo. It is built on a PC with
+//     py toolchain/build_toolchain.py --sdk <sdk>
+// and this task copies the result into assets so it ships inside the APK.
+//
+// If the bundle is missing the build still succeeds — the app just cannot
+// install a toolchain until one is supplied. That keeps UI work fast: pass
+//     -Pwarp.includeToolchain=false
+// to skip the 172 MB copy and get a small, quick APK.
+val includeToolchain = (project.findProperty("warp.includeToolchain") as String?)
+    ?.toBooleanStrictOrNull() ?: true
+
+val toolchainAsset = layout.projectDirectory.file("src/main/assets/toolchain.zip").asFile
+val toolchainBuildDir = rootProject.layout.projectDirectory.dir("toolchain/build").asFile
+
+val syncToolchainAsset = tasks.register("syncToolchainAsset") {
+    group = "warp"
+    description = "Copies the built toolchain bundle into assets so it ships in the APK"
+
+    // Deliberately not declaring inputs/outputs: the bundle is an optional,
+    // externally produced artifact, and a stale-but-present asset is fine.
+    outputs.upToDateWhen { false }
+
+    // Captured as plain values here, at configuration time. Referring to the
+    // script's own properties from inside doLast would capture the script
+    // object itself, which the configuration cache cannot serialize.
+    val include = includeToolchain
+    val assetFile = toolchainAsset
+    val bundleDir = toolchainBuildDir
+
+    doLast {
+        if (!include) {
+            if (assetFile.exists()) {
+                assetFile.delete()
+                println("warp: removed toolchain asset (includeToolchain=false)")
+            }
+            return@doLast
+        }
+
+        val newest = bundleDir
+            .listFiles { f -> f.isFile && f.name.startsWith("warp-toolchain-arm64-") && f.extension == "zip" }
+            ?.maxByOrNull { it.lastModified() }
+
+        if (newest == null) {
+            println(
+                "warp: WARNING no toolchain bundle found in ${bundleDir.path}.\n" +
+                    "      The APK will build WITHOUT a toolchain.\n" +
+                    "      Build one with: py toolchain/build_toolchain.py --sdk <sdk>"
+            )
+            return@doLast
+        }
+
+        // Skip the copy when the asset already matches, so incremental builds
+        // do not move 172 MB every time.
+        if (assetFile.exists() &&
+            assetFile.length() == newest.length() &&
+            assetFile.lastModified() >= newest.lastModified()
+        ) {
+            println("warp: toolchain asset already current (${newest.length() / 1048576} MB)")
+            return@doLast
+        }
+
+        assetFile.parentFile.mkdirs()
+        newest.copyTo(assetFile, overwrite = true)
+        println("warp: bundled ${newest.name} (${newest.length() / 1048576} MB) into assets")
+    }
+}
+
+tasks.named("preBuild") { dependsOn(syncToolchainAsset) }
 
 dependencies {
     implementation(libs.androidx.core.ktx)

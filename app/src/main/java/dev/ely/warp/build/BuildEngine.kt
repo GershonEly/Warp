@@ -52,6 +52,7 @@ class BuildEngine(
         LINK_RESOURCES("Linking resources"),
         COMPILE_R("Compiling R class"),
         COMPILE_KOTLIN("Compiling Kotlin"),
+        DEX_STDLIB("Preparing Kotlin runtime"),
         DEX("Converting to DEX"),
         PACKAGE("Packaging APK"),
         ALIGN("Aligning APK"),
@@ -243,7 +244,42 @@ class BuildEngine(
             if (!r.ok) return@withContext fail(Stage.COMPILE_KOTLIN, "Kotlin compilation failed.", r.output)
         }
 
-        // ── 5. dex ───────────────────────────────────────────────────────
+        // ── 5a. pre-dex the Kotlin runtime, once ─────────────────────────
+        // The Kotlin standard library is the same for every build, but dexing
+        // it dominates build time (about 20 s of a 35 s build). Dex it once,
+        // cache the result, and merge it in afterwards.
+        val stdlibDexDir = File(workRoot, "cache/stdlib-dex")
+        val cachedStdlibDex = stdlibDexDir.listFiles { f -> f.extension == "dex" }?.sorted().orEmpty()
+        if (cachedStdlibDex.isEmpty()) {
+            stdlibDexDir.mkdirs()
+            val jars = stdlibJars()
+            if (jars.isEmpty()) {
+                return@withContext fail(Stage.DEX_STDLIB, "The Kotlin runtime jars are missing from the toolchain.")
+            }
+            val r = stage(
+                Stage.DEX_STDLIB, timeoutMinutes = 15,
+                command = toolchain.javaCommand(
+                    heapMb = 1024,
+                    classpath = listOf(toolchain.r8Jar),
+                    mainClass = D8_MAIN,
+                    args = buildList {
+                        add("--lib"); add(toolchain.androidJar.absolutePath)
+                        add("--min-api"); add(request.minSdk.toString())
+                        add("--output"); add(stdlibDexDir.absolutePath)
+                        jars.forEach { add(it.absolutePath) }
+                    },
+                ),
+            )
+            if (!r.ok) {
+                // Leave no half-built cache behind, or the next build would
+                // silently use an incomplete runtime.
+                stdlibDexDir.deleteRecursively()
+                return@withContext fail(Stage.DEX_STDLIB, "Could not pre-dex the Kotlin runtime.", r.output)
+            }
+            Log.i(TAG, "cached the pre-dexed Kotlin runtime")
+        }
+
+        // ── 5b. dex the app, merging the cached runtime ───────────────────
         run {
             val classFiles = classesDir.walkTopDown()
                 .filter { it.isFile && it.extension == "class" }
@@ -252,6 +288,9 @@ class BuildEngine(
             if (classFiles.isEmpty()) {
                 return@withContext fail(Stage.DEX, "The Kotlin compiler produced no .class files.")
             }
+            // d8 accepts .dex files as input and merges them, so the cached
+            // runtime costs a merge instead of a full re-dex.
+            val runtimeDex = stdlibDexDir.listFiles { f -> f.extension == "dex" }?.sorted().orEmpty()
             val r = stage(
                 Stage.DEX, timeoutMinutes = 15,
                 command = toolchain.javaCommand(
@@ -262,8 +301,7 @@ class BuildEngine(
                         add("--lib"); add(toolchain.androidJar.absolutePath)
                         add("--min-api"); add(request.minSdk.toString())
                         add("--output"); add(dexDir.absolutePath)
-                        // The Kotlin runtime has to ship inside the app.
-                        stdlibJars().forEach { add(it.absolutePath) }
+                        runtimeDex.forEach { add(it.absolutePath) }
                         addAll(classFiles)
                     },
                 ),
