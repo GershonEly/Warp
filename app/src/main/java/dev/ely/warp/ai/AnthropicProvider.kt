@@ -38,6 +38,10 @@ class AnthropicProvider(
     override val displayName = "Anthropic (Claude)"
     override val requiresKey = true
 
+    // Claude takes an explicit effort level, so each model appears once per
+    // level in the picker.
+    override val supportsEffort = true
+
     private fun key(): String? =
         keyOverride ?: KeyVault.load(context, id)
 
@@ -58,11 +62,18 @@ class AnthropicProvider(
             buildList {
                 for (i in 0 until data.length()) {
                     val m = data.getJSONObject(i)
+                    val modelId = m.getString("id")
                     add(
                         AiModel(
-                            id = m.getString("id"),
-                            displayName = m.optString("display_name", m.getString("id")),
+                            id = modelId,
+                            displayName = m.optString("display_name", modelId),
                             contextTokens = m.optInt("max_input_tokens").takeIf { it > 0 },
+                            // Haiku is the quick one; the larger models think.
+                            badge = if ("haiku" in modelId.lowercase()) {
+                                ModelBadge.FAST
+                            } else {
+                                ModelBadge.THINKING
+                            },
                         )
                     )
                 }
@@ -312,6 +323,7 @@ class AiException(val error: AiError) : Exception(error.message)
 private val Effort.apiValue: String
     get() = when (this) {
         Effort.LOW -> "low"
+        Effort.MEDIUM -> "medium"
         Effort.HIGH -> "high"
         Effort.MAX -> "max"
     }

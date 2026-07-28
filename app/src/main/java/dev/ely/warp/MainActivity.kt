@@ -89,12 +89,14 @@ private fun WarpApp() {
     val registry = remember { ProviderRegistry(context) }
     val engine = remember { ChatEngine(scope, registry.selected) }
 
-    // Pick up a provider, model or effort change made in Settings.
+    // Pick up a key added in Settings — the model choice itself is made in the
+    // chat's own picker and applied there.
     LaunchedEffect(tab) {
         if (tab == 0) {
-            engine.provider = registry.selected
-            engine.model = registry.modelFor(registry.selected)
-            engine.effort = registry.effort
+            val choice = registry.choice
+            engine.provider = registry.providerFor(choice.providerId)
+            engine.model = choice.modelId
+            engine.effort = choice.effort ?: dev.ely.warp.ai.Effort.LOW
         }
     }
 
@@ -129,7 +131,7 @@ private fun WarpApp() {
                 // space *left over* after the tabs, not the entire window.
                 Box(modifier = Modifier.weight(1f)) {
                     when (tab) {
-                        0 -> ChatScreen(engine)
+                        0 -> ChatScreen(engine, registry)
                         1 -> BuildScreen()
                         2 -> PreflightScreen()
                         else -> SettingsScreen()

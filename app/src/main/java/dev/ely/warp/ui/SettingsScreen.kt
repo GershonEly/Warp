@@ -10,16 +10,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -33,9 +30,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import dev.ely.warp.ai.AiProvider
 import dev.ely.warp.ai.AiException
-import dev.ely.warp.ai.Effort
+import dev.ely.warp.ai.AiProvider
 import dev.ely.warp.ai.KeyVault
 import dev.ely.warp.ai.ProviderRegistry
 import dev.ely.warp.ui.theme.WarpMono
@@ -46,22 +42,19 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Pick a provider, paste a key, test it.
+ * Keys, one card per provider.
  *
- * This is the screen the whole harness was built for: everything else already
- * works against the mock, and this is where a real model gets plugged in.
+ * Only keys live here. Which model to use — and how hard it should think — is
+ * chosen in the chat's own picker, because that is a per-conversation decision
+ * rather than a setting.
+ *
+ * Keys are stored per provider, so several can be saved at once and switching
+ * between them costs nothing.
  */
 @Composable
 fun SettingsScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val registry = remember { ProviderRegistry(context) }
-
-    var selected by remember { mutableStateOf(registry.selected) }
-    var effort by remember { mutableStateOf(registry.effort) }
-    var keyInput by remember { mutableStateOf("") }
-    var savedKey by remember { mutableStateOf(KeyVault.masked(context, selected.id)) }
-    var test by remember { mutableStateOf<TestState>(TestState.Idle) }
 
     Column(
         modifier = modifier
@@ -70,185 +63,159 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
             .padding(horizontal = 20.dp, vertical = 24.dp),
     ) {
         Text(
-            "AI Provider",
+            "AI keys",
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.SemiBold,
         )
         Spacer(Modifier.size(4.dp))
         Text(
-            "Warp ships with no API key. Bring your own — it is encrypted by " +
-                "the Android Keystore and never leaves this phone.",
+            "Warp ships with no API key. Bring your own — each is encrypted by " +
+                "the Android Keystore and never leaves this phone. Add as many " +
+                "as you like, then pick a model in the Chat tab.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
         Spacer(Modifier.size(20.dp))
 
-        // ── provider picker ──────────────────────────────────────────────
-        SettingsCard(title = "Provider") {
-            registry.providers.forEach { provider ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .selectable(
-                            selected = provider.id == selected.id,
-                            onClick = {
-                                selected = provider
-                                registry.selected = provider
-                                savedKey = KeyVault.masked(context, provider.id)
-                                keyInput = ""
-                                test = TestState.Idle
-                            },
-                        )
-                        .padding(vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(selected = provider.id == selected.id, onClick = null)
-                    Spacer(Modifier.size(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            if (provider.requiresKey) provider.displayName
-                            else "🎭 ${provider.displayName}",
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Text(
-                            if (provider.requiresKey) {
-                                if (registry.hasKey(provider)) "key saved" else "needs a key"
-                            } else "no key needed · scripted answers",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (provider.requiresKey && !registry.hasKey(provider)) {
-                                WarpWarning
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        )
-                    }
-                }
-            }
-        }
-
-        Spacer(Modifier.size(16.dp))
-
-        // ── key ──────────────────────────────────────────────────────────
-        if (selected.requiresKey) {
-            SettingsCard(title = "API key") {
-                savedKey?.let { masked ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Saved:", style = MaterialTheme.typography.bodySmall)
-                        Spacer(Modifier.size(8.dp))
-                        Ltr {
-                            Text(
-                                masked,
-                                style = WarpMono,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                    Spacer(Modifier.size(10.dp))
-                }
-
-                OutlinedTextField(
-                    value = keyInput,
-                    onValueChange = { keyInput = it; test = TestState.Idle },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(if (savedKey == null) "Paste your key" else "Replace key") },
-                    singleLine = true,
-                    // Keys are secrets; don't render them on screen.
-                    visualTransformation = PasswordVisualTransformation(),
-                )
-
-                Spacer(Modifier.size(12.dp))
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        enabled = keyInput.isNotBlank(),
-                        onClick = {
-                            KeyVault.save(context, selected.id, keyInput.trim())
-                            savedKey = KeyVault.masked(context, selected.id)
-                            keyInput = ""
-                            test = TestState.Idle
-                        },
-                    ) { Text("Save") }
-
-                    OutlinedButton(
-                        enabled = savedKey != null && test !is TestState.Testing,
-                        onClick = {
-                            test = TestState.Testing
-                            scope.launch {
-                                test = runTest(selected)
-                            }
-                        },
-                    ) { Text("Test connection") }
-
-                    if (savedKey != null) {
-                        OutlinedButton(onClick = {
-                            KeyVault.delete(context, selected.id)
-                            savedKey = null
-                            test = TestState.Idle
-                        }) { Text("Remove") }
-                    }
-                }
-
-                when (val state = test) {
-                    is TestState.Idle -> Unit
-                    is TestState.Testing -> {
-                        Spacer(Modifier.size(12.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.size(10.dp))
-                            Text("Checking…", style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                    is TestState.Ok -> {
-                        Spacer(Modifier.size(12.dp))
-                        Text(
-                            "✓ ${state.message}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = WarpSuccess,
-                        )
-                    }
-                    is TestState.Failed -> {
-                        Spacer(Modifier.size(12.dp))
-                        Text(
-                            "✕ ${state.message}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                }
+        registry.providers
+            .filter { it.requiresKey }
+            .forEach { provider ->
+                ProviderKeyCard(provider)
+                Spacer(Modifier.size(14.dp))
             }
 
-            Spacer(Modifier.size(16.dp))
-        }
-
-        // ── effort ───────────────────────────────────────────────────────
-        SettingsCard(title = "How hard to think") {
-            Text(
-                "Higher settings give better answers on hard problems, and cost more.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.size(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Effort.entries.forEach { level ->
-                    FilterChip(
-                        selected = level == effort,
-                        onClick = { effort = level; registry.effort = level },
-                        label = { Text(level.label) },
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.size(24.dp))
-
+        Spacer(Modifier.size(6.dp))
         Text(
-            "Your key is encrypted with a key held in the Android Keystore, which " +
-                "cannot be read out of the device. It is never written to a log, " +
-                "never sent anywhere except the provider, and is not in the repo.",
+            "The 🎭 Mock AI needs no key and always works — it replays scripted " +
+                "answers so the whole app can be used before any key exists.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+
+        Spacer(Modifier.size(16.dp))
+        Text(
+            "Keys are encrypted with a key generated inside the Android Keystore, " +
+                "which cannot be read out of the device. They are never written to " +
+                "a log, never sent anywhere except their own provider, and are not " +
+                "in the repository.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun ProviderKeyCard(provider: AiProvider) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var keyInput by remember { mutableStateOf("") }
+    var savedKey by remember { mutableStateOf(KeyVault.masked(context, provider.id)) }
+    var test by remember { mutableStateOf<TestState>(TestState.Idle) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(16.dp))
+            .padding(16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                provider.displayName,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                if (savedKey != null) "key saved" else "no key",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (savedKey != null) WarpSuccess else WarpWarning,
+            )
+        }
+
+        savedKey?.let { masked ->
+            Spacer(Modifier.size(8.dp))
+            Ltr {
+                Text(
+                    masked,
+                    style = WarpMono,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        Spacer(Modifier.size(12.dp))
+
+        OutlinedTextField(
+            value = keyInput,
+            onValueChange = { keyInput = it; test = TestState.Idle },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text(if (savedKey == null) "Paste key" else "Replace key") },
+            singleLine = true,
+            // A key on screen is a key over someone's shoulder.
+            visualTransformation = PasswordVisualTransformation(),
+        )
+
+        Spacer(Modifier.size(12.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                enabled = keyInput.isNotBlank(),
+                onClick = {
+                    KeyVault.save(context, provider.id, keyInput.trim())
+                    savedKey = KeyVault.masked(context, provider.id)
+                    keyInput = ""
+                    test = TestState.Idle
+                },
+            ) { Text("Save") }
+
+            OutlinedButton(
+                enabled = savedKey != null && test !is TestState.Testing,
+                onClick = {
+                    test = TestState.Testing
+                    scope.launch { test = runTest(provider) }
+                },
+            ) { Text("Test") }
+
+            if (savedKey != null) {
+                OutlinedButton(onClick = {
+                    KeyVault.delete(context, provider.id)
+                    savedKey = null
+                    test = TestState.Idle
+                }) { Text("Remove") }
+            }
+        }
+
+        when (val state = test) {
+            is TestState.Idle -> Unit
+
+            is TestState.Testing -> {
+                Spacer(Modifier.size(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.size(10.dp))
+                    Text("Checking…", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+
+            is TestState.Ok -> {
+                Spacer(Modifier.size(12.dp))
+                Text(
+                    "✓ ${state.message}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = WarpSuccess,
+                )
+            }
+
+            is TestState.Failed -> {
+                Spacer(Modifier.size(12.dp))
+                Text(
+                    "✕ ${state.message}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
     }
 }
 
@@ -263,25 +230,11 @@ private suspend fun runTest(provider: AiProvider): TestState = withContext(Dispa
     provider.testConnection().fold(
         onSuccess = { TestState.Ok(it) },
         onFailure = { error ->
-            // AiException carries a message already written for a person;
-            // anything else gets its class name so it is at least diagnosable.
+            // AiError messages are already written for a person; anything else
+            // at least names its type so the failure is diagnosable.
             val message = (error as? AiException)?.error?.message
                 ?: "${error.javaClass.simpleName}: ${error.message}"
             TestState.Failed(message)
         },
     )
-}
-
-@Composable
-private fun SettingsCard(title: String, content: @Composable () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(16.dp))
-            .padding(16.dp),
-    ) {
-        Text(title, style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.size(10.dp))
-        content()
-    }
 }

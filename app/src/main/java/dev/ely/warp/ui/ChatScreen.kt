@@ -1,6 +1,7 @@
 package dev.ely.warp.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,7 +36,8 @@ import androidx.compose.ui.unit.dp
 import dev.ely.warp.ai.AiError
 import dev.ely.warp.ai.ChatEngine
 import dev.ely.warp.ai.ChatMessage
-import dev.ely.warp.ai.MockProvider
+import dev.ely.warp.ai.Effort
+import dev.ely.warp.ai.ProviderRegistry
 import dev.ely.warp.ai.Role
 import dev.ely.warp.ai.ToolCall
 import dev.ely.warp.ui.theme.WarpMono
@@ -49,11 +51,35 @@ import dev.ely.warp.ui.theme.WarpWarning
  * the harness: this screen never learns which AI is behind it.
  */
 @Composable
-fun ChatScreen(engine: ChatEngine, modifier: Modifier = Modifier) {
+fun ChatScreen(
+    engine: ChatEngine,
+    registry: ProviderRegistry,
+    modifier: Modifier = Modifier,
+) {
     val messages by engine.messages.collectAsState()
     val busy by engine.busy.collectAsState()
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+
+    var choice by remember { mutableStateOf(registry.choice) }
+    var showPicker by remember { mutableStateOf(false) }
+
+    if (showPicker) {
+        ModelPickerDialog(
+            registry = registry,
+            current = choice,
+            onPick = { picked ->
+                choice = picked
+                registry.choice = picked
+                // Point the engine at the new model straight away, so the next
+                // message uses it without a trip through Settings.
+                engine.provider = registry.providerFor(picked.providerId)
+                engine.model = picked.modelId
+                engine.effort = picked.effort ?: Effort.LOW
+            },
+            onDismiss = { showPicker = false },
+        )
+    }
 
     // Follow the newest text as it streams in.
     LaunchedEffect(messages.size, messages.lastOrNull()?.text?.length) {
@@ -64,6 +90,8 @@ fun ChatScreen(engine: ChatEngine, modifier: Modifier = Modifier) {
     // Having it in both places made this column taller than the window and
     // pushed the chat up over the status bar whenever the keyboard opened.
     Column(modifier = modifier.fillMaxSize()) {
+
+        ModelBar(label = choice.label, onClick = { showPicker = true })
 
         if (!engine.provider.requiresKey) {
             DemoBanner(providerName = engine.provider.displayName)
@@ -91,6 +119,31 @@ fun ChatScreen(engine: ChatEngine, modifier: Modifier = Modifier) {
                 input = ""
             },
             onStop = { engine.stop() },
+        )
+    }
+}
+
+/** The current model, tappable to change it. */
+@Composable
+private fun ModelBar(label: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.size(6.dp))
+        Text(
+            "▾",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

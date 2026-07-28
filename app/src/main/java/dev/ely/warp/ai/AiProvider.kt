@@ -24,6 +24,12 @@ interface AiProvider {
     val requiresKey: Boolean
 
     /**
+     * True when the model picker should offer effort levels for this provider's
+     * models — "Claude Opus 5 (High)" and "(Low)" as separate rows.
+     */
+    val supportsEffort: Boolean get() = false
+
+    /**
      * Models this provider can offer right now.
      *
      * Real providers fetch this live and cache it; the mock returns a fixed
@@ -70,9 +76,37 @@ data class AiRequest(
  * vendor's vocabulary into the rest of the app.
  */
 enum class Effort(val label: String) {
-    LOW("Fast"),
-    HIGH("Thorough"),
-    MAX("Maximum"),
+    LOW("Low"),
+    MEDIUM("Medium"),
+    HIGH("High"),
+    MAX("Max"),
+}
+
+/** A short note on what a model is good for, shown beside it in the picker. */
+enum class ModelBadge(val label: String) {
+    FAST("Fast"),
+    THINKING("Thinking"),
+}
+
+/**
+ * One row in the model picker.
+ *
+ * A model that supports effort appears once per level — "Claude Opus 5 (High)"
+ * and "(Low)" are separate choices — so picking a model and picking how hard it
+ * thinks is a single decision rather than two.
+ */
+data class ModelChoice(
+    val providerId: String,
+    val modelId: String,
+    val modelName: String,
+    val effort: Effort?,
+    val badge: ModelBadge?,
+    /** False when the provider has no key yet; shown greyed out. */
+    val available: Boolean = true,
+) {
+    val label: String get() = if (effort == null) modelName else "$modelName (${effort.label})"
+
+    val key: String get() = "$providerId|$modelId|${effort?.name ?: ""}"
 }
 
 data class AiModel(
@@ -80,6 +114,9 @@ data class AiModel(
     val displayName: String,
     val contextTokens: Int? = null,
     val supportsTools: Boolean = true,
+    val badge: ModelBadge? = null,
+    /** Effort levels this model offers. Empty means effort is not a choice. */
+    val effortLevels: List<Effort> = emptyList(),
 )
 
 data class ToolSpec(
