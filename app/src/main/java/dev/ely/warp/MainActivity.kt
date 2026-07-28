@@ -45,8 +45,12 @@ import dev.ely.warp.ai.ProviderRegistry
 import dev.ely.warp.diag.DeviceProbe
 import dev.ely.warp.ui.BuildScreen
 import dev.ely.warp.ui.ChatScreen
+import dev.ely.warp.ui.ComingSoonScreen
 import dev.ely.warp.ui.Ltr
+import dev.ely.warp.ui.ModelPickerDialog
 import dev.ely.warp.ui.SettingsScreen
+import dev.ely.warp.ui.WarpDestination
+import dev.ely.warp.ui.WarpShell
 import dev.ely.warp.ui.theme.WarpMono
 import dev.ely.warp.ui.theme.WarpSuccess
 import dev.ely.warp.ui.theme.WarpTheme
@@ -72,71 +76,81 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * Chat, Build, Device.
+ * The app, inside the shell.
  *
- * Chat is first because it is the app's front door — the build tools exist to
- * serve it, not the other way round.
+ * Chat is the front door — the build tools exist to serve it, not the other way
+ * round — so it is the first destination.
  */
 @Composable
 private fun WarpApp() {
-    var tab by remember { mutableIntStateOf(0) }
-    val titles = listOf("Chat", "Build", "Device", "Settings")
+    var destination by remember { mutableStateOf(WarpDestination.CHAT) }
+    var showPicker by remember { mutableStateOf(false) }
 
-    // The engine lives here, not inside ChatScreen: switching tabs disposes
-    // the screen, and a conversation should survive a trip to Settings.
+    // The engine lives here, not inside ChatScreen: moving between destinations
+    // disposes the screen, and a conversation should survive a trip to Settings.
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val registry = remember { ProviderRegistry(context) }
     val engine = remember { ChatEngine(scope, registry.selected) }
+    var choice by remember { mutableStateOf(registry.choice) }
 
-    // Pick up a key added in Settings — the model choice itself is made in the
-    // chat's own picker and applied there.
-    LaunchedEffect(tab) {
-        if (tab == 0) {
-            val choice = registry.choice
+    // Pick up a key added in Settings; the model itself is chosen in the picker.
+    LaunchedEffect(destination) {
+        if (destination == WarpDestination.CHAT) {
+            choice = registry.choice
             engine.provider = registry.providerFor(choice.providerId)
             engine.model = choice.modelId
             engine.effort = choice.effort ?: dev.ely.warp.ai.Effort.LOW
         }
     }
 
-    // The whole UI is forced left-to-right. Every label in Warp is English, and
-    // on a Hebrew phone Android mirrors the layout: tabs reverse, chat bubbles
-    // swap sides, and English placeholders render with their punctuation at the
-    // wrong end. Real right-to-left support means translating the app, not
-    // flipping English text — that is separate work.
-    Ltr {
-        // safeDrawing covers the status bar, the navigation bar, the display
-        // cutout AND the keyboard, so the Scaffold is the single place insets
-        // are handled. The earlier version combined Scaffold's system-bar
-        // padding with a separate imePadding(), which double-counted the bottom
-        // inset — the keyboard inset already includes the navigation bar.
-        Scaffold(contentWindowInsets = WindowInsets.safeDrawing) { inner ->
-            Column(
-                modifier = Modifier
-                    .padding(inner)
-                    .fillMaxSize(),
-            ) {
-                TabRow(selectedTabIndex = tab) {
-                    titles.forEachIndexed { index, title ->
-                        Tab(
-                            selected = tab == index,
-                            onClick = { tab = index },
-                            text = { Text(title) },
-                        )
-                    }
-                }
+    if (showPicker) {
+        ModelPickerDialog(
+            registry = registry,
+            current = choice,
+            onPick = { picked ->
+                choice = picked
+                registry.choice = picked
+                engine.provider = registry.providerFor(picked.providerId)
+                engine.model = picked.modelId
+                engine.effort = picked.effort ?: dev.ely.warp.ai.Effort.LOW
+            },
+            onDismiss = { showPicker = false },
+        )
+    }
 
-                // weight(1f) rather than fillMaxSize: the screen must take the
-                // space *left over* after the tabs, not the entire window.
-                Box(modifier = Modifier.weight(1f)) {
-                    when (tab) {
-                        0 -> ChatScreen(engine, registry)
-                        1 -> BuildScreen()
-                        2 -> PreflightScreen()
-                        else -> SettingsScreen()
-                    }
-                }
+    // The whole UI is forced left-to-right. Every label in Warp is English, and
+    // on a Hebrew phone Android mirrors the layout: navigation reverses, chat
+    // bubbles swap sides, and English placeholders render with their punctuation
+    // at the wrong end. Real right-to-left support means translating the app,
+    // not flipping English text — that is separate work.
+    Ltr {
+        WarpShell(
+            title = choice.label,
+            onTitleClick = { showPicker = true },
+            destination = destination,
+            onDestinationChange = { destination = it },
+        ) { screen ->
+            when (screen) {
+                WarpDestination.CHAT -> ChatScreen(engine)
+                WarpDestination.BUILD -> BuildScreen()
+                WarpDestination.SETTINGS -> SettingsScreen()
+
+                WarpDestination.FILES -> ComingSoonScreen(
+                    "Files",
+                    "A file tree for your projects, with git status beside each " +
+                        "file. Arrives with project storage.",
+                )
+                WarpDestination.EDITOR -> ComingSoonScreen(
+                    "Editor",
+                    "A fast code editor with syntax colours, tabs, and a coding " +
+                        "key row. Arrives after the AI can write files.",
+                )
+                WarpDestination.ASSETS -> ComingSoonScreen(
+                    "Assets",
+                    "Icon and image generation, resized for every density " +
+                        "Android needs.",
+                )
             }
         }
     }

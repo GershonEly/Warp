@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Adaptive icon background.
+
+    A radial gradient: faint blue at the centre falling to near-black at the
+    edges, so the mark appears to sit in depth rather than on a flat tile — the
+    "seen against a black hole" idea from the design discussion.
+
+    Kept deliberately dim. The glow belongs to the mark; if the background glows
+    too, the icon reads as neon rather than as a tool.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path android:pathData="M0,0 h108 v108 h-108 z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="54"
+                android:centerY="50"
+                android:gradientRadius="70"
+                android:startColor="#16283C"
+                android:centerColor="#0D141D"
+                android:endColor="#08090B" />
+        </aapt:attr>
+    </path>
+</vector>

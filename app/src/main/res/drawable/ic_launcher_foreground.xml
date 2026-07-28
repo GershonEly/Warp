@@ -1,19 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Adaptive icon foreground.
+    Adaptive icon foreground — the computed icosahedron at launcher scale.
 
-    Canvas is 108x108dp; only the centre 72x72dp is guaranteed visible (the
-    outer 18dp on each side gets masked or used for parallax). The bolt below
-    sits inside x:41-67, y:26-82 so it stays well within that safe zone.
+    Canvas is 108x108dp; only the centre 72x72dp is guaranteed visible, since
+    launchers mask the icon to their own shape. The figure spans x:29-78,
+    y:26-82, so a circle mask can cut the corners without touching it.
+
+    The stroke runs cyan into blue across the figure — both values sampled from
+    the reference logo — which lifts it off the dark background without any
+    glow or bloom effect.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
 
     <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M59,26 L41,58 L53,58 L47,82 L67,50 L55,50 Z" />
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M68.99,45.35 L54.00,71.30 M68.99,45.35 L39.01,45.35 M68.99,45.35 L54.00,26.00 M68.99,45.35 L78.25,68.00 M68.99,45.35 L78.25,40.00 M54.00,71.30 L39.01,45.35 M54.00,71.30 L54.00,82.00 M54.00,71.30 L29.75,68.00 M54.00,71.30 L78.25,68.00 M39.01,45.35 L29.75,40.00 M39.01,45.35 L29.75,68.00 M39.01,45.35 L54.00,26.00 M54.00,82.00 L29.75,68.00 M54.00,82.00 L78.25,68.00 M54.00,82.00 L39.01,62.65 M54.00,82.00 L68.99,62.65 M29.75,40.00 L29.75,68.00 M29.75,40.00 L54.00,26.00 M29.75,40.00 L39.01,62.65 M29.75,40.00 L54.00,36.70 M29.75,68.00 L39.01,62.65 M54.00,26.00 L78.25,40.00 M54.00,26.00 L54.00,36.70 M78.25,68.00 L78.25,40.00 M78.25,68.00 L68.99,62.65 M78.25,40.00 L54.00,36.70 M78.25,40.00 L68.99,62.65 M39.01,62.65 L54.00,36.70 M39.01,62.65 L68.99,62.65 M54.00,36.70 L68.99,62.65">
 
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:type="linear"
+                android:startX="29.75"
+                android:startY="26.00"
+                android:endX="78.25"
+                android:endY="82.00"
+                android:startColor="#18B8F0"
+                android:endColor="#1098E0" />
+        </aapt:attr>
+    </path>
 </vector>

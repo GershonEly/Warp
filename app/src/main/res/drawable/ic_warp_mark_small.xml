@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The mark at small size — 12 edges instead of 30.
+
+  The same projection, reduced to the silhouette plus the two inner triangles
+  that give it its character. Thirty edges inside 16 dp turn to mush; this stays
+  a shape. Every logo that survives small has a version like this.
+
+  Vertices are taken straight from the full mark, so the two are the same figure
+  and never drift apart.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#1098E0">
+
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.35"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M12.00,1.50 L21.09,6.75 L21.09,17.25 L12.00,22.50 L2.91,17.25 L2.91,6.75 Z M17.62,8.76 L6.38,8.76 L12.00,18.49 Z M12.00,5.51 L17.62,15.24 L6.38,15.24 Z" />
+</vector>

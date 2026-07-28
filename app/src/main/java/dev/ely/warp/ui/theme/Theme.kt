@@ -6,6 +6,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
@@ -67,9 +68,15 @@ fun WarpTheme(
         }
     }
 
-    MaterialTheme(
-        colorScheme = colors,
-        typography = WarpTypography,
-        content = content,
-    )
+    // Read once here so every animation in the app can honour the system's
+    // reduce-animations setting without each one having to remember to check.
+    val animationsEnabled = rememberAnimationsEnabled()
+
+    CompositionLocalProvider(LocalAnimationsEnabled provides animationsEnabled) {
+        MaterialTheme(
+            colorScheme = colors,
+            typography = WarpTypography,
+            content = content,
+        )
+    }
 }

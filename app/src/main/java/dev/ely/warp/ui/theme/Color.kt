@@ -30,7 +30,20 @@ val DarkOutlineVariant = Color(0xFF444746)
 val DarkPrimaryContainer = Color(0xFF004A77)
 
 // ── Shared accents ───────────────────────────────────────────────────────
-val WarpPrimary = Color(0xFF1A73E8)   // Google Blue
+
+/**
+ * Warp's blue, sampled from the mark itself.
+ *
+ * This deliberately replaces #1A73E8, which is Google's own brand blue — part
+ * of why the app read as a Google app rather than as its own product. Taking
+ * the colour from the logo instead means the icon and the interface are the
+ * same thing.
+ */
+val WarpPrimary = Color(0xFF1098E0)
+
+/** The lighter cyan from the mark, for highlights and the thinking state. */
+val WarpAccent = Color(0xFF18B8F0)
+
 val WarpError = Color(0xFFD93025)
 val WarpSuccess = Color(0xFF1E8E3E)
 val WarpWarning = Color(0xFFF9AB00)

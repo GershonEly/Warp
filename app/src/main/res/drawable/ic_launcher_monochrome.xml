@@ -2,8 +2,10 @@
 <!--
     Themed icon layer (Android 13+ / Material You).
 
-    Same geometry and safe zone as the foreground, but a flat silhouette —
-    the system recolours it to match the user's wallpaper.
+    Same geometry and safe zone as the foreground, in one flat colour — the
+    system recolours it to match the wallpaper. Strokes are slightly heavier
+    than the foreground's: themed icons are drawn in a single tone with no
+    gradient to separate the lines, so a thin wireframe would disappear.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -12,7 +14,9 @@
     android:viewportHeight="108">
 
     <path
-        android:fillColor="#FF000000"
-        android:pathData="M59,26 L41,58 L53,58 L47,82 L67,50 L55,50 Z" />
-
+        android:strokeColor="#FF000000"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M54.00,26.00 L78.25,40.00 L78.25,68.00 L54.00,82.00 L29.75,68.00 L29.75,40.00 Z M68.99,45.35 L39.01,45.35 L54.00,71.30 Z M54.00,36.70 L68.99,62.65 L39.01,62.65 Z" />
 </vector>
