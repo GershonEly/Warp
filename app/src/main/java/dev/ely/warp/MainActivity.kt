@@ -128,23 +128,26 @@ private fun WarpApp() {
         WarpShell(
             title = choice.label,
             onTitleClick = { showPicker = true },
+            onNewChat = {
+                engine.clear()
+                destination = WarpDestination.CHAT
+            },
             destination = destination,
             onDestinationChange = { destination = it },
         ) { screen ->
             when (screen) {
-                WarpDestination.CHAT -> ChatScreen(engine)
+                WarpDestination.CHAT -> ChatScreen(
+                    engine = engine,
+                    onOpenSettings = { destination = WarpDestination.SETTINGS },
+                )
                 WarpDestination.BUILD -> BuildScreen()
                 WarpDestination.SETTINGS -> SettingsScreen()
 
                 WarpDestination.FILES -> ComingSoonScreen(
                     "Files",
                     "A file tree for your projects, with git status beside each " +
-                        "file. Arrives with project storage.",
-                )
-                WarpDestination.EDITOR -> ComingSoonScreen(
-                    "Editor",
-                    "A fast code editor with syntax colours, tabs, and a coding " +
-                        "key row. Arrives after the AI can write files.",
+                        "file. Tapping a file opens it in the editor. Arrives " +
+                        "with project storage.",
                 )
                 WarpDestination.ASSETS -> ComingSoonScreen(
                     "Assets",

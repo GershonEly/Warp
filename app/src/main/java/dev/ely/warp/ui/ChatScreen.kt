@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Stop
@@ -89,7 +90,11 @@ import dev.ely.warp.ui.theme.warpTween
  */
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-fun ChatScreen(engine: ChatEngine, modifier: Modifier = Modifier) {
+fun ChatScreen(
+    engine: ChatEngine,
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val messages by engine.messages.collectAsState()
     val busy by engine.busy.collectAsState()
     var input by remember { mutableStateOf("") }
@@ -113,7 +118,7 @@ fun ChatScreen(engine: ChatEngine, modifier: Modifier = Modifier) {
         val bodyOut = motionDuration(WarpMotion.QUICK)
 
         Column(modifier = Modifier.fillMaxSize()) {
-            if (!engine.provider.requiresKey) DemoChip()
+            if (!engine.provider.requiresKey) DemoChip(onOpenSettings = onOpenSettings)
 
             AnimatedContent(
                 targetState = messages.isEmpty(),
@@ -211,22 +216,43 @@ private fun Appear(modifier: Modifier = Modifier, content: @Composable () -> Uni
  * Demo mode is a fact worth stating once, not an alarm.
  */
 @Composable
-private fun DemoChip() {
+private fun DemoChip(onOpenSettings: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(top = WarpSpace.small),
         horizontalArrangement = Arrangement.Center,
     ) {
+        // Tappable, and it leads to the place that fixes it. It wears the exact
+        // shape of the suggestion pills a few lines below, so by the rule that
+        // shape is a promise it had to either stop looking like a pill or start
+        // behaving like one — and a notice that names a problem should always
+        // lead somewhere.
         Surface(
             shape = CircleShape,
             color = Color.Transparent,
             border = BorderStroke(HairlineWidth, MaterialTheme.colorScheme.outlineVariant),
+            onClick = onOpenSettings,
         ) {
-            Text(
-                "Demo mode · answers are scripted",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = WarpSpace.medium, vertical = 6.dp),
-            )
+            Row(
+                modifier = Modifier.padding(
+                    start = WarpSpace.medium,
+                    end = WarpSpace.small,
+                    top = 6.dp,
+                    bottom = 6.dp,
+                ),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Demo mode · add a key",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Icon(
+                    Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                    contentDescription = null,
+                    modifier = Modifier.size(15.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
