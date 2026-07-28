@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Build
 import android.os.Debug
 import android.os.StatFs
+import android.util.Log
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -29,13 +30,28 @@ object DeviceProbe {
 
     enum class Status { PASS, WARN, FAIL, INFO }
 
-    fun runAll(context: Context): List<Check> = buildList {
-        add(abi())
-        add(androidVersion())
-        add(ram(context))
-        add(heap(context))
-        add(storage(context))
-        add(canExecFromDataDir(context))
+    private const val TAG = "WarpPreflight"
+
+    fun runAll(context: Context): List<Check> {
+        val checks = buildList {
+            add(abi())
+            add(androidVersion())
+            add(ram(context))
+            add(heap(context))
+            add(storage(context))
+            add(canExecFromDataDir(context))
+        }
+        // Also mirrored to logcat so the results are readable over adb, without
+        // needing eyes on the screen.
+        Log.i(TAG, "───── Warp Step 0 pre-flight ─────")
+        checks.forEach {
+            Log.i(TAG, "[${it.status}] ${it.label}: ${it.value}")
+            it.detail?.let { d -> Log.i(TAG, "        $d") }
+        }
+        val exec = checks.firstOrNull { it.label == "Execute from app storage" }
+        Log.i(TAG, "VERDICT: ${if (exec?.status == Status.PASS) "EXEC_ALLOWED" else "EXEC_BLOCKED"}")
+        Log.i(TAG, "──────────────────────────────────")
+        return checks
     }
 
     // ── Architecture ─────────────────────────────────────────────────────

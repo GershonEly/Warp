@@ -1,0 +1,115 @@
+{
+  "_comment": [
+    "Pinned sources for the Warp on-device toolchain (arm64 Android).",
+    "Nothing here is committed as a binary \u2014 build_toolchain.py fetches each",
+    "item, checks its SHA-256 against this file, and assembles the bundle.",
+    "A null sha256 means 'not pinned yet': the script prints the real hash so",
+    "it can be pasted in. Never leave a null in a release build."
+  ],
+  "bundle_version": "0.1.0",
+  "abi": "arm64-v8a",
+  "sdk_tools": {
+    "_why": "aapt2 + zipalign. Statically linked AArch64 ELF executables, so they",
+    "_why2": "run from any directory with no shared-library or prefix dependencies.",
+    "url": "https://github.com/lzhiyong/android-sdk-tools/releases/download/35.0.2/android-sdk-tools-static-aarch64.zip",
+    "version": "35.0.2",
+    "license": "Apache-2.0",
+    "sha256": "db1cea2c4454d5f9c5a802646b2d1cf560b4ee7badbe23e51ab8e1881bb50fc2",
+    "take": [
+      "build-tools/aapt2",
+      "build-tools/zipalign"
+    ]
+  },
+  "jdk": {
+    "_why": "kotlinc and d8 are Java programs, so the phone needs a real JVM.",
+    "_why2": "Termux builds are compiled for /data/data/com.termux/... but 58 of 62",
+    "_why3": "ELF files already carry $ORIGIN in RUNPATH, and LD_LIBRARY_PATH is",
+    "_why4": "searched before RUNPATH, so the runtime relocates into Warp's dir.",
+    "url": "https://packages.termux.dev/apt/termux-main/pool/main/o/openjdk-17/openjdk-17_17.0.20_aarch64.deb",
+    "version": "17.0.20",
+    "license": "GPL-2.0-with-classpath-exception",
+    "sha256": "8eb45796aa8a216ac2054847e6ed3c073c3ef44407d9212154824b270b59f7ea",
+    "prefix_in_deb": "data/data/com.termux/files/usr/lib/jvm/java-17-openjdk"
+  },
+  "support_libs": {
+    "_why": "Shared libraries the JVM needs that are NOT inside the JDK package.",
+    "_why2": "libandroid-shmem is required by libjvm.so, libandroid-spawn by libjava.so.",
+    "_why3": "Android has libz.so but the JDK asks for libz.so.1, hence zlib.",
+    "license": "various permissive (see toolchain/README.md)",
+    "items": [
+      {
+        "name": "libandroid-shmem",
+        "url": "https://packages.termux.dev/apt/termux-main/pool/main/liba/libandroid-shmem/libandroid-shmem_0.7_aarch64.deb",
+        "version": "0.7",
+        "sha256": "0da3a24d558b93c92bcf8d611e0826a99ff96e396b148e6cdf33b47c47c57ff6",
+        "needed_by": "lib/server/libjvm.so"
+      },
+      {
+        "name": "libandroid-spawn",
+        "url": "https://packages.termux.dev/apt/termux-main/pool/main/liba/libandroid-spawn/libandroid-spawn_0.3_aarch64.deb",
+        "version": "0.3",
+        "sha256": "7988fa788ef48ab5da9660443905a2e4099ac36221739d72f5c39acc644b4d1c",
+        "needed_by": "lib/libjava.so"
+      },
+      {
+        "name": "libiconv",
+        "url": "https://packages.termux.dev/apt/termux-main/pool/main/libi/libiconv/libiconv_1.18-1_aarch64.deb",
+        "version": "1.18-1",
+        "sha256": "b19e6f348034bb48d2a5590b5cb242769f682c476717374d134d004cc663dc84",
+        "needed_by": "lib/libinstrument.so"
+      },
+      {
+        "name": "zlib",
+        "url": "https://packages.termux.dev/apt/termux-main/pool/main/z/zlib/zlib_1.3.2_aarch64.deb",
+        "version": "1.3.2",
+        "sha256": "75e7d0af17fcc3b40004309fdc00a1ddb9ae08346dce5e269902c34ac3966ac9",
+        "needed_by": "lib/libjli.so (as libz.so.1)"
+      }
+    ]
+  },
+  "kotlin": {
+    "_why": "Pure JVM bytecode, so it is CPU-architecture independent.",
+    "_why2": "Must match the Kotlin version the app itself is built with.",
+    "url": "https://github.com/JetBrains/kotlin/releases/download/v2.4.10/kotlin-compiler-2.4.10.zip",
+    "version": "2.4.10",
+    "license": "Apache-2.0",
+    "sha256": "473dd66c7a3ef4b182065b3da670466c1bf2773a9dbb0ed8b33a39fe9d4f876d"
+  },
+  "r8": {
+    "_why": "d8 turns .class files into .dex. Also pure JVM bytecode.",
+    "url": "https://maven.google.com/com/android/tools/r8/9.1.31/r8-9.1.31.jar",
+    "version": "9.1.31",
+    "license": "Apache-2.0",
+    "sha256": "3b4de3053885da105e39c15212261d22653d6d1b5eb92323dd04ae913cc8286f"
+  },
+  "android_jar": {
+    "_why": "The compile-time Android API surface. Taken from the LOCAL SDK, not",
+    "_why2": "downloaded, because the Android SDK licence restricts redistribution.",
+    "_why3": "Anyone building the bundle must have the platform installed locally.",
+    "local_sdk_relative": "platforms/android-37.0/android.jar",
+    "license": "Android SDK Terms and Conditions (not redistributable)"
+  },
+  "jdk_trim": {
+    "_why": "Shrinks the bundle. None of these are needed to run kotlinc or d8.",
+    "_why2": "legal/ is deliberately KEPT so licence texts ship with the binaries.",
+    "remove_dirs": [
+      "demo",
+      "man",
+      "jmods",
+      "include"
+    ],
+    "remove_files": [
+      "src.zip"
+    ],
+    "remove_libs": [
+      "libawt.so",
+      "libawt_headless.so",
+      "libawt_xawt.so",
+      "libjavajpeg.so",
+      "liblcms.so",
+      "libfontmanager.so",
+      "libjsound.so",
+      "libsplashscreen.so"
+    ]
+  }
+}

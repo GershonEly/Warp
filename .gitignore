@@ -24,6 +24,7 @@ app/src/main/assets/toolchain.tar.*
 toolchain/build/
 toolchain/staging/
 toolchain/dist/
+toolchain/.cache/
 
 # ─────────────────────────────────────────────────────────────
 #  Gradle / Android build output
