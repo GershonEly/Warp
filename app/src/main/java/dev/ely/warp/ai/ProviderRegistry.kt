@@ -123,6 +123,15 @@ class ProviderRegistry(private val context: Context) {
 
         if (models.isEmpty()) return listOf(needsKeyRow(provider, "no models"))
 
+        // A provider can offer hundreds of models — OpenRouter resells most of
+        // the industry. Showing all of them buries the handful anyone actually
+        // wants, so the short list is capped and the rest sit behind "show all".
+        val shortlist = models
+            .filter { looksMainstream(it.id) }
+            .take(SHORTLIST_PER_PROVIDER)
+            .map { it.id }
+            .toSet()
+
         return models.flatMap { model ->
             val levels = if (provider.supportsEffort) EFFORT_LEVELS else listOf(null)
             levels.map { effort ->
@@ -132,10 +141,50 @@ class ProviderRegistry(private val context: Context) {
                     modelName = model.displayName,
                     effort = effort,
                     badge = model.badge,
+                    // The mock is the no-key default, so it stays visible at
+                    // the top rather than hidden behind a folder of its own.
+                    group = if (provider.requiresKey) {
+                        familyOf(model.id, model.displayName)
+                    } else {
+                        TOP_LEVEL
+                    },
                     available = usable,
+                    recommended = model.id in shortlist,
                 )
             }
         }
+    }
+
+    /**
+     * Which folder a model belongs in.
+     *
+     * Grouped by model family rather than by provider, because OpenRouter
+     * resells other companies' models — grouping by provider would scatter
+     * Claude across two folders and leave one folder holding everything else.
+     *
+     * Matched on the family name, never on a version, so a new release lands in
+     * the right folder without Warp being updated.
+     */
+    private fun familyOf(modelId: String, displayName: String): String {
+        val text = "$modelId $displayName".lowercase()
+        return FAMILIES.firstOrNull { (_, markers) -> markers.any { it in text } }
+            ?.first
+            ?: "Other"
+    }
+
+    /**
+     * A rough "is this one of the well-known models" test.
+     *
+     * Matches model *families* rather than versions, so a new release shows up
+     * without Warp needing an update — the opposite mistake to hardcoding a
+     * list of exact ids that goes stale within weeks.
+     */
+    private fun looksMainstream(modelId: String): Boolean {
+        val id = modelId.lowercase()
+        // Dated snapshots and previews duplicate their own family; the plain
+        // alias is the one worth showing.
+        if (PREVIEW_MARKERS.any { it in id }) return false
+        return MAINSTREAM_FAMILIES.any { it in id }
     }
 
     private fun needsKeyRow(provider: AiProvider, reason: String = "needs a key") = ModelChoice(
@@ -144,18 +193,66 @@ class ProviderRegistry(private val context: Context) {
         modelName = "${provider.displayName} — $reason",
         effort = null,
         badge = null,
+        // Locked providers sit at the top level, not buried inside a folder —
+        // otherwise the one signal that Warp supports them is a folder deep.
+        group = TOP_LEVEL,
         available = false,
     )
 
-    private companion object {
-        const val TAG = "WarpRegistry"
-        const val PREFS = "warp_ai"
-        const val KEY_PROVIDER = "provider"
-        const val KEY_MODEL = "model"
-        const val KEY_MODEL_NAME = "model_name"
-        const val KEY_EFFORT = "effort"
+    companion object {
+        /**
+         * Rows shown outside the folders: the mock, and the notice for a
+         * provider that still needs a key.
+         *
+         * Membership is by kind, never by availability — a model the user
+         * cannot use yet still belongs in its family's folder.
+         */
+        const val TOP_LEVEL = "__top__"
+
+        private const val TAG = "WarpRegistry"
+        private const val PREFS = "warp_ai"
+        private const val KEY_PROVIDER = "provider"
+        private const val KEY_MODEL = "model"
+        private const val KEY_MODEL_NAME = "model_name"
+        private const val KEY_EFFORT = "effort"
 
         /** Shown per model for providers that support it, as in the design. */
-        val EFFORT_LEVELS = listOf(Effort.HIGH, Effort.MEDIUM, Effort.LOW)
+        private val EFFORT_LEVELS = listOf(Effort.HIGH, Effort.MEDIUM, Effort.LOW)
+
+        /** How many models each provider contributes to the short list. */
+        private const val SHORTLIST_PER_PROVIDER = 6
+
+        /**
+         * Folders, in display order. First match wins, so more specific
+         * markers must come before broader ones — "gpt" would otherwise
+         * swallow "gpt-oss" style names that belong elsewhere.
+         */
+        private val FAMILIES: List<Pair<String, List<String>>> = listOf(
+            "Claude" to listOf("claude", "opus", "sonnet", "haiku"),
+            "Gemini" to listOf("gemini", "gemma"),
+            "GPT" to listOf("gpt", "chatgpt", "o1-", "o3-", "o4-"),
+            "Grok" to listOf("grok"),
+            "Llama" to listOf("llama"),
+            "DeepSeek" to listOf("deepseek"),
+            "Qwen" to listOf("qwen"),
+            "Mistral" to listOf("mistral", "mixtral", "magistral"),
+        )
+
+        /** Families worth offering up front. Deliberately version-free. */
+        private val MAINSTREAM_FAMILIES = listOf(
+            "opus", "sonnet", "haiku",   // Anthropic
+            "gemini",                     // Google
+            "gpt", "o1", "o3", "o4",      // OpenAI
+            "grok", "llama", "mistral", "deepseek", "qwen",
+        )
+
+        /**
+         * Variants that repeat a family they belong to. Excluding them keeps
+         * one row per model instead of six near-identical ones.
+         */
+        private val PREVIEW_MARKERS = listOf(
+            "preview", "-exp", "experimental", "-latest", "nightly", "beta",
+            ":free", "-0125", "-0613", "-1106", "-2024", "-2025", "-2026",
+        )
     }
 }

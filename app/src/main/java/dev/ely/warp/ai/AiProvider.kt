@@ -101,8 +101,12 @@ data class ModelChoice(
     val modelName: String,
     val effort: Effort?,
     val badge: ModelBadge?,
+    /** The family this belongs to — "Claude", "Gemini", "GPT". One folder each. */
+    val group: String = "Other",
     /** False when the provider has no key yet; shown greyed out. */
     val available: Boolean = true,
+    /** Shown in the short default list. Everything else is behind "show all". */
+    val recommended: Boolean = true,
 ) {
     val label: String get() = if (effort == null) modelName else "$modelName (${effort.label})"
 

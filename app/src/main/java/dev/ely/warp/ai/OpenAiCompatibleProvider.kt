@@ -59,6 +59,7 @@ abstract class OpenAiCompatibleProvider(
                 for (i in 0 until data.length()) {
                     val m = data.getJSONObject(i)
                     val modelId = m.optString("id").ifBlank { continue }
+                    if (!isChatModel(modelId)) continue
                     add(
                         AiModel(
                             id = modelId,
@@ -216,6 +217,22 @@ abstract class OpenAiCompatibleProvider(
         }
     }
 
+    /**
+     * Can this model hold a conversation?
+     *
+     * `/v1/models` returns everything the account can reach — embeddings,
+     * speech-to-text, text-to-speech, image generation, moderation. None of
+     * those belong in a chat model picker, and listing them buries the models
+     * that do.
+     *
+     * A denylist rather than an allowlist on purpose: a new chat model should
+     * appear the day it ships, without Warp needing an update.
+     */
+    protected open fun isChatModel(modelId: String): Boolean {
+        val id = modelId.lowercase()
+        return NON_CHAT_MARKERS.none { it in id }
+    }
+
     /** A rough hint from the model's name; these services do not report it. */
     private fun badgeFor(modelId: String): ModelBadge? {
         val id = modelId.lowercase()
@@ -231,6 +248,14 @@ abstract class OpenAiCompatibleProvider(
 
     private companion object {
         const val MAX_TOKENS = 16_000
+
+        /** Substrings that mark a model as something other than a chat model. */
+        val NON_CHAT_MARKERS = listOf(
+            "embed", "whisper", "tts", "audio", "transcribe", "speech",
+            "dall-e", "image", "moderation", "rerank", "guard",
+            // Completion-only ancestors, long superseded.
+            "davinci", "babbage", "curie", "ada",
+        )
     }
 }
 
