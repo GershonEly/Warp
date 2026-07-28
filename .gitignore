@@ -33,6 +33,9 @@ toolchain/.cache/
 build/
 */build/
 **/build/
+# …but a Kotlin package named "build" under src/ is SOURCE, not output.
+# Without this, app/src/main/java/dev/ely/warp/build/ is silently ignored.
+!**/src/**/build/
 captures/
 .externalNativeBuild/
 .cxx/
