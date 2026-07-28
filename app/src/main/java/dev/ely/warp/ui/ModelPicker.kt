@@ -14,8 +14,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,6 +39,7 @@ import androidx.compose.ui.window.Dialog
 import dev.ely.warp.ai.ModelBadge
 import dev.ely.warp.ai.ModelChoice
 import dev.ely.warp.ai.ProviderRegistry
+import dev.ely.warp.ui.theme.WarpSpace
 
 /**
  * The model list, opened from the chat header.
@@ -49,6 +56,7 @@ import dev.ely.warp.ai.ProviderRegistry
  * Effort is folded into each row — "Claude Opus 5 (High)" is one choice, not a
  * model plus a separate setting.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ModelPickerDialog(
     registry: ProviderRegistry,
@@ -74,16 +82,15 @@ fun ModelPickerDialog(
         .filter { it.group != ProviderRegistry.TOP_LEVEL }
         .groupBy { it.group }
 
-    Dialog(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    MaterialTheme.colorScheme.surfaceContainerHigh,
-                    RoundedCornerShape(16.dp),
-                )
-                .padding(vertical = 12.dp),
-        ) {
+    // A sheet rather than a centre dialog: this list can run long, and the
+    // bottom of the screen is where the thumb already is. A dialog floating in
+    // the middle is a desktop pattern that phones inherited.
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        dragHandle = { BottomSheetDefaults.DragHandle() },
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(bottom = WarpSpace.large)) {
             Header(
                 folder = openFolder,
                 onBack = { openFolder = null },
@@ -170,8 +177,12 @@ private fun Header(folder: String?, onBack: () -> Unit) {
                 .padding(horizontal = 16.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("‹", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.size(10.dp))
+            Icon(
+                Icons.AutoMirrored.Outlined.KeyboardArrowLeft,
+                contentDescription = "Back to all families",
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.size(WarpSpace.small))
             Text(
                 folder,
                 style = MaterialTheme.typography.titleSmall,
@@ -188,9 +199,15 @@ private fun Loading() {
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+        // The mark, not a spinner. Every wait in Warp is signed by the same
+        // object turning.
+        ThinkingMark(size = 20.dp)
         Spacer(Modifier.size(12.dp))
-        Text("Loading models…", style = MaterialTheme.typography.bodyMedium)
+        Text(
+            "Loading models…",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -232,8 +249,6 @@ private fun FolderRow(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("📁", style = MaterialTheme.typography.bodyMedium)
-        Spacer(Modifier.size(10.dp))
         Text(
             name,
             style = MaterialTheme.typography.bodyMedium,
@@ -245,9 +260,16 @@ private fun FolderRow(
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.size(10.dp))
-        Text("›", style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.size(WarpSpace.small))
+        // A drawn chevron rather than the "›" character: the glyph's weight and
+        // vertical position vary by font, and a folder emoji beside it was the
+        // loudest thing on the row.
+        Icon(
+            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

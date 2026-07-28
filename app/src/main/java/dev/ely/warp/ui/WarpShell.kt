@@ -25,22 +25,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.Chat
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.Build
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.DrawerValue
@@ -51,13 +50,19 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import dev.ely.warp.ui.theme.WarpMotion
+import dev.ely.warp.ui.theme.WarpRadius
+import dev.ely.warp.ui.theme.WarpSpace
 import dev.ely.warp.ui.theme.warpTween
 import kotlinx.coroutines.launch
 
@@ -70,12 +75,15 @@ import kotlinx.coroutines.launch
  * hidden, so the shape of the app is visible from the start.
  */
 enum class WarpDestination(val label: String, val icon: ImageVector) {
-    CHAT("Chat", Icons.Filled.Chat),
-    FILES("Files", Icons.Filled.Folder),
-    EDITOR("Editor", Icons.Filled.Edit),
-    BUILD("Build", Icons.Filled.Build),
-    ASSETS("Assets", Icons.Filled.Palette),
-    SETTINGS("Settings", Icons.Filled.Settings),
+    // Outlined throughout: filled icons are heavier than the mark's own line
+    // and mixing the two weights is one of the quiet things that reads as
+    // unfinished.
+    CHAT("Chat", Icons.Outlined.ChatBubbleOutline),
+    FILES("Files", Icons.Outlined.FolderOpen),
+    EDITOR("Editor", Icons.Outlined.Code),
+    BUILD("Build", Icons.Outlined.Build),
+    ASSETS("Assets", Icons.Outlined.Palette),
+    SETTINGS("Settings", Icons.Outlined.Settings),
 }
 
 @Composable
@@ -92,8 +100,20 @@ fun WarpShell(
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet {
-                DrawerContents(onClose = { scope.launch { drawerState.close() } })
+            ModalDrawerSheet(
+                drawerContainerColor = MaterialTheme.colorScheme.surface,
+                drawerShape = RoundedCornerShape(
+                    topEnd = WarpRadius.large,
+                    bottomEnd = WarpRadius.large,
+                ),
+            ) {
+                DrawerContents(
+                    current = destination,
+                    onSelect = {
+                        onDestinationChange(it)
+                        scope.launch { drawerState.close() }
+                    },
+                )
             }
         },
     ) {
@@ -103,9 +123,10 @@ fun WarpShell(
             // present it gives content the bar's height instead of the insets,
             // and the keyboard inset is dropped.
             modifier = Modifier.imePadding(),
-            // Zero, because each bar now pads itself. Anything else would count
-            // the same inset twice.
-            contentWindowInsets = WindowInsets(0),
+            // Bottom only. The top bar pads itself and the shell handles the
+            // keyboard, but with no bottom bar left there is nothing holding
+            // content off the gesture area — the composer sat on top of it.
+            contentWindowInsets = WindowInsets.navigationBars,
             topBar = {
                 WarpTopBar(
                     title = title,
@@ -113,12 +134,11 @@ fun WarpShell(
                     onTitleClick = onTitleClick,
                 )
             },
-            bottomBar = {
-                WarpBottomBar(
-                    current = destination,
-                    onSelect = onDestinationChange,
-                )
-            },
+            // No bottom navigation. Six stock items with labels is the single
+            // most dated thing an Android app can wear, and it costs a sixth of
+            // the screen permanently. Gemini, Claude and ChatGPT all put
+            // navigation in the drawer and give the conversation the whole
+            // surface — because the conversation is the app.
         ) { inner ->
             // Built here rather than inside transitionSpec: these read the
             // reduce-animations setting, which is only available in composable
@@ -166,8 +186,8 @@ private fun WarpTopBar(title: String, onMenu: () -> Unit, onTitleClick: () -> Un
     ) {
         IconButtonBox(onClick = onMenu) {
             Icon(
-                Icons.Filled.Menu,
-                contentDescription = "Conversations",
+                Icons.Outlined.Menu,
+                contentDescription = "Menu",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -229,56 +249,82 @@ private fun IconButtonBox(onClick: () -> Unit, content: @Composable () -> Unit) 
 }
 
 @Composable
-private fun WarpBottomBar(current: WarpDestination, onSelect: (WarpDestination) -> Unit) {
-    NavigationBar(
-        containerColor = MaterialTheme.colorScheme.surface,
-        // Its own bottom inset, for the same reason the top bar takes its own.
-        // navigationBars rather than safeDrawing: safeDrawing includes the
-        // keyboard, which the shell already handles, and adding it here would
-        // lift the bar twice.
-        windowInsets = WindowInsets.navigationBars,
+private fun DrawerContents(
+    current: WarpDestination,
+    onSelect: (WarpDestination) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .padding(WarpSpace.large),
     ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = WarpSpace.small, bottom = WarpSpace.section),
+        ) {
+            WarpMark(size = 28.dp)
+            Spacer(Modifier.size(WarpSpace.medium))
+            Text("Warp", style = MaterialTheme.typography.titleLarge)
+        }
+
         WarpDestination.entries.forEach { destination ->
-            NavigationBarItem(
+            DrawerRow(
+                destination = destination,
                 selected = destination == current,
                 onClick = { onSelect(destination) },
-                icon = { Icon(destination.icon, contentDescription = destination.label) },
-                label = {
-                    Text(destination.label, style = MaterialTheme.typography.labelSmall)
-                },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                ),
             )
         }
+
+        Spacer(Modifier.weight(1f))
+
+        Text(
+            "Saved conversations arrive with project storage.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(WarpSpace.medium),
+        )
     }
 }
 
 @Composable
-private fun DrawerContents(onClose: () -> Unit) {
-    Column(modifier = Modifier.padding(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            WarpMark(size = 26.dp)
-            Spacer(Modifier.size(10.dp))
-            Text(
-                "Warp",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-        Spacer(Modifier.size(16.dp))
-        Text(
-            "Conversations",
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+private fun DrawerRow(
+    destination: WarpDestination,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    // The selected row sits in a filled pill — the accent's only appearance in
+    // navigation, which is what keeps it meaning "here" rather than "decor".
+    val background by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer
+        else Color.Transparent,
+        animationSpec = warpTween(WarpMotion.NORMAL),
+        label = "drawerRow",
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .clip(CircleShape)
+            .background(background)
+            .clickable(onClick = onClick)
+            .padding(horizontal = WarpSpace.large, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            destination.icon,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+            else MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.size(8.dp))
+        Spacer(Modifier.size(WarpSpace.large))
         Text(
-            "Saved conversations arrive with project storage. For now Warp keeps " +
-                "one chat, which lasts as long as the app is open.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            destination.label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+            else MaterialTheme.colorScheme.onSurface,
         )
     }
 }
@@ -292,20 +338,29 @@ private fun DrawerContents(onClose: () -> Unit) {
 @Composable
 fun ComingSoonScreen(title: String, description: String, modifier: Modifier = Modifier) {
     Column(
-        modifier = modifier.fillMaxSize().padding(32.dp),
+        modifier = modifier.fillMaxSize().padding(WarpSpace.section),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        // The mark, dimmed. An empty screen that shows nothing reads as broken;
+        // one that shows the app's own symbol and says what belongs here reads
+        // as deliberate.
+        WarpMark(
+            size = 44.dp,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+        )
+        Spacer(Modifier.size(WarpSpace.large))
         Text(
             title,
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onSurface,
         )
-        Spacer(Modifier.size(8.dp))
+        Spacer(Modifier.size(WarpSpace.small))
         Text(
             description,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
         )
     }
 }

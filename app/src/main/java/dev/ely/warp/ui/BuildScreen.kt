@@ -4,7 +4,9 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.FileProvider
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,8 +18,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -32,6 +37,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.ely.warp.build.BuildEngine
@@ -39,7 +46,11 @@ import dev.ely.warp.build.ApkSigner
 import dev.ely.warp.build.SampleProject
 import dev.ely.warp.build.Toolchain
 import dev.ely.warp.build.ToolchainInstaller
+import dev.ely.warp.ui.theme.HairlineWidth
+import dev.ely.warp.ui.theme.LocalCodeSurface
 import dev.ely.warp.ui.theme.WarpMono
+import dev.ely.warp.ui.theme.WarpRadius
+import dev.ely.warp.ui.theme.WarpSpace
 import dev.ely.warp.ui.theme.WarpSuccess
 import dev.ely.warp.ui.theme.WarpWarning
 import kotlinx.coroutines.Dispatchers
@@ -69,25 +80,36 @@ fun BuildScreen(modifier: Modifier = Modifier) {
         toolchainState = withContext(Dispatchers.IO) { ToolchainInstaller.currentState(context) }
     }
 
+    // One buzz when the build lands, one when it breaks. This is the longest
+    // wait in the app — the phone is usually face-down on a desk by the time it
+    // finishes, so the result has to be felt, not only seen.
+    val haptics = LocalHapticFeedback.current
+    LaunchedEffect(buildState::class) {
+        when (buildState) {
+            is BuildUiState.Done -> haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+            is BuildUiState.Failed -> haptics.performHapticFeedback(HapticFeedbackType.Reject)
+            else -> Unit
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 24.dp),
+            .padding(horizontal = WarpSpace.screen, vertical = WarpSpace.screen),
     ) {
         Text(
             text = "Build",
             style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.SemiBold,
         )
-        Spacer(Modifier.size(4.dp))
+        Spacer(Modifier.size(WarpSpace.tiny))
         Text(
             text = "Compile an Android app on this phone",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        Spacer(Modifier.size(24.dp))
+        Spacer(Modifier.size(WarpSpace.section))
 
         ToolchainCard(
             state = toolchainState,
@@ -287,16 +309,39 @@ private fun BuildCard(
         )
         Spacer(Modifier.size(12.dp))
 
+        // The solid assembles as the build does — each stage lighting its share
+        // of the edges, whole at the end. Compiling an Android app on a phone
+        // is the most remarkable thing Warp does, and a table of rows was no
+        // way to show it.
+        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            BuildMark(
+                progress = when (state) {
+                    is BuildUiState.Idle -> 0f
+                    is BuildUiState.Running ->
+                        (state.stage.ordinal + 1f) / BuildEngine.Stage.entries.size
+                    is BuildUiState.Done -> 1f
+                    is BuildUiState.Failed ->
+                        (state.outcome.stages.size.toFloat() / BuildEngine.Stage.entries.size)
+                },
+                active = state is BuildUiState.Running,
+                failed = state is BuildUiState.Failed,
+                size = 200.dp,
+            )
+        }
+
+        Spacer(Modifier.size(WarpSpace.large))
+
         when (state) {
             is BuildUiState.Idle ->
                 Button(onClick = onBuild, enabled = enabled) { Text("Build APK") }
 
             is BuildUiState.Running -> {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.size(12.dp))
-                    Text(state.stage.label, style = MaterialTheme.typography.titleSmall)
-                }
+                // No spinner — the shape above already says the app is working.
+                Text(
+                    state.stage.label,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
             }
 
             is BuildUiState.Done -> {
@@ -350,7 +395,8 @@ private fun BuildCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 260.dp)
-                        .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(10.dp))
+                        // Its own token, not `surface` — see LocalCodeSurface.
+                        .background(LocalCodeSurface.current, RoundedCornerShape(WarpRadius.small))
                         .verticalScroll(rememberScrollState())
                         .padding(10.dp),
                 ) {
@@ -367,13 +413,17 @@ private fun BuildCard(
 private fun StageTimes(stages: List<BuildEngine.StageResult>) = Ltr {
     Column {
         stages.forEach { s ->
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    if (s.ok) "✓" else "✕",
-                    color = if (s.ok) WarpSuccess else MaterialTheme.colorScheme.error,
-                    style = WarpMono,
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    if (s.ok) Icons.Outlined.Check else Icons.Outlined.Close,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = if (s.ok) WarpSuccess else MaterialTheme.colorScheme.error,
                 )
-                Spacer(Modifier.size(8.dp))
+                Spacer(Modifier.size(WarpSpace.small))
                 Text(
                     s.stage.label,
                     style = MaterialTheme.typography.bodySmall,
@@ -419,11 +469,27 @@ private fun Card(title: String, content: @Composable () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(16.dp))
-            .padding(16.dp),
+            .background(
+                MaterialTheme.colorScheme.surfaceContainer,
+                RoundedCornerShape(WarpRadius.medium),
+            )
+            // A hairline, not a shadow. Shadows on a dark screen read as smudge;
+            // a one-pixel edge is how the card separates from what is behind it.
+            .border(
+                HairlineWidth,
+                // outlineVariant IS the hairline in both themes — already at 8%.
+                // Knocking its alpha down again would erase it on white.
+                MaterialTheme.colorScheme.outlineVariant,
+                RoundedCornerShape(WarpRadius.medium),
+            )
+            .padding(WarpSpace.card),
     ) {
-        Text(title, style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.size(10.dp))
+        Text(
+            title.uppercase(),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.size(WarpSpace.medium))
         content()
     }
 }

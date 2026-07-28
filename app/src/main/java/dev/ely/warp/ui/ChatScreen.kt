@@ -1,7 +1,15 @@
 package dev.ely.warp.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.text.BasicTextField
@@ -23,8 +31,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.automirrored.outlined.Send
+import androidx.compose.material.icons.outlined.Build
+import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -47,9 +56,14 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import dev.ely.warp.ui.theme.HairlineWidth
+import dev.ely.warp.ui.theme.LocalCodeSurface
+import dev.ely.warp.ui.theme.LocalIsDark
 import dev.ely.warp.ui.theme.WarpSpace
 import dev.ely.warp.ai.AiError
 import dev.ely.warp.ai.ChatEngine
@@ -73,57 +87,97 @@ import dev.ely.warp.ui.theme.warpTween
  *
  * Which AI is behind it is never visible here. That is the harness working.
  */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun ChatScreen(engine: ChatEngine, modifier: Modifier = Modifier) {
     val messages by engine.messages.collectAsState()
     val busy by engine.busy.collectAsState()
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+    val haptics = LocalHapticFeedback.current
 
     // Follow the newest text as it streams in.
     LaunchedEffect(messages.size, messages.lastOrNull()?.text?.length) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
     }
 
-    Column(modifier = modifier.fillMaxSize()) {
-        if (!engine.provider.requiresKey) {
-            DemoBanner(providerName = engine.provider.displayName)
-        }
+    // The mark is one continuous object across both states. When the first
+    // message is sent it does not vanish and get replaced — it travels from the
+    // centre of the empty screen down into its place beside the reply, shrinking
+    // as it goes. A shared element, so the movement is the real thing moving
+    // rather than two things cross-fading.
+    SharedTransitionLayout(modifier = modifier.fillMaxSize()) {
+        // Read here, in composable scope: the transition block is not one, and
+        // these carry the reduce-animations setting.
+        val bodyIn = motionDuration(WarpMotion.SLOW)
+        val bodyOut = motionDuration(WarpMotion.QUICK)
 
-        if (messages.isEmpty()) {
-            EmptyState(modifier = Modifier.weight(1f), onPick = { input = it })
-        } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(
-                    horizontal = WarpSpace.screen,
-                    vertical = WarpSpace.large,
-                ),
-                verticalArrangement = Arrangement.spacedBy(WarpSpace.message),
-            ) {
-                items(messages, key = { it.id }) { message ->
-                    // animateItem moves neighbours smoothly when the list grows;
-                    // Appear handles the message's own entrance.
-                    Appear(modifier = Modifier.animateItem()) {
-                        MessageItem(message)
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (!engine.provider.requiresKey) DemoChip()
+
+            AnimatedContent(
+                targetState = messages.isEmpty(),
+                modifier = Modifier.weight(1f),
+                transitionSpec = {
+                    fadeIn(tween(bodyIn)) togetherWith fadeOut(tween(bodyOut))
+                },
+                label = "chatBody",
+            ) { empty ->
+                // The key ties the two marks together; Compose interpolates
+                // position and size between them.
+                val markModifier = Modifier.sharedElement(
+                    rememberSharedContentState(MARK_KEY),
+                    animatedVisibilityScope = this@AnimatedContent,
+                )
+
+                if (empty) {
+                    EmptyState(markModifier = markModifier, onPick = { input = it })
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(
+                            horizontal = WarpSpace.screen,
+                            vertical = WarpSpace.large,
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(WarpSpace.message),
+                    ) {
+                        itemsIndexed(messages, key = { _, m -> m.id }) { index, message ->
+                            // animateItem moves neighbours smoothly as the list
+                            // grows; Appear handles each message's own entrance.
+                            Appear(modifier = Modifier.animateItem()) {
+                                MessageItem(
+                                    message = message,
+                                    // Only the first reply inherits the travelling
+                                    // mark — later ones simply appear.
+                                    markModifier = if (index == 1) markModifier else Modifier,
+                                )
+                            }
+                        }
                     }
                 }
             }
-        }
 
-        Composer(
-            value = input,
-            onValueChange = { input = it },
-            busy = busy,
-            onSend = {
-                engine.send(input)
-                input = ""
-            },
-            onStop = { engine.stop() },
-        )
+            Composer(
+                value = input,
+                onValueChange = { input = it },
+                busy = busy,
+                onSend = {
+                    // A light tap on send. Haptics are for things that happen,
+                    // never for navigation — a phone that buzzes at everything
+                    // stops meaning anything.
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    engine.send(input)
+                    input = ""
+                },
+                onStop = { engine.stop() },
+            )
+        }
     }
 }
+
+/** Ties the empty state's mark to the first reply's mark. */
+private const val MARK_KEY = "warp-mark"
 
 /**
  * Fades content in while it rises into place.
@@ -149,55 +203,83 @@ private fun Appear(modifier: Modifier = Modifier, content: @Composable () -> Uni
     ) { content() }
 }
 
+/**
+ * A quiet note that answers are scripted.
+ *
+ * Previously a full-width amber band with an emoji, which read as a system
+ * warning — the loudest thing on a screen whose subject is a conversation.
+ * Demo mode is a fact worth stating once, not an alarm.
+ */
 @Composable
-private fun DemoBanner(providerName: String) {
+private fun DemoChip() {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(WarpWarning.copy(alpha = 0.10f))
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(top = WarpSpace.small),
+        horizontalArrangement = Arrangement.Center,
     ) {
-        Text("🎭", style = MaterialTheme.typography.bodySmall)
-        Spacer(Modifier.size(8.dp))
-        Text(
-            "Demo mode · $providerName. Answers are scripted, not thought through.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Surface(
+            shape = CircleShape,
+            color = Color.Transparent,
+            border = BorderStroke(HairlineWidth, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Text(
+                "Demo mode · answers are scripted",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = WarpSpace.medium, vertical = 6.dp),
+            )
+        }
     }
 }
 
 @Composable
-private fun EmptyState(modifier: Modifier = Modifier, onPick: (String) -> Unit) {
+private fun EmptyState(
+    markModifier: Modifier,
+    modifier: Modifier = Modifier,
+    onPick: (String) -> Unit,
+) {
+    // The group sits at the top and the empty space falls below it. Content
+    // pushed to the bottom makes the screen read as though it has scrolled away
+    // from something; starting at the top gives the conversation room to grow
+    // downward into the space it will use.
     Column(
-        modifier = modifier.fillMaxWidth().padding(horizontal = WarpSpace.screen),
-        verticalArrangement = Arrangement.Center,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = WarpSpace.screen)
+            .padding(top = WarpSpace.section),
+        verticalArrangement = Arrangement.Top,
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // One of only two places in the app allowed to glow. Restraint is what
         // makes this moment land; an app that glows everywhere glows nowhere.
+        //
+        // Far weaker on white. Light does not add on a light background the way
+        // it does on a dark one — at dark-mode strength this bloom read as a
+        // grey-blue smudge behind the mark rather than as a glow.
+        val dark = LocalIsDark.current
         Box(contentAlignment = Alignment.Center) {
             Box(
                 modifier = Modifier
-                    .size(160.dp)
+                    .size(if (dark) 200.dp else 150.dp)
                     .background(
                         Brush.radialGradient(
                             listOf(
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                                MaterialTheme.colorScheme.primary
+                                    .copy(alpha = if (dark) 0.18f else 0.07f),
                                 Color.Transparent,
                             )
                         )
                     )
             )
-            WarpMark(size = 52.dp)
+            WarpMark(size = 56.dp, modifier = markModifier)
         }
 
-        Spacer(Modifier.size(WarpSpace.section))
+        Spacer(Modifier.size(WarpSpace.large))
 
         Text(
             "What would you like to build today?",
             style = MaterialTheme.typography.headlineMedium,
             color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center,
         )
 
         Spacer(Modifier.size(WarpSpace.section))
@@ -234,17 +316,21 @@ private fun SuggestionPill(text: String, onClick: () -> Unit) {
  * own symbol rather than by a generic spinner beside it.
  */
 @Composable
-private fun MessageMark(thinking: Boolean) {
+private fun MessageMark(thinking: Boolean, modifier: Modifier = Modifier) {
     if (thinking) {
-        ThinkingMark(size = 18.dp)
+        ThinkingMark(size = 20.dp, modifier = modifier)
     } else {
-        WarpMark(size = 18.dp)
+        WarpMark(size = 20.dp, modifier = modifier)
     }
 }
 
 @Composable
-private fun MessageItem(message: ChatMessage) {
-    if (message.role == Role.USER) UserMessage(message) else AssistantMessage(message)
+private fun MessageItem(message: ChatMessage, markModifier: Modifier = Modifier) {
+    if (message.role == Role.USER) {
+        UserMessage(message)
+    } else {
+        AssistantMessage(message, markModifier)
+    }
 }
 
 @Composable
@@ -269,11 +355,11 @@ private fun UserMessage(message: ChatMessage) {
 }
 
 @Composable
-private fun AssistantMessage(message: ChatMessage) {
+private fun AssistantMessage(message: ChatMessage, markModifier: Modifier = Modifier) {
     val working = message.streaming && message.text.isEmpty() && message.toolCalls.isEmpty()
 
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-        MessageMark(thinking = working)
+        MessageMark(thinking = working, modifier = markModifier)
         Spacer(Modifier.size(12.dp))
 
         Column(modifier = Modifier.weight(1f)) {
@@ -322,8 +408,16 @@ private fun ToolCard(call: ToolCall) {
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("🔧", style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.size(8.dp))
+                // A drawn icon rather than an emoji: emoji are another vendor's
+                // artwork, they change shape per phone, and they sit at a
+                // different weight to everything around them.
+                Icon(
+                    Icons.Outlined.Build,
+                    contentDescription = null,
+                    modifier = Modifier.size(15.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.size(WarpSpace.small))
                 Text(
                     call.name,
                     style = MaterialTheme.typography.labelLarge,
@@ -461,29 +555,36 @@ private fun Composer(
 
 @Composable
 private fun SendButton(busy: Boolean, enabled: Boolean, onClick: () -> Unit) {
-    // The colour eases between states rather than switching, so enabling the
-    // button as you type does not flash.
-    val target = if (enabled) MaterialTheme.colorScheme.primary
-    else MaterialTheme.colorScheme.surfaceContainer
-    val background by androidx.compose.animation.animateColorAsState(
-        targetValue = target,
-        animationSpec = warpTween(WarpMotion.QUICK),
-        label = "sendColour",
+    // Both colours ease rather than switch, so arming the button as you type is
+    // a wake-up rather than a flash.
+    val background by animateColorAsState(
+        targetValue = if (enabled) MaterialTheme.colorScheme.primary else Color.Transparent,
+        animationSpec = warpTween(WarpMotion.NORMAL),
+        label = "sendFill",
+    )
+    val content by animateColorAsState(
+        targetValue = if (enabled) Color.White
+        else MaterialTheme.colorScheme.onSurfaceVariant,
+        animationSpec = warpTween(WarpMotion.NORMAL),
+        label = "sendInk",
     )
 
     Surface(
         shape = CircleShape,
         color = background,
-        modifier = Modifier.size(48.dp),
+        // A hairline when idle rather than a filled grey disc. A grey circle
+        // reads as broken; an outline reads as waiting.
+        border = if (enabled) null
+        else BorderStroke(HairlineWidth, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.size(52.dp),
         onClick = onClick,
         enabled = enabled,
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
-                imageVector = if (busy) Icons.Filled.Stop else Icons.AutoMirrored.Filled.Send,
+                imageVector = if (busy) Icons.Outlined.Stop else Icons.AutoMirrored.Outlined.Send,
                 contentDescription = if (busy) "Stop" else "Send",
-                tint = if (enabled) MaterialTheme.colorScheme.onPrimary
-                else MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = content,
                 modifier = Modifier.size(20.dp),
             )
         }

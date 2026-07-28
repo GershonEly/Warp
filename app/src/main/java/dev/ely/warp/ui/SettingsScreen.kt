@@ -1,19 +1,29 @@
 package dev.ely.warp.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -34,7 +44,10 @@ import dev.ely.warp.ai.AiException
 import dev.ely.warp.ai.AiProvider
 import dev.ely.warp.ai.KeyVault
 import dev.ely.warp.ai.ProviderRegistry
+import dev.ely.warp.ui.theme.HairlineWidth
 import dev.ely.warp.ui.theme.WarpMono
+import dev.ely.warp.ui.theme.WarpRadius
+import dev.ely.warp.ui.theme.WarpSpace
 import dev.ely.warp.ui.theme.WarpSuccess
 import dev.ely.warp.ui.theme.WarpWarning
 import kotlinx.coroutines.Dispatchers
@@ -60,48 +73,43 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 24.dp),
+            .padding(horizontal = WarpSpace.screen, vertical = WarpSpace.screen),
     ) {
         Text(
             "AI keys",
             style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.SemiBold,
         )
-        Spacer(Modifier.size(4.dp))
+        Spacer(Modifier.size(WarpSpace.tiny))
         Text(
             "Warp ships with no API key. Bring your own — each is encrypted by " +
                 "the Android Keystore and never leaves this phone. Add as many " +
-                "as you like, then pick a model in the Chat tab.",
+                "as you like, then pick a model in the chat.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        Spacer(Modifier.size(20.dp))
+        Spacer(Modifier.size(WarpSpace.section))
 
         registry.providers
             .filter { it.requiresKey }
             .forEach { provider ->
                 ProviderKeyCard(provider)
-                Spacer(Modifier.size(14.dp))
+                Spacer(Modifier.size(WarpSpace.medium))
             }
 
-        Spacer(Modifier.size(6.dp))
-        Text(
-            "The 🎭 Mock AI needs no key and always works — it replays scripted " +
-                "answers so the whole app can be used before any key exists.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Spacer(Modifier.size(WarpSpace.large))
+        Footnote(
+            "The Mock AI needs no key and always works — it replays scripted " +
+                "answers so the whole app can be used before any key exists."
         )
-
-        Spacer(Modifier.size(16.dp))
-        Text(
+        Spacer(Modifier.size(WarpSpace.medium))
+        Footnote(
             "Keys are encrypted with a key generated inside the Android Keystore, " +
                 "which cannot be read out of the device. They are never written to " +
                 "a log, never sent anywhere except their own provider, and are not " +
-                "in the repository.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                "in the repository."
         )
+        Spacer(Modifier.size(WarpSpace.section))
     }
 }
 
@@ -117,8 +125,16 @@ private fun ProviderKeyCard(provider: AiProvider) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(16.dp))
-            .padding(16.dp),
+            .background(
+                MaterialTheme.colorScheme.surfaceContainer,
+                RoundedCornerShape(WarpRadius.medium),
+            )
+            .border(
+                HairlineWidth,
+                MaterialTheme.colorScheme.outlineVariant,
+                RoundedCornerShape(WarpRadius.medium),
+            )
+            .padding(WarpSpace.card),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -126,15 +142,26 @@ private fun ProviderKeyCard(provider: AiProvider) {
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.weight(1f),
             )
+            // A dot and a word. A coloured pill for every provider turned the
+            // screen into a traffic light.
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .background(
+                        if (savedKey != null) WarpSuccess else WarpWarning,
+                        CircleShape,
+                    )
+            )
+            Spacer(Modifier.size(WarpSpace.small))
             Text(
                 if (savedKey != null) "key saved" else "no key",
                 style = MaterialTheme.typography.labelMedium,
-                color = if (savedKey != null) WarpSuccess else WarpWarning,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
         savedKey?.let { masked ->
-            Spacer(Modifier.size(8.dp))
+            Spacer(Modifier.size(WarpSpace.small))
             Ltr {
                 Text(
                     masked,
@@ -152,13 +179,14 @@ private fun ProviderKeyCard(provider: AiProvider) {
             modifier = Modifier.fillMaxWidth(),
             label = { Text(if (savedKey == null) "Paste key" else "Replace key") },
             singleLine = true,
+            shape = RoundedCornerShape(WarpRadius.small),
             // A key on screen is a key over someone's shoulder.
             visualTransformation = PasswordVisualTransformation(),
         )
 
-        Spacer(Modifier.size(12.dp))
+        Spacer(Modifier.size(WarpSpace.medium))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(WarpSpace.small)) {
             Button(
                 enabled = keyInput.isNotBlank(),
                 onClick = {
@@ -190,32 +218,86 @@ private fun ProviderKeyCard(provider: AiProvider) {
             is TestState.Idle -> Unit
 
             is TestState.Testing -> {
-                Spacer(Modifier.size(12.dp))
+                Spacer(Modifier.size(WarpSpace.medium))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.size(10.dp))
-                    Text("Checking…", style = MaterialTheme.typography.bodyMedium)
+                    // The mark again, not a spinner — every wait in Warp is
+                    // signed by the same object turning.
+                    ThinkingMark(size = 16.dp)
+                    Spacer(Modifier.size(WarpSpace.medium))
+                    Text(
+                        "Checking…",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
 
             is TestState.Ok -> {
-                Spacer(Modifier.size(12.dp))
-                Text(
-                    "✓ ${state.message}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = WarpSuccess,
-                )
+                Spacer(Modifier.size(WarpSpace.medium))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Outlined.Check,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = WarpSuccess,
+                    )
+                    Spacer(Modifier.size(WarpSpace.small))
+                    Text(
+                        state.message,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = WarpSuccess,
+                    )
+                }
             }
 
             is TestState.Failed -> {
-                Spacer(Modifier.size(12.dp))
-                Text(
-                    "✕ ${state.message}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                )
+                Spacer(Modifier.size(WarpSpace.medium))
+                Row(verticalAlignment = Alignment.Top) {
+                    Icon(
+                        Icons.Outlined.Close,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                    Spacer(Modifier.size(WarpSpace.small))
+                    Text(
+                        state.message,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         }
+    }
+}
+
+/**
+ * The small print at the foot of the screen.
+ *
+ * Indented behind a hairline rather than set in yet another shade of grey —
+ * a rule says "aside" at a glance, where a fourth grey only says "low
+ * contrast".
+ */
+@Composable
+private fun Footnote(text: String) {
+    // IntrinsicSize.Min lets the Row measure to the text's own height first, so
+    // the rule can then fill it. Without it, fillMaxHeight would take the whole
+    // screen's height constraint and draw a line down the page.
+    Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+        Box(
+            modifier = Modifier
+                .width(HairlineWidth)
+                .fillMaxHeight()
+                // `outline`, not `outlineVariant`: a rule this short at 8% alpha
+                // is not visible at all.
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Spacer(Modifier.size(WarpSpace.medium))
+        Text(
+            text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

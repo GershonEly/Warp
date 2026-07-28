@@ -22,7 +22,7 @@ private val WarpLightColors = lightColorScheme(
     onBackground = LightOnSurface,
     surface = LightSurface,
     onSurface = LightOnSurface,
-    surfaceVariant = LightSurfaceContainer,
+    surfaceVariant = LightSurfaceVariant,
     onSurfaceVariant = LightOnSurfaceVariant,
     surfaceContainer = LightSurfaceContainer,
     surfaceContainerHigh = LightSurfaceHigh,
@@ -58,6 +58,18 @@ private val WarpDarkColors = darkColorScheme(
 /** The hairline colour for the current theme — depth comes from this, not shadow. */
 val LocalHairline = compositionLocalOf { DarkHairline }
 
+/** Background for compiler output and other machine-written text. */
+val LocalCodeSurface = compositionLocalOf { DarkCodeSurface }
+
+/**
+ * Whether the dark theme is showing.
+ *
+ * A handful of effects cannot simply be given a colour token because they are
+ * *effects*: the bloom behind the mark has to be far weaker on white than on
+ * black, or it reads as a smudge rather than as light.
+ */
+val LocalIsDark = compositionLocalOf { true }
+
 /**
  * Warp's theme.
  *
@@ -87,6 +99,8 @@ fun WarpTheme(
     CompositionLocalProvider(
         LocalAnimationsEnabled provides animationsEnabled,
         LocalHairline provides if (darkTheme) DarkHairline else LightHairline,
+        LocalCodeSurface provides if (darkTheme) DarkCodeSurface else LightCodeSurface,
+        LocalIsDark provides darkTheme,
     ) {
         MaterialTheme(
             colorScheme = colors,

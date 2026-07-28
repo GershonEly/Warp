@@ -25,10 +25,17 @@ val DarkOutline = Color(0xFF39414C)
 val DarkPrimaryContainer = Color(0xFF0E3350)
 
 // ── Light ────────────────────────────────────────────────────────────────
-val LightBackground = Color(0xFFFCFCFD)
-val LightSurface = Color(0xFFF5F6F8)
-val LightSurfaceContainer = Color(0xFFEEF0F3)
-val LightSurfaceHigh = Color(0xFFFFFFFF)
+//
+// Light mode inverts how depth is built, and getting this backwards is what
+// made the first light pass look washed out: in the dark theme raised things
+// are *lighter* than the page, but in the light theme raised things are
+// **white** and the page is the grey one. Cards, the composer and sheets are
+// pure white; the background sits a step below them.
+val LightBackground = Color(0xFFF4F6F8)       // the page — a light grey
+val LightSurface = Color(0xFFFFFFFF)          // drawer, plain panels
+val LightSurfaceContainer = Color(0xFFFFFFFF) // cards, the composer
+val LightSurfaceHigh = Color(0xFFFFFFFF)      // sheets, menus
+val LightSurfaceVariant = Color(0xFFE9ECF1)   // recessed: selected rows, badges
 val LightOnSurface = Color(0xFF16181C)
 val LightOnSurfaceVariant = Color(0xFF5A626C)
 val LightOutline = Color(0xFFC7CCD3)
@@ -63,4 +70,17 @@ val WarpWarning = Color(0xFFE5A00D)
  * Shadows are invisible on a dark background and look cheap on a light one.
  */
 val DarkHairline = Color(0x14FFFFFF)   // white at 8%
-val LightHairline = Color(0x140B0D10)  // near-black at 8%
+val LightHairline = Color(0x1F0B0D10)  // near-black at 12% — white cards need
+                                       // a firmer edge than dark ones do
+
+// ── Code panels ──────────────────────────────────────────────────────────
+
+/**
+ * The background behind compiler output and anything else the machine wrote.
+ *
+ * It needs its own token because "recessed" is not a fixed colour: on dark it
+ * is a step *below* the card, on light a step below white. Deriving it from
+ * `surface` made it vanish the moment light-mode cards became white too.
+ */
+val DarkCodeSurface = Color(0xFF0B0D10)
+val LightCodeSurface = Color(0xFFF1F3F7)
