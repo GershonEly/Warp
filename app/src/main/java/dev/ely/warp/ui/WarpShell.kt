@@ -15,11 +15,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
@@ -93,9 +98,14 @@ fun WarpShell(
         },
     ) {
         Scaffold(
-            // safeDrawing covers status bar, navigation bar, cutout and the
-            // keyboard in one place — handled here so no screen has to.
-            contentWindowInsets = WindowInsets.safeDrawing,
+            // The keyboard is handled once, for the whole shell, so the bars
+            // ride above it. Scaffold cannot do this itself: with a bottom bar
+            // present it gives content the bar's height instead of the insets,
+            // and the keyboard inset is dropped.
+            modifier = Modifier.imePadding(),
+            // Zero, because each bar now pads itself. Anything else would count
+            // the same inset twice.
+            contentWindowInsets = WindowInsets(0),
             topBar = {
                 WarpTopBar(
                     title = title,
@@ -147,6 +157,10 @@ private fun WarpTopBar(title: String, onMenu: () -> Unit, onTitleClick: () -> Un
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // Scaffold applies contentWindowInsets to its content slot only —
+            // topBar and bottomBar must inset themselves, or they draw at y=0
+            // underneath the clock and battery.
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
             .padding(horizontal = 6.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -218,8 +232,11 @@ private fun IconButtonBox(onClick: () -> Unit, content: @Composable () -> Unit) 
 private fun WarpBottomBar(current: WarpDestination, onSelect: (WarpDestination) -> Unit) {
     NavigationBar(
         containerColor = MaterialTheme.colorScheme.surface,
-        // The bar sits inside the Scaffold's insets, so it must not add its own.
-        windowInsets = WindowInsets(0),
+        // Its own bottom inset, for the same reason the top bar takes its own.
+        // navigationBars rather than safeDrawing: safeDrawing includes the
+        // keyboard, which the shell already handles, and adding it here would
+        // lift the bar twice.
+        windowInsets = WindowInsets.navigationBars,
     ) {
         WarpDestination.entries.forEach { destination ->
             NavigationBarItem(
