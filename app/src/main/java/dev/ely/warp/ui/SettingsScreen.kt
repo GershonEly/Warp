@@ -2,6 +2,7 @@ package dev.ely.warp.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,6 +37,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -43,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import dev.ely.warp.ai.AiException
 import dev.ely.warp.ai.AiProvider
 import dev.ely.warp.ai.KeyVault
+import dev.ely.warp.ai.Naming
 import dev.ely.warp.ai.ProviderRegistry
 import dev.ely.warp.ui.theme.HairlineWidth
 import dev.ely.warp.ui.theme.WarpMono
@@ -97,6 +100,9 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                 Spacer(Modifier.size(WarpSpace.medium))
             }
 
+        Spacer(Modifier.size(WarpSpace.section))
+        NamingSection(registry)
+
         Spacer(Modifier.size(WarpSpace.large))
         Footnote(
             "The Mock AI needs no key and always works — it replays scripted " +
@@ -110,6 +116,126 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                 "in the repository."
         )
         Spacer(Modifier.size(WarpSpace.section))
+    }
+}
+
+/**
+ * Who, if anyone, may name conversations.
+ *
+ * It lives in Settings and not in the chat's model picker because it is not a
+ * per-conversation decision — it is a standing answer to "may Warp spend my
+ * credits on this", and a question about money asked once is a setting.
+ *
+ * **Off is the default**, and the copy says why in the person's terms rather
+ * than the app's. Warp is BYOK: the key is theirs and so is the balance, and a
+ * default that quietly spends it to make a drawer read better has made a
+ * judgement only the account holder is entitled to make.
+ */
+@Composable
+private fun NamingSection(registry: ProviderRegistry) {
+    var naming by remember { mutableStateOf(registry.naming) }
+    var picking by remember { mutableStateOf(false) }
+
+    fun choose(value: Naming) {
+        naming = value
+        registry.naming = value
+    }
+
+    Text("Naming conversations", style = MaterialTheme.typography.headlineMedium)
+    Spacer(Modifier.size(WarpSpace.tiny))
+    Text(
+        "Every conversation is named from your first message, free and instantly. " +
+            "A model can write a better name instead — but that is one paid call " +
+            "per conversation, on your key, so it is off until you say otherwise.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    Spacer(Modifier.size(WarpSpace.medium))
+
+    NamingOption(
+        title = "Off",
+        subtitle = "Use your first message. Costs nothing, never fails.",
+        selected = naming == Naming.Off,
+        onClick = { choose(Naming.Off) },
+    )
+    Spacer(Modifier.size(WarpSpace.small))
+    NamingOption(
+        title = "Automatic",
+        subtitle = "The cheapest model from whichever AI the conversation used.",
+        selected = naming == Naming.Automatic,
+        onClick = { choose(Naming.Automatic) },
+    )
+    Spacer(Modifier.size(WarpSpace.small))
+    NamingOption(
+        title = (naming as? Naming.Specific)?.modelName ?: "Choose a model",
+        subtitle = "Always this one, whatever the conversation is using.",
+        selected = naming is Naming.Specific,
+        onClick = { picking = true },
+    )
+
+    if (picking) {
+        // The chat's own picker, reused rather than rebuilt. A second list of
+        // models is a second list to keep in step, and the day they disagree is
+        // the day somebody cannot find a model they know Warp supports.
+        ModelPickerDialog(
+            registry = registry,
+            current = registry.choice,
+            onPick = { picked ->
+                choose(
+                    Naming.Specific(
+                        providerId = picked.providerId,
+                        modelId = picked.modelId,
+                        modelName = picked.modelName,
+                    )
+                )
+            },
+            onDismiss = { picking = false },
+        )
+    }
+}
+
+@Composable
+private fun NamingOption(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(WarpRadius.small))
+            .background(
+                if (selected) MaterialTheme.colorScheme.primaryContainer
+                else MaterialTheme.colorScheme.surfaceContainer
+            )
+            .clickable(onClick = onClick)
+            .padding(WarpSpace.medium),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.size(2.dp))
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (selected) {
+            Icon(
+                Icons.Outlined.Check,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+        }
     }
 }
 

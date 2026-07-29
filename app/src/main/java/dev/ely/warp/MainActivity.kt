@@ -42,6 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.ely.warp.ai.ChatEngine
+import dev.ely.warp.ai.ConversationTitler
 import dev.ely.warp.ai.ProviderRegistry
 import dev.ely.warp.data.DrawerState
 import dev.ely.warp.diag.DeviceProbe
@@ -99,7 +100,10 @@ private fun WarpApp() {
     val conversations = remember {
         (context.applicationContext as WarpApplication).conversations
     }
-    val engine = remember { ChatEngine(scope, registry.selected, store = conversations) }
+    val titler = remember { ConversationTitler(conversations, registry) }
+    val engine = remember {
+        ChatEngine(scope, registry.selected, store = conversations, titler = titler)
+    }
     var choice by remember { mutableStateOf(registry.choice) }
 
     // The drawer's list, straight from the database. It updates itself: sending

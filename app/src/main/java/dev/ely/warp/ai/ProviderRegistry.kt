@@ -80,6 +80,105 @@ class ProviderRegistry(private val context: Context) {
             badge = null,
         )
 
+    // ── who names conversations ──────────────────────────────────────────
+
+    /**
+     * Which model, if any, is allowed to name a conversation.
+     *
+     * Stored as a mode plus an optional model, rather than as a nullable model
+     * where null means off. "Off" and "not chosen yet" are different answers and
+     * a single nullable field cannot tell them apart — which matters the moment
+     * someone picks a model, switches to Off, and comes back expecting their
+     * choice to still be there.
+     */
+    var naming: Naming
+        get() = when (prefs.getString(KEY_NAMING_MODE, null)) {
+            MODE_AUTOMATIC -> Naming.Automatic
+            MODE_MODEL -> {
+                val providerId = prefs.getString(KEY_NAMING_PROVIDER, null)
+                val modelId = prefs.getString(KEY_NAMING_MODEL, null)
+                if (providerId == null || modelId == null) {
+                    // The mode said a model and the model is gone. Off is the
+                    // only safe reading: guessing one would spend someone's
+                    // credits on a choice they did not make.
+                    Naming.Off
+                } else {
+                    Naming.Specific(
+                        providerId = providerId,
+                        modelId = modelId,
+                        modelName = prefs.getString(KEY_NAMING_MODEL_NAME, null) ?: modelId,
+                    )
+                }
+            }
+            // Includes null, which is a fresh install. See the plan: Off is the
+            // default because the key, and the balance it draws on, belong to
+            // the person — and "it only costs a little" is a judgement only the
+            // account holder is entitled to make.
+            else -> Naming.Off
+        }
+        set(value) {
+            val editor = prefs.edit()
+            when (value) {
+                Naming.Off -> editor.putString(KEY_NAMING_MODE, MODE_OFF)
+                Naming.Automatic -> editor.putString(KEY_NAMING_MODE, MODE_AUTOMATIC)
+                is Naming.Specific -> editor
+                    .putString(KEY_NAMING_MODE, MODE_MODEL)
+                    .putString(KEY_NAMING_PROVIDER, value.providerId)
+                    .putString(KEY_NAMING_MODEL, value.modelId)
+                    .putString(KEY_NAMING_MODEL_NAME, value.modelName)
+            }
+            editor.apply()
+        }
+
+    /**
+     * The provider and model that should name a conversation, or null for none.
+     *
+     * Returns null for [Naming.Off], and also whenever the answer would be a
+     * provider with no key — a naming call that is going to fail is worse than
+     * no naming call, because it costs the same latency to find out.
+     */
+    suspend fun namingModel(): Pair<AiProvider, String>? = when (val mode = naming) {
+        Naming.Off -> null
+
+        is Naming.Specific -> providerFor(mode.providerId)
+            .takeIf { hasKey(it) }
+            ?.let { it to mode.modelId }
+
+        Naming.Automatic -> selected.takeIf { hasKey(it) }?.let { provider ->
+            provider to (cheapestModelFor(provider) ?: choice.modelId)
+        }
+    }
+
+    /**
+     * The cheapest model a provider offers, by name.
+     *
+     * Warp does not hardcode model lists — it asks each provider what it has —
+     * so this cannot be a constant. It matches the small-model families each
+     * company is known for, and returns null when nothing matches so the caller
+     * falls back to the conversation's own model. A provider that names its
+     * cheap model something unguessable costs slightly more than it should,
+     * which is a far better failure than a crash or a wrong guess.
+     *
+     * Cached for the process: the answer changes when a provider ships a new
+     * model, not between two conversations, and naming must not pay for a model
+     * list every time someone starts a chat.
+     */
+    private suspend fun cheapestModelFor(provider: AiProvider): String? {
+        cheapestCache[provider.id]?.let { return it.value }
+
+        val models = provider.listModels().getOrNull().orEmpty()
+        val match = CHEAP_MARKERS.firstNotNullOfOrNull { marker ->
+            models.firstOrNull { marker in "${it.id} ${it.displayName}".lowercase() }?.id
+        }
+
+        cheapestCache[provider.id] = Cached(match)
+        return match
+    }
+
+    private class Cached(val value: String?)
+
+    private val cheapestCache = mutableMapOf<String, Cached>()
+
     /** The provider behind the current choice. */
     val selected: AiProvider get() = providerFor(choice.providerId)
 
@@ -215,6 +314,30 @@ class ProviderRegistry(private val context: Context) {
         private const val KEY_MODEL = "model"
         private const val KEY_MODEL_NAME = "model_name"
         private const val KEY_EFFORT = "effort"
+        private const val KEY_NAMING_MODE = "naming_mode"
+        private const val KEY_NAMING_PROVIDER = "naming_provider"
+        private const val KEY_NAMING_MODEL = "naming_model"
+        private const val KEY_NAMING_MODEL_NAME = "naming_model_name"
+
+        private const val MODE_OFF = "off"
+        private const val MODE_AUTOMATIC = "auto"
+        private const val MODE_MODEL = "model"
+
+        /**
+         * What a cheap model tends to be called.
+         *
+         * Families, never versions, for the same reason as everything else in
+         * this file: a new small model should be found without Warp shipping an
+         * update. Ordered, so the first match wins.
+         */
+        private val CHEAP_MARKERS = listOf(
+            "haiku",   // Anthropic
+            "flash",   // Google
+            "mini",    // OpenAI
+            "nano",
+            "small",
+            "lite",
+        )
 
         /** Shown per model for providers that support it, as in the design. */
         private val EFFORT_LEVELS = listOf(Effort.HIGH, Effort.MEDIUM, Effort.LOW)

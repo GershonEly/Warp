@@ -113,6 +113,29 @@ data class ModelChoice(
     val key: String get() = "$providerId|$modelId|${effort?.name ?: ""}"
 }
 
+/**
+ * Who is allowed to name a conversation.
+ *
+ * A closed set rather than a nullable model, because "off" and "nothing chosen
+ * yet" are different answers and one nullable field cannot hold both — which
+ * matters as soon as somebody picks a model, switches to Off, and comes back
+ * expecting their pick to still be remembered.
+ */
+sealed interface Naming {
+    /** Nobody. Conversations keep the name taken from the first question. */
+    data object Off : Naming
+
+    /** The cheapest model from whichever provider the conversation used. */
+    data object Automatic : Naming
+
+    /** Exactly this one, whatever the conversation is using. */
+    data class Specific(
+        val providerId: String,
+        val modelId: String,
+        val modelName: String,
+    ) : Naming
+}
+
 data class AiModel(
     val id: String,
     val displayName: String,

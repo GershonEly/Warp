@@ -25,6 +25,8 @@ class ChatEngine(
     private val systemPrompt: String? = DEFAULT_SYSTEM_PROMPT,
     /** Where messages are kept. Null keeps the engine purely in memory. */
     private val store: ConversationStore? = null,
+    /** Who gives a conversation its name. Null leaves them unnamed. */
+    private val titler: Titler? = null,
 ) {
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
@@ -95,10 +97,11 @@ class ChatEngine(
                 // process being killed even if the answer does not — losing your
                 // own words is far worse than losing a reply, which can always
                 // be asked for again.
-                ensureConversation()
+                ensureConversation(trimmed)
                 persistNow(userMessage.id)
 
                 runTurn(replyId)
+                refineTitle(replyId)
             } catch (e: CancellationException) {
                 // Stopped by the user: keep whatever text already arrived
                 // rather than discarding a half-finished answer.
@@ -213,11 +216,30 @@ class ChatEngine(
      * opening a chat and changing your mind leaves nothing behind. An empty row
      * in the drawer is a promise the app did not keep.
      */
-    private suspend fun ensureConversation(): String? {
+    private suspend fun ensureConversation(question: String): String? {
         val target = store ?: return null
         _conversationId.value?.let { return it }
-        return target.create().also { _conversationId.value = it }
+
+        val id = target.create()
+        _conversationId.value = id
+        // Named here, from the question alone, before a single token of the
+        // answer exists. The drawer must never show a row with no name on it,
+        // and waiting for a model to supply one would mean exactly that for as
+        // long as the model took — including for ever, when naming is off.
+        titler?.nameNow(id, question)
+        awaitingTitle = question
+        return id
     }
+
+    /**
+     * The first question in a conversation, until its reply has landed.
+     *
+     * Held rather than recomputed because "the first exchange" stops being
+     * identifiable the moment there is a second one, and the refinement runs
+     * after the reply — by which time the transcript no longer says which
+     * exchange was the first.
+     */
+    private var awaitingTitle: String? = null
 
     /**
      * Write one message as it currently stands.
@@ -234,6 +256,24 @@ class ChatEngine(
     }
 
     /**
+     * Ask for a better name, once, after the first reply has landed.
+     *
+     * Skipped when the reply failed. A name derived from an answer that never
+     * arrived would be a name derived from nothing, and the one taken from the
+     * question is already the better of the two.
+     */
+    private suspend fun refineTitle(replyId: String) {
+        val question = awaitingTitle ?: return
+        awaitingTitle = null
+
+        val id = _conversationId.value ?: return
+        val reply = _messages.value.firstOrNull { it.id == replyId } ?: return
+        if (reply.error != null) return
+
+        titler?.refine(id, question, reply.text)
+    }
+
+    /**
      * What the engine needs from storage.
      *
      * An interface rather than the repository itself, so the engine keeps
@@ -246,6 +286,23 @@ class ChatEngine(
         suspend fun create(): String
 
         suspend fun save(conversationId: String, message: ChatMessage)
+    }
+
+    /**
+     * Who names a conversation.
+     *
+     * Two calls, not one, because they answer different questions. [nameNow]
+     * must be instant and cannot fail — it is what stops an unnamed row ever
+     * appearing. [refine] is allowed to be slow, to cost money, and to decline
+     * entirely; whether it does any of those is a setting, and the engine is
+     * deliberately not told which.
+     */
+    interface Titler {
+        /** Name it from the question alone. Called before the answer exists. */
+        suspend fun nameNow(conversationId: String, question: String)
+
+        /** Improve on that name, if the setting allows it. May do nothing. */
+        suspend fun refine(conversationId: String, question: String, answer: String)
     }
 
     private fun finish(id: String, change: (ChatMessage) -> ChatMessage) = update(id, change)

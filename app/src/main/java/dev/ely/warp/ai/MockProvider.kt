@@ -57,6 +57,18 @@ class MockProvider(
             return@flow
         }
 
+        // Being asked to name a conversation is a different question, and
+        // answering it with the standard paragraph made the whole naming path
+        // untestable without a paid key: the paragraph is correctly rejected as
+        // too long to be a title, so nothing changed — and "nothing changed" is
+        // indistinguishable from the feature being broken.
+        titleRequest(prompt)?.let { question ->
+            delay(300)
+            emit(AiEvent.TextDelta(mockTitle(question)))
+            emit(AiEvent.Completed())
+            return@flow
+        }
+
         // Models take a moment before the first token. Without this the UI
         // never shows its "thinking" state, so it never gets tested.
         delay(if (request.effort == Effort.LOW) 350 else 900)
@@ -133,6 +145,41 @@ class MockProvider(
             "pretend error" in p -> AiError.Server("mock failure, on request")
             else -> null
         }
+    }
+
+    // ── naming a conversation ────────────────────────────────────────────
+
+    /**
+     * The question inside a naming request, or null if this is not one.
+     *
+     * Detected from the prompt rather than from a flag on the request, because a
+     * flag would be a field every provider carried in order to describe
+     * something only this one needs to notice. The prompt is what a real model
+     * gets; the mock reading the same thing keeps them honest.
+     */
+    private fun titleRequest(prompt: String): String? {
+        if ("name this conversation" !in prompt.lowercase()) return null
+        return prompt.substringAfter("Question:", "").substringBefore("Answer so far:").trim()
+    }
+
+    /**
+     * A short, plausible name.
+     *
+     * Rules, not intelligence — this is a mock, and pretending otherwise would
+     * make it a worse test rather than a better one. Four words of the question,
+     * with the leading politeness stripped, is close enough in shape to what a
+     * real model returns that the code path either works for both or neither.
+     */
+    private fun mockTitle(question: String): String {
+        val cleaned = question
+            .replace(Regex("^(please|can you|could you|how do i|how to|i want to|make me)\\s+", RegexOption.IGNORE_CASE), "")
+            .trim()
+            .trimEnd('?', '.', '!')
+
+        val words = cleaned.split(Regex("\\s+")).filter { it.isNotBlank() }.take(4)
+        if (words.isEmpty()) return "New conversation"
+
+        return words.joinToString(" ").replaceFirstChar { it.uppercase() }
     }
 
     // ── the scripts ──────────────────────────────────────────────────────
