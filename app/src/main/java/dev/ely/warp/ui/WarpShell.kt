@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -335,38 +336,55 @@ private fun DrawerContents(
     onSelect: (WarpDestination) -> Unit,
     onNewChat: () -> Unit,
 ) {
+    // Compact when the drawer is short — a landscape phone, or a portrait one at
+    // the largest system font. Scrolling alone was not enough: everything was
+    // *reachable*, but Workspace was entirely below the fold, so the drawer
+    // opened showing half its purpose. Dropping the least important line and
+    // tightening the vertical rhythm buys back about 100dp, which is the
+    // difference between scrolling to discover a section and scrolling to
+    // finish reading one.
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    val compact = maxHeight < 520.dp
     Column(
         modifier = Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.safeDrawing)
             .padding(horizontal = WarpSpace.medium),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(
-                start = WarpSpace.medium,
-                top = WarpSpace.large,
-                bottom = WarpSpace.large,
-            ),
-        ) {
-            WarpMark(size = 24.dp)
-            Spacer(Modifier.size(WarpSpace.medium))
-            Text("Warp", style = MaterialTheme.typography.titleMedium)
-        }
-
-        NewChatButton(onClick = onNewChat)
-
-        Spacer(Modifier.size(WarpSpace.large))
-
-        // The middle scrolls; the header and the account row do not. In
-        // landscape, or at the largest system font, the two groups are taller
-        // than the drawer — and the account row must never be the thing that
-        // gets pushed off the bottom, because it is the way into Settings.
+        // Everything scrolls except the account row.
+        //
+        // Pinning the header as well seemed tidier and was wrong: in landscape
+        // the drawer is about 400dp tall against roughly 490dp of content, and
+        // holding the header and "New chat" in place spent the entire overflow
+        // on the Workspace group — the label showed with nothing underneath it
+        // and no sign there was anything to scroll to. Letting the header move
+        // instead leaves a row half-visible at the bottom edge, which is its own
+        // invitation to scroll.
+        //
+        // The account row stays pinned because it is the way into Settings, and
+        // the way into Settings must never be the thing that falls off.
         Column(
             modifier = Modifier
                 .weight(1f)
                 .verticalScroll(rememberScrollState())
         ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(
+                    start = WarpSpace.medium,
+                    top = if (compact) WarpSpace.small else WarpSpace.large,
+                    bottom = if (compact) WarpSpace.small else WarpSpace.large,
+                ),
+            ) {
+                WarpMark(size = 24.dp)
+                Spacer(Modifier.size(WarpSpace.medium))
+                Text("Warp", style = MaterialTheme.typography.titleMedium)
+            }
+
+            NewChatButton(onClick = onNewChat)
+
+            Spacer(Modifier.size(if (compact) WarpSpace.small else WarpSpace.large))
+
             // Everything above the hairline is the conversation; everything
             // below it is the project. Two ideas instead of six flat rows.
             SectionLabel("Recent")
@@ -376,24 +394,29 @@ private fun DrawerContents(
                 selected = current == WarpDestination.CHAT,
                 onClick = { onSelect(WarpDestination.CHAT) },
             )
-            Text(
-                "Older conversations are kept once project storage lands.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(
-                    // Indented to the rows' text column (12 padding + 18 icon +
-                    // 12 gap), so it reads as belonging to the list rather than
-                    // as a stray paragraph beside it.
-                    start = 42.dp,
-                    end = WarpSpace.medium,
-                    top = WarpSpace.small,
-                    bottom = WarpSpace.small,
-                ),
-            )
+            // The first thing dropped when space is tight. It explains an
+            // absence, which matters less than showing the sections that are
+            // actually there.
+            if (!compact) {
+                Text(
+                    "Older conversations are kept once project storage lands.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(
+                        // Indented to the rows' text column (12 padding + 18
+                        // icon + 12 gap), so it reads as belonging to the list
+                        // rather than as a stray paragraph beside it.
+                        start = 42.dp,
+                        end = WarpSpace.medium,
+                        top = WarpSpace.small,
+                        bottom = WarpSpace.small,
+                    ),
+                )
+            }
 
-            Spacer(Modifier.size(WarpSpace.medium))
+            Spacer(Modifier.size(if (compact) WarpSpace.small else WarpSpace.medium))
             DrawerDivider()
-            Spacer(Modifier.size(WarpSpace.medium))
+            Spacer(Modifier.size(if (compact) WarpSpace.small else WarpSpace.medium))
 
             SectionLabel("Workspace")
             WarpDestination.workspace.forEach { destination ->
@@ -411,6 +434,7 @@ private fun DrawerContents(
             selected = current == WarpDestination.SETTINGS,
             onClick = { onSelect(WarpDestination.SETTINGS) },
         )
+    }
     }
 }
 
