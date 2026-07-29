@@ -1,0 +1,246 @@
+package dev.ely.warp.data
+
+import android.content.Context
+import dev.ely.warp.ai.ChatEngine
+import dev.ely.warp.ai.ChatMessage
+import dev.ely.warp.ai.Role
+import dev.ely.warp.ai.ToolCall
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.UUID
+
+/**
+ * The only thing that talks to the database.
+ *
+ * Everything above this file works in `ChatMessage` and [Conversation]; the
+ * entities never leave. That boundary is the point — the chat should not know
+ * that tool calls happen to be stored as JSON, and the store should not know
+ * that a message can be mid-stream.
+ */
+class ConversationRepository(context: Context) : ChatEngine.ConversationStore {
+
+    private val db = WarpDatabase.get(context)
+    private val conversations = db.conversations()
+    private val messages = db.messages()
+    private val folders = db.folders()
+
+    // ── reading ──────────────────────────────────────────────────────────
+
+    /**
+     * Everything the drawer needs, in one stream.
+     *
+     * Combined here rather than collected as three separate flows in the UI:
+     * three flows means three recompositions per change and a window where the
+     * list has been updated but its previews have not, which shows up as text
+     * flickering between conversations.
+     */
+    fun observeDrawer(): Flow<DrawerState> =
+        combine(
+            conversations.observeAll(),
+            folders.observeAll(),
+            messages.observePreviews(),
+        ) { conversationRows, folderRows, previewRows ->
+            val previews = previewRows.associate { it.conversationId to it.text }
+            DrawerState(
+                conversations = conversationRows.map { it.toModel(previews[it.id]) },
+                folders = folderRows.map { Folder(it.id, it.name, it.sortKey) },
+            )
+        }
+
+    fun observeMessages(conversationId: String): Flow<List<ChatMessage>> =
+        messages.observeFor(conversationId).map { rows -> rows.map { it.toModel() } }
+
+    suspend fun search(query: String): List<Conversation> {
+        // FTS treats bare punctuation as syntax, so a stray quote in what
+        // someone typed would throw rather than find nothing. Quoting the whole
+        // thing as a phrase and appending * makes it a prefix search over
+        // literal text, which is what a search box is expected to do.
+        val safe = query.replace("\"", "").trim()
+        if (safe.isEmpty()) return emptyList()
+        return messages.search("\"$safe\"*").map { it.toModel(null) }
+    }
+
+    // ── what the chat engine writes through ──────────────────────────────
+    //
+    // The engine is handed no clock, so the two methods it calls read one here.
+    // Everything else takes `now` explicitly, which is what makes the store
+    // testable without waiting for real time to pass.
+
+    override suspend fun create(): String = createConversation(System.currentTimeMillis())
+
+    override suspend fun save(conversationId: String, message: ChatMessage) =
+        saveMessage(conversationId, message, System.currentTimeMillis())
+
+    // ── writing ──────────────────────────────────────────────────────────
+
+    suspend fun createConversation(now: Long): String {
+        val id = UUID.randomUUID().toString()
+        conversations.upsert(
+            ConversationEntity(
+                id = id,
+                title = UNTITLED,
+                createdAt = now,
+                updatedAt = now,
+            )
+        )
+        return id
+    }
+
+    /**
+     * Write a message, and mark its conversation as freshly used.
+     *
+     * Called on every streamed chunk, so it is an upsert of one row rather than
+     * a rewrite of the conversation — SQLite is fast, but not "rewrite the
+     * transcript sixty times a second" fast.
+     */
+    suspend fun saveMessage(conversationId: String, message: ChatMessage, now: Long) {
+        messages.upsert(
+            MessageEntity(
+                id = message.id,
+                conversationId = conversationId,
+                role = message.role.name,
+                text = message.text,
+                toolCallsJson = message.toolCalls.toJsonOrNull(),
+                createdAt = message.createdAt,
+            )
+        )
+        conversations.touch(conversationId, now)
+    }
+
+    suspend fun rename(id: String, title: String, now: Long) =
+        conversations.rename(id, title.trim().ifEmpty { UNTITLED }, now)
+
+    /** Only the auto-titler calls this; it cannot overwrite a manual name. */
+    suspend fun suggestTitle(id: String, title: String) {
+        val clean = title.trim().trim('"', '\'', '.').take(60)
+        if (clean.isNotEmpty()) conversations.suggestTitle(id, clean)
+    }
+
+    suspend fun setPinned(id: String, pinned: Boolean, now: Long) =
+        conversations.setPinned(id, pinned, now)
+
+    suspend fun moveToFolder(id: String, folderId: String?, now: Long) =
+        conversations.moveToFolder(id, folderId, now)
+
+    suspend fun softDelete(id: String, now: Long) = conversations.softDelete(id, now)
+
+    suspend fun undoDelete(id: String) = conversations.restore(id)
+
+    /**
+     * Clear out anything whose undo window has closed.
+     *
+     * Run at startup. See the DAO for why this is not a timer.
+     */
+    suspend fun purgeOldDeletes(now: Long) =
+        conversations.purgeDeletedBefore(now - UNDO_WINDOW_MS)
+
+    // ── folders ──────────────────────────────────────────────────────────
+
+    suspend fun createFolder(name: String, now: Long): String {
+        val id = UUID.randomUUID().toString()
+        folders.upsert(FolderEntity(id, name.trim(), sortKey = now, createdAt = now))
+        return id
+    }
+
+    suspend fun renameFolder(id: String, name: String) = folders.rename(id, name.trim())
+
+    suspend fun deleteFolder(folder: Folder) =
+        folders.delete(FolderEntity(folder.id, folder.name, folder.sortKey, 0))
+
+    /** Persist a new order after a drag in the Manage folders sheet. */
+    suspend fun reorderFolders(ordered: List<Folder>, now: Long) =
+        folders.upsertAll(
+            ordered.mapIndexed { index, folder ->
+                FolderEntity(folder.id, folder.name, sortKey = index.toLong(), createdAt = now)
+            }
+        )
+
+    // ── mapping ──────────────────────────────────────────────────────────
+
+    private fun ConversationEntity.toModel(preview: String?) = Conversation(
+        id = id,
+        title = title,
+        titleIsManual = titleIsManual,
+        folderId = folderId,
+        pinned = pinned,
+        preview = preview?.replace('\n', ' ')?.take(80).orEmpty(),
+        updatedAt = updatedAt,
+    )
+
+    private fun MessageEntity.toModel() = ChatMessage(
+        id = id,
+        // A row written by a newer version could name a role this build has
+        // never heard of. Falling back beats crashing the whole transcript.
+        role = runCatching { Role.valueOf(role) }.getOrDefault(Role.ASSISTANT),
+        text = text,
+        toolCalls = toolCallsJson.toToolCalls(),
+        createdAt = createdAt,
+    )
+
+    private fun List<ToolCall>.toJsonOrNull(): String? {
+        if (isEmpty()) return null
+        val array = JSONArray()
+        forEach { call ->
+            array.put(
+                JSONObject()
+                    .put("id", call.id)
+                    .put("name", call.name)
+                    .put("argumentsJson", call.argumentsJson)
+                    .put("status", call.status.name)
+                    .put("result", call.result ?: JSONObject.NULL)
+            )
+        }
+        return array.toString()
+    }
+
+    private fun String?.toToolCalls(): List<ToolCall> {
+        if (this.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val array = JSONArray(this)
+            (0 until array.length()).map { i ->
+                val o = array.getJSONObject(i)
+                ToolCall(
+                    id = o.getString("id"),
+                    name = o.getString("name"),
+                    argumentsJson = o.optString("argumentsJson"),
+                    status = runCatching { ToolCall.Status.valueOf(o.getString("status")) }
+                        .getOrDefault(ToolCall.Status.DONE),
+                    result = if (o.isNull("result")) null else o.getString("result"),
+                )
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    companion object {
+        const val UNTITLED = "New chat"
+
+        /** How long a deleted conversation can still be brought back. */
+        const val UNDO_WINDOW_MS = 15_000L
+    }
+}
+
+// ── what the UI sees ─────────────────────────────────────────────────────
+
+data class Conversation(
+    val id: String,
+    val title: String,
+    val titleIsManual: Boolean,
+    val folderId: String?,
+    val pinned: Boolean,
+    val preview: String,
+    val updatedAt: Long,
+)
+
+data class Folder(
+    val id: String,
+    val name: String,
+    val sortKey: Long,
+)
+
+data class DrawerState(
+    val conversations: List<Conversation> = emptyList(),
+    val folders: List<Folder> = emptyList(),
+)

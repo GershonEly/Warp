@@ -143,6 +143,15 @@ data class ChatMessage(
     /** True while text is still streaming in. */
     val streaming: Boolean = false,
     val error: AiError? = null,
+    /**
+     * When the message was created.
+     *
+     * Stamped once, by whoever makes the message, and never touched again — it
+     * is what orders a transcript when it is read back from disk. Sorting by
+     * insertion order would work until the first time a reply is edited in
+     * place, which is every single streamed token.
+     */
+    val createdAt: Long = System.currentTimeMillis(),
 )
 
 data class ToolCall(

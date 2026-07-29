@@ -91,7 +91,12 @@ private fun WarpApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val registry = remember { ProviderRegistry(context) }
-    val engine = remember { ChatEngine(scope, registry.selected) }
+    // Taken from the Application rather than built here. The store outlives the
+    // composition, and the startup sweep already opened it.
+    val conversations = remember {
+        (context.applicationContext as WarpApplication).conversations
+    }
+    val engine = remember { ChatEngine(scope, registry.selected, store = conversations) }
     var choice by remember { mutableStateOf(registry.choice) }
 
     // Pick up a key added in Settings; the model itself is chosen in the picker.

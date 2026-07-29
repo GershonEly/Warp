@@ -84,13 +84,34 @@ interface ConversationDao {
     suspend fun purgeDeletedBefore(before: Long)
 }
 
+/**
+ * Reading and writing messages.
+ *
+ * Every ordering here breaks ties on `rowid`, and that is not belt-and-braces.
+ * A question and its reply are created in the same instant — measured on the
+ * device, they land on the identical millisecond — and `ORDER BY createdAt`
+ * alone leaves SQLite free to return them either way round. That shows up as a
+ * transcript where the answer sits above the question, but only sometimes, and
+ * only after a reload. `rowid` is insertion order, and the question is always
+ * written before its reply, so it settles the tie the way a reader expects.
+ */
 @Dao
 interface MessageDao {
 
-    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY createdAt ASC")
+    @Query(
+        """
+        SELECT * FROM messages WHERE conversationId = :conversationId
+        ORDER BY createdAt ASC, rowid ASC
+        """
+    )
     fun observeFor(conversationId: String): Flow<List<MessageEntity>>
 
-    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY createdAt ASC")
+    @Query(
+        """
+        SELECT * FROM messages WHERE conversationId = :conversationId
+        ORDER BY createdAt ASC, rowid ASC
+        """
+    )
     suspend fun forConversation(conversationId: String): List<MessageEntity>
 
     /**
@@ -98,6 +119,11 @@ interface MessageDao {
      *
      * A list of bare titles gives you nothing to recognise a conversation by
      * when two of them are named similarly.
+     *
+     * The `rowid` tiebreak matters here for the same reason as above, and it is
+     * more visible: without it the preview under a conversation can show the
+     * question instead of the answer, because the two share a timestamp and the
+     * "last message" is then whichever one SQLite felt like returning.
      */
     @Query(
         """
@@ -105,7 +131,7 @@ interface MessageDao {
         WHERE id IN (
             SELECT id FROM messages m
             WHERE m.conversationId = messages.conversationId
-            ORDER BY m.createdAt DESC LIMIT 1
+            ORDER BY m.createdAt DESC, m.rowid DESC LIMIT 1
         )
         """
     )
