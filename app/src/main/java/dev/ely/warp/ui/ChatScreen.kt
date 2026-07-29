@@ -14,7 +14,11 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -263,55 +267,129 @@ private fun EmptyState(
     modifier: Modifier = Modifier,
     onPick: (String) -> Unit,
 ) {
-    // The group sits at the top and the empty space falls below it. Content
-    // pushed to the bottom makes the screen read as though it has scrolled away
-    // from something; starting at the top gives the conversation room to grow
-    // downward into the space it will use.
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = WarpSpace.screen)
-            .padding(top = WarpSpace.section),
-        verticalArrangement = Arrangement.Top,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        // One of only two places in the app allowed to glow. Restraint is what
-        // makes this moment land; an app that glows everywhere glows nowhere.
-        //
-        // Far weaker on white. Light does not add on a light background the way
-        // it does on a dark one — at dark-mode strength this bloom read as a
-        // grey-blue smudge behind the mark rather than as a glow.
-        val dark = LocalIsDark.current
-        Box(contentAlignment = Alignment.Center) {
-            Box(
-                modifier = Modifier
-                    .size(if (dark) 200.dp else 150.dp)
-                    .background(
-                        Brush.radialGradient(
-                            listOf(
-                                MaterialTheme.colorScheme.primary
-                                    .copy(alpha = if (dark) 0.18f else 0.07f),
-                                Color.Transparent,
-                            )
-                        )
-                    )
-            )
-            WarpMark(size = 56.dp, modifier = markModifier)
+    // Two arrangements, chosen by the shape of the space rather than by a
+    // device category. Rotating the phone cut this screen to about 400dp of
+    // height and a plain Column clipped everything below the mark — heading and
+    // both suggestions simply gone. Making it scroll stopped the loss, but a
+    // tall stack on a wide, short screen is still the wrong shape: it leaves
+    // the width empty and pushes the words under the composer.
+    //
+    // So on a wide-short screen the mark moves *beside* the text instead of
+    // above it, which is the arrangement that space was always asking for.
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val short = maxHeight < 480.dp
+        val beside = short && maxWidth > maxHeight
+
+        val markSize = if (short) 44.dp else 56.dp
+        val glowSize = when {
+            short -> 120.dp
+            LocalIsDark.current -> 200.dp
+            else -> 150.dp
         }
 
-        Spacer(Modifier.size(WarpSpace.large))
+        // Scrollable as a floor, not as a feature: at some combination of small
+        // screen and large font any fixed layout runs out of room, and content
+        // you cannot reach is worse than content you have to scroll to.
+        val scroll = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = WarpSpace.screen)
 
-        Text(
-            "What would you like to build today?",
-            style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Center,
-        )
+        val mark: @Composable () -> Unit = {
+            // One of only two places in the app allowed to glow. Restraint is
+            // what makes this moment land; an app that glows everywhere glows
+            // nowhere.
+            //
+            // Far weaker on white. Light does not add on a light background the
+            // way it does on a dark one — at dark-mode strength this bloom read
+            // as a grey-blue smudge behind the mark rather than as a glow.
+            val dark = LocalIsDark.current
+            Box(contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier
+                        .size(glowSize)
+                        .background(
+                            Brush.radialGradient(
+                                listOf(
+                                    MaterialTheme.colorScheme.primary
+                                        .copy(alpha = if (dark) 0.18f else 0.07f),
+                                    Color.Transparent,
+                                )
+                            )
+                        )
+                )
+                WarpMark(size = markSize, modifier = markModifier)
+            }
+        }
 
-        Spacer(Modifier.size(WarpSpace.section))
+        val heading: @Composable (TextAlign) -> Unit = { align ->
+            Text(
+                "What would you like to build today?",
+                style = if (short) MaterialTheme.typography.titleLarge
+                else MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = align,
+            )
+        }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(WarpSpace.small)) {
-            SUGGESTIONS.forEach { suggestion -> SuggestionPill(suggestion) { onPick(suggestion) } }
+        // FlowRow, not Row: at the largest font size two pills no longer fit
+        // side by side, and a Row would push the second one off the screen
+        // rather than move it to its own line.
+        // The modifier is a parameter because beside-mode must NOT fill the
+        // width: a full-width pill row makes its column full-width too, and then
+        // the Row's Center arrangement has nothing left to centre — which is
+        // exactly why the group stayed pinned to the left edge on the first try.
+        val pills: @Composable (Alignment.Horizontal, Modifier) -> Unit = { align, mod ->
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(WarpSpace.small, align),
+                verticalArrangement = Arrangement.spacedBy(WarpSpace.small),
+                modifier = mod,
+            ) {
+                SUGGESTIONS.forEach { suggestion ->
+                    SuggestionPill(suggestion) { onPick(suggestion) }
+                }
+            }
+        }
+
+        if (beside) {
+            Row(
+                // Sits high and to the left rather than centred as a group.
+                // Centring was tried and looked worse: the composer runs the
+                // full width beneath it, so a floating centred cluster has
+                // nothing to line up with, where a left-aligned one shares the
+                // composer's edge.
+                modifier = scroll.padding(bottom = WarpSpace.large),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Start,
+            ) {
+                mark()
+                Spacer(Modifier.size(WarpSpace.large))
+                Column(
+                    horizontalAlignment = Alignment.Start,
+                    modifier = Modifier.weight(1f, fill = false),
+                ) {
+                    heading(TextAlign.Start)
+                    Spacer(Modifier.size(WarpSpace.large))
+                    pills(Alignment.Start, Modifier)
+                }
+            }
+        } else {
+            // The group sits at the top and the empty space falls below it.
+            // Content pushed to the bottom makes the screen read as though it
+            // has scrolled away from something; starting at the top gives the
+            // conversation room to grow downward into the space it will use.
+            Column(
+                modifier = scroll.padding(top = WarpSpace.section),
+                verticalArrangement = Arrangement.Top,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                mark()
+                Spacer(Modifier.size(WarpSpace.large))
+                heading(TextAlign.Center)
+                Spacer(Modifier.size(WarpSpace.section))
+                pills(Alignment.CenterHorizontally, Modifier.fillMaxWidth())
+                Spacer(Modifier.size(WarpSpace.section))
+            }
         }
     }
 }

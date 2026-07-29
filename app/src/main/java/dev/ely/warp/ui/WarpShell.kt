@@ -9,6 +9,8 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -356,44 +358,52 @@ private fun DrawerContents(
 
         Spacer(Modifier.size(WarpSpace.large))
 
-        // Everything above the hairline is the conversation; everything below it
-        // is the project. Two ideas instead of six flat rows.
-        SectionLabel("Recent")
-        ConversationRow(
-            title = "Current session",
-            subtitle = modelLabel,
-            selected = current == WarpDestination.CHAT,
-            onClick = { onSelect(WarpDestination.CHAT) },
-        )
-        Text(
-            "Older conversations are kept once project storage lands.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(
-                // Indented to the rows' text column (12 padding + 18 icon + 12
-                // gap), so it reads as belonging to the list rather than as a
-                // stray paragraph beside it.
-                start = 42.dp,
-                end = WarpSpace.medium,
-                top = WarpSpace.small,
-                bottom = WarpSpace.small,
-            ),
-        )
-
-        Spacer(Modifier.size(WarpSpace.medium))
-        DrawerDivider()
-        Spacer(Modifier.size(WarpSpace.medium))
-
-        SectionLabel("Workspace")
-        WarpDestination.workspace.forEach { destination ->
-            DrawerRow(
-                destination = destination,
-                selected = destination == current,
-                onClick = { onSelect(destination) },
+        // The middle scrolls; the header and the account row do not. In
+        // landscape, or at the largest system font, the two groups are taller
+        // than the drawer — and the account row must never be the thing that
+        // gets pushed off the bottom, because it is the way into Settings.
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+        ) {
+            // Everything above the hairline is the conversation; everything
+            // below it is the project. Two ideas instead of six flat rows.
+            SectionLabel("Recent")
+            ConversationRow(
+                title = "Current session",
+                subtitle = modelLabel,
+                selected = current == WarpDestination.CHAT,
+                onClick = { onSelect(WarpDestination.CHAT) },
             )
-        }
+            Text(
+                "Older conversations are kept once project storage lands.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(
+                    // Indented to the rows' text column (12 padding + 18 icon +
+                    // 12 gap), so it reads as belonging to the list rather than
+                    // as a stray paragraph beside it.
+                    start = 42.dp,
+                    end = WarpSpace.medium,
+                    top = WarpSpace.small,
+                    bottom = WarpSpace.small,
+                ),
+            )
 
-        Spacer(Modifier.weight(1f))
+            Spacer(Modifier.size(WarpSpace.medium))
+            DrawerDivider()
+            Spacer(Modifier.size(WarpSpace.medium))
+
+            SectionLabel("Workspace")
+            WarpDestination.workspace.forEach { destination ->
+                DrawerRow(
+                    destination = destination,
+                    selected = destination == current,
+                    onClick = { onSelect(destination) },
+                )
+            }
+        }
 
         DrawerDivider()
         AccountRow(
@@ -627,7 +637,13 @@ private fun DrawerRow(
 @Composable
 fun ComingSoonScreen(title: String, description: String, modifier: Modifier = Modifier) {
     Column(
-        modifier = modifier.fillMaxSize().padding(WarpSpace.section),
+        modifier = modifier
+            .fillMaxSize()
+            // Scrollable for the same reason as the chat's empty state: in
+            // landscape, or at the largest system font, a centred column simply
+            // clips whatever does not fit.
+            .verticalScroll(rememberScrollState())
+            .padding(WarpSpace.section),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
