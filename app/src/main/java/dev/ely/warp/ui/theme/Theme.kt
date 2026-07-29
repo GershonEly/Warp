@@ -26,6 +26,11 @@ private val WarpLightColors = lightColorScheme(
     onSurfaceVariant = LightOnSurfaceVariant,
     surfaceContainer = LightSurfaceContainer,
     surfaceContainerHigh = LightSurfaceHigh,
+    // Not white, unlike the two rungs above it. Light mode builds depth the
+    // other way up — raised things are white and the page is the grey one — so
+    // the token used for a quiet button has to be the *recessed* grey, or the
+    // button disappears into the card it sits on.
+    surfaceContainerHighest = LightSurfaceVariant,
     outline = LightOutline,
     outlineVariant = LightHairline,
     error = WarpError,
@@ -47,6 +52,11 @@ private val WarpDarkColors = darkColorScheme(
     onSurfaceVariant = DarkOnSurfaceVariant,
     surfaceContainer = DarkSurfaceContainer,
     surfaceContainerHigh = DarkSurfaceHigh,
+    // Mapped explicitly. Left unset, Material fills it from its own baseline
+    // palette, which is an untinted grey — so the one token used for a quiet
+    // circular button would have been the only surface in the app with no blue
+    // in it, and the accent would have looked stranded beside it.
+    surfaceContainerHighest = DarkSurfaceHigh,
     outline = DarkOutline,
     outlineVariant = DarkHairline,
     error = WarpError,

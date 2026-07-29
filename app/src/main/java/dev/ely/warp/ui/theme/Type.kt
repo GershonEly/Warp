@@ -18,12 +18,29 @@ import dev.ely.warp.R
 /**
  * Warp's type.
  *
- * Geist, not Roboto. Roboto is the Android system font, so an app set in it
- * inherits the look of stock Android and cannot read as its own product — which
- * was the single largest reason the first design pass still looked dated.
+ * **Rubik, everywhere.** Not Roboto — Roboto is the Android system font, so an
+ * app set in it inherits the look of stock Android and cannot read as its own
+ * product, which was the largest single reason the first design pass still
+ * looked dated.
  *
- * Six styles, not twenty. Hierarchy comes from size and colour, never from
- * bolding inside a paragraph.
+ * Rubik replaced Geist across the whole interface rather than only in the
+ * headings. The two-face version was tried first and it was the wrong call in
+ * practice: with Rubik in two slots out of fifteen, exactly two headings in the
+ * app changed and everything else — every row, label, button and paragraph —
+ * stayed Geist. The new face was invisible, so the app had a new font and the
+ * same voice.
+ *
+ * **Hierarchy comes from weight and colour, not from swapping families.** That
+ * is the whole reason the entire 300–900 axis is loaded: a greeting at 700, a
+ * heading at 600, a label at 500, a paragraph at 400, and a quiet caption at
+ * 300 are one voice speaking at five volumes. Two families would have been two
+ * voices, which is what makes an interface feel assembled rather than designed.
+ *
+ * Hebrew is why Rubik beat the alternatives. Warp is forced left-to-right today
+ * because every label is English, and real right-to-left support means
+ * translating the app rather than mirroring it. Rubik was drawn with Hebrew; the
+ * faces considered beside it were Latin-only, so any of them would have meant
+ * choosing again on the day Warp is translated.
  *
  * The two details doing most of the work here are **negative tracking on large
  * text** and a **generous body line height**. Default tracking at large sizes is
@@ -33,47 +50,92 @@ import dev.ely.warp.R
 
 private fun weight(w: Int) = FontVariation.Settings(FontVariation.weight(w))
 
-/** UI face — drawn for developer products, openly licensed. */
-val Geist = FontFamily(
-    Font(R.font.geist, FontWeight.Normal, variationSettings = weight(400)),
-    Font(R.font.geist, FontWeight.Medium, variationSettings = weight(500)),
-    Font(R.font.geist, FontWeight.SemiBold, variationSettings = weight(600)),
+/**
+ * The interface face. One font file, five weights.
+ *
+ * **Each weight is its own XML resource, and that is not a style choice.** The
+ * obvious spelling — five Compose `Font` entries all pointing at `rubik.ttf`
+ * with different `variationSettings` — silently does not work: Android caches a
+ * Typeface by resource id, so all five resolve to whichever instance was built
+ * first and the entire app renders at 400.
+ *
+ * It failed quietly, which is the dangerous part. The font *was* loading, the
+ * theme *was* wired, and nothing logged a warning — the app simply had a new
+ * typeface and one weight, so changing the design changed nothing anyone could
+ * see. It was caught by forcing weight 900 app-wide and finding the screen
+ * unchanged.
+ *
+ * Each `rubik_wNNN.xml` names the same `rubik.ttf` and applies its own
+ * `fontVariationSettings`, so the weight is cut by the platform and each weight
+ * gets its own cache entry. Five small XML files, no duplicated font data, and
+ * no experimental API.
+ */
+val Rubik = FontFamily(
+    Font(R.font.rubik_w400, FontWeight.Normal),
+    Font(R.font.rubik_w500, FontWeight.Medium),
+    Font(R.font.rubik_w600, FontWeight.SemiBold),
+    Font(R.font.rubik_w700, FontWeight.Bold),
+    Font(R.font.rubik_w800, FontWeight.ExtraBold),
 )
 
-/** Code face — same family, so logs and prose belong to one voice. */
+/**
+ * Code face — the one place a second family earns its keep.
+ *
+ * Compiler output, file paths and JSON are not prose and should not be set as
+ * prose: a monospace column is how you see that a stack trace is aligned and
+ * that a path has not been wrapped. Geist Sans is gone from the app, but its
+ * mono stays, which is why the Geist licence still travels with the APK.
+ */
 val GeistMono = FontFamily(
     Font(R.font.geist_mono, FontWeight.Normal, variationSettings = weight(400)),
     Font(R.font.geist_mono, FontWeight.Medium, variationSettings = weight(500)),
 )
 
-// ── the six ──────────────────────────────────────────────────────────────
+// ── the scale ────────────────────────────────────────────────────────────
+//
+// One face, five volumes. The weight climbs with the size on purpose: large text
+// carries its own emphasis through sheer area, so a heading that is *also* the
+// heaviest thing on screen is what separates a hierarchy you feel from one you
+// have to work out.
+//
+//   Display   32  Bold        700   the one big line on a screen
+//   Headline  24  SemiBold    600   screen and section titles
+//   Title     17  Medium      500   card titles, row emphasis
+//   Body      16  Regular     400   everything you read
+//   Label     13  Medium      500   captions, chips, states
+//
+// Colour does the rest, and the theme owns it: `onSurface` for what matters,
+// `onSurfaceVariant` for what supports it, `primary` for what is active. That
+// division is why this file has five styles and not twenty.
 
 private val Display = TextStyle(
-    fontFamily = Geist,
-    fontWeight = FontWeight.Medium,
+    fontFamily = Rubik,
+    fontWeight = FontWeight.Bold,
     fontSize = 32.sp,
-    lineHeight = 37.sp,
-    letterSpacing = (-0.02).em,
-)
-
-private val Headline = TextStyle(
-    fontFamily = Geist,
-    fontWeight = FontWeight.Medium,
-    fontSize = 24.sp,
-    lineHeight = 30.sp,
+    lineHeight = 38.sp,
+    // Less negative than a grotesque wants. Rubik's rounded shapes already sit
+    // close together, and pulling them tighter only muddies the counters.
     letterSpacing = (-0.015).em,
 )
 
-private val Title = TextStyle(
-    fontFamily = Geist,
-    fontWeight = FontWeight.Medium,
-    fontSize = 17.sp,
-    lineHeight = 22.sp,
+private val Headline = TextStyle(
+    fontFamily = Rubik,
+    fontWeight = FontWeight.SemiBold,
+    fontSize = 24.sp,
+    lineHeight = 31.sp,
     letterSpacing = (-0.01).em,
 )
 
+private val Title = TextStyle(
+    fontFamily = Rubik,
+    fontWeight = FontWeight.Medium,
+    fontSize = 17.sp,
+    lineHeight = 23.sp,
+    letterSpacing = (-0.005).em,
+)
+
 private val Body = TextStyle(
-    fontFamily = Geist,
+    fontFamily = Rubik,
     fontWeight = FontWeight.Normal,
     fontSize = 16.sp,
     // 1.55 — the difference between text that reads and text that is merely
@@ -83,10 +145,13 @@ private val Body = TextStyle(
 )
 
 private val Label = TextStyle(
-    fontFamily = Geist,
+    fontFamily = Rubik,
     fontWeight = FontWeight.Medium,
     fontSize = 13.sp,
-    lineHeight = 16.sp,
+    lineHeight = 17.sp,
+    // Positive tracking at small sizes, and no negative tracking anywhere below
+    // Title: tightening is a fix for large text only. Applied to a 12sp label it
+    // is how small type turns into a smudge.
     letterSpacing = 0.01.em,
 )
 

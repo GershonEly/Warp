@@ -47,6 +47,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
@@ -69,6 +70,7 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -92,8 +94,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import dev.ely.warp.data.Conversation
 import dev.ely.warp.data.Folder
+import dev.ely.warp.data.Identity
 import dev.ely.warp.ui.theme.HairlineWidth
 import dev.ely.warp.ui.theme.WarpMotion
 import dev.ely.warp.ui.theme.WarpRadius
@@ -700,21 +704,59 @@ private fun WarpTopBar(
     }
 }
 
-/** Stands in for a profile picture until there are accounts. */
+/**
+ * Stands in for a profile picture until there are accounts.
+ *
+ * The letter comes from the name you set, and there is no fallback letter. A
+ * circle holding "U" for "User" is a worse answer than a circle holding Warp's
+ * own mark, and the mark is always true. This used to be the literal `"E"`,
+ * which greeted everyone who sideloads Warp as its author.
+ */
 @Composable
 private fun Avatar(size: Dp) {
+    val initial = currentInitial()
+
     Box(
         modifier = Modifier
             .size(size)
             .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            "E",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
-        )
+        if (initial == null) {
+            // A plain person glyph, not Warp's mark. The mark has fine internal
+            // lines and at 18dp inside a circle it collapses into a blue blob —
+            // seen on the phone, and unreadable. The mark keeps the places big
+            // enough to show it.
+            Icon(
+                Icons.Outlined.Person,
+                contentDescription = null,
+                modifier = Modifier.size(size * 0.6f),
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+        } else {
+            Text(
+                initial,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+        }
     }
+}
+
+/**
+ * The avatar letter, kept current.
+ *
+ * Collected from [Identity]'s flow rather than read inside `remember`. The
+ * first version did the latter and cached it: you set your name in Settings,
+ * came back, and the avatar still showed no name because nothing had told it to
+ * look again.
+ */
+@Composable
+private fun currentInitial(): String? {
+    val context = LocalContext.current
+    val identity = remember { Identity.get(context) }
+    val name by identity.name.collectAsState()
+    return Identity.initialOf(name)
 }
 
 @Composable
@@ -729,22 +771,25 @@ private fun IconButtonBox(onClick: () -> Unit, content: @Composable () -> Unit) 
 }
 
 /**
- * The drawer.
+ * The drawer, third version.
  *
- * Rebuilt from a **navigation menu** into a **conversation list**, which is what
- * the drawer of a chat app actually is — Claude, ChatGPT and Gemini all do this,
- * and it is why theirs feel like a place and the old one felt like a settings
- * screen. Six identical rows mixing places you work, things you do, and an
- * app-level setting, all weighted the same, was most of what read as messy.
+ * The second was a conversation list, which was the right idea and the wrong
+ * execution: with real content in it, four small grey uppercase labels stacked
+ * in one column read as a terminal. Six screens from Gemini, ChatGPT and Claude
+ * were compared against it, and they agree on eight things — see
+ * [§9g](IMPLEMENTATION_PLAN.md). The ones that shape this file:
  *
- * Chat is not a row: tapping a conversation *is* going to chat. A "Chat" row
- * beside a list of chats is the kind of redundancy that reads as clutter without
- * anyone being able to name it.
- *
- * Recent is a real, labelled slot even though conversations do not persist yet.
- * A section that says what it will hold beats a paragraph apologising at the
- * bottom of the screen, and when storage arrives the list drops straight in with
- * nothing redesigned twice.
+ * - **Navigation on top, conversations below.** The top group is short and
+ *   fixed; the list is long and grows. Underneath, the fixed thing walks further
+ *   down the screen every week — which is exactly why this used to need a
+ *   compact mode to survive landscape, and why it no longer does.
+ * - **Navigation is quieter than the list.** The conversations are the bright
+ *   thing. Warp had these the same weight, so the drawer argued with itself
+ *   about what it was for.
+ * - **One line per conversation, no icon, no preview.** Two lines plus an icon
+ *   meant five conversations filled the room nine should, and two chats with
+ *   similar previews read as the same chat twice.
+ * - **Sentence case at reading size.** "Pinned", not `PINNED`.
  */
 @Composable
 private fun DrawerContents(
@@ -761,33 +806,16 @@ private fun DrawerContents(
     onToggleFolder: (String) -> Unit,
     onManageFolders: () -> Unit,
 ) {
-    // Compact when the drawer is short — a landscape phone, or a portrait one at
-    // the largest system font. Scrolling alone was not enough: everything was
-    // *reachable*, but Workspace was entirely below the fold, so the drawer
-    // opened showing half its purpose. Dropping the least important line and
-    // tightening the vertical rhythm buys back about 100dp, which is the
-    // difference between scrolling to discover a section and scrolling to
-    // finish reading one.
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-    val compact = maxHeight < 520.dp
     Column(
         modifier = Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.safeDrawing)
             .padding(horizontal = WarpSpace.medium),
     ) {
-        // Everything scrolls except the account row.
-        //
-        // Pinning the header as well seemed tidier and was wrong: in landscape
-        // the drawer is about 400dp tall against roughly 490dp of content, and
-        // holding the header and "New chat" in place spent the entire overflow
-        // on the Workspace group — the label showed with nothing underneath it
-        // and no sign there was anything to scroll to. Letting the header move
-        // instead leaves a row half-visible at the bottom edge, which is its own
-        // invitation to scroll.
-        //
-        // The account row stays pinned because it is the way into Settings, and
-        // the way into Settings must never be the thing that falls off.
+        // Everything scrolls except the bottom bar. There is no compact mode any
+        // more: it existed because Workspace sat under a growing list and fell
+        // off the fold on a short screen. With the fixed group on top, the thing
+        // that scrolls is the thing that is supposed to.
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -797,21 +825,35 @@ private fun DrawerContents(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(
                     start = WarpSpace.medium,
-                    top = if (compact) WarpSpace.small else WarpSpace.large,
-                    bottom = if (compact) WarpSpace.small else WarpSpace.large,
+                    top = WarpSpace.large,
+                    bottom = WarpSpace.large,
                 ),
             ) {
                 WarpMark(size = 24.dp)
                 Spacer(Modifier.size(WarpSpace.medium))
-                Text("Warp", style = MaterialTheme.typography.titleMedium)
+                // The wordmark, and the one place in the drawer that gets to be
+                // heavy. A brand name set at the same weight as a menu item is a
+                // brand name nobody reads as one.
+                Text(
+                    "Warp",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                )
             }
 
-            NewChatButton(onClick = onNewChat)
+            // Navigation, first and quiet. Short, fixed, and always exactly
+            // where it was yesterday.
+            WarpDestination.workspace.forEach { destination ->
+                DrawerRow(
+                    destination = destination,
+                    selected = destination == current,
+                    onClick = { onSelect(destination) },
+                )
+            }
 
-            Spacer(Modifier.size(if (compact) WarpSpace.small else WarpSpace.large))
-
-            // Everything above the hairline is the conversation; everything
-            // below it is the project. Two ideas instead of six flat rows.
+            Spacer(Modifier.size(WarpSpace.medium))
+            DrawerDivider()
+            Spacer(Modifier.size(WarpSpace.large))
 
             // Pinned first, and the label only exists when something is pinned.
             // An always-present "Pinned" heading over an empty space is a
@@ -828,7 +870,6 @@ private fun DrawerContents(
                 pinned.forEach { conversation ->
                     ConversationRow(
                         title = conversation.title,
-                        subtitle = conversation.subtitle(),
                         selected = current == WarpDestination.CHAT &&
                             conversation.id == openConversationId,
                         pinned = true,
@@ -836,7 +877,7 @@ private fun DrawerContents(
                         onLongClick = { onConversationMenu(conversation) },
                     )
                 }
-                Spacer(Modifier.size(if (compact) WarpSpace.small else WarpSpace.medium))
+                Spacer(Modifier.size(WarpSpace.large))
             }
 
             folders.forEach { folder ->
@@ -853,7 +894,6 @@ private fun DrawerContents(
                     inside.forEach { conversation ->
                         ConversationRow(
                             title = conversation.title,
-                            subtitle = conversation.subtitle(),
                             selected = current == WarpDestination.CHAT &&
                                 conversation.id == openConversationId,
                             onClick = { onOpenConversation(conversation.id) },
@@ -866,7 +906,7 @@ private fun DrawerContents(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(
-                                start = 42.dp,
+                                start = WarpSpace.medium + 26.dp,
                                 top = WarpSpace.tiny,
                                 bottom = WarpSpace.small,
                             ),
@@ -876,7 +916,7 @@ private fun DrawerContents(
             }
 
             if (folders.isNotEmpty()) {
-                Spacer(Modifier.size(if (compact) WarpSpace.small else WarpSpace.medium))
+                Spacer(Modifier.size(WarpSpace.large))
             }
 
             SectionLabel("Recent")
@@ -887,29 +927,21 @@ private fun DrawerContents(
                 // one. Showing a row for it would be a row that vanishes when
                 // you tap New chat, so the slot says what it is for instead.
                 //
-                // First thing dropped when space is tight: explaining an absence
-                // matters less than showing the sections that are there.
-                if (!compact) {
-                    Text(
-                        "Conversations appear here once you send a message.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(
-                            // Indented to the rows' text column (12 padding + 18
-                            // icon + 12 gap), so it reads as belonging to the
-                            // list rather than as a stray paragraph beside it.
-                            start = 42.dp,
-                            end = WarpSpace.medium,
-                            top = WarpSpace.small,
-                            bottom = WarpSpace.small,
-                        ),
-                    )
-                }
+                Text(
+                    "Conversations appear here once you send a message.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(
+                        start = WarpSpace.medium,
+                        end = WarpSpace.medium,
+                        top = WarpSpace.small,
+                        bottom = WarpSpace.small,
+                    ),
+                )
             } else {
                 recent.forEach { conversation ->
                     ConversationRow(
                         title = conversation.title,
-                        subtitle = conversation.subtitle(),
                         // Selected means "this is the conversation on screen",
                         // which is only true while Chat is the visible screen.
                         // Leaving a row highlighted from Settings claims you are
@@ -922,9 +954,8 @@ private fun DrawerContents(
                 }
             }
 
-            // Below the conversations, not above them: the list is what the
-            // drawer is for, and a control for organising it should not be the
-            // first thing in the way of reaching it.
+            // Under the list it organises, and quiet, because it is maintenance
+            // rather than something anyone opens the drawer to do.
             Spacer(Modifier.size(WarpSpace.small))
             DrawerRowPlain(
                 icon = Icons.Outlined.CreateNewFolder,
@@ -932,27 +963,30 @@ private fun DrawerContents(
                 onClick = onManageFolders,
             )
 
-            Spacer(Modifier.size(if (compact) WarpSpace.small else WarpSpace.medium))
-            DrawerDivider()
-            Spacer(Modifier.size(if (compact) WarpSpace.small else WarpSpace.medium))
-
-            SectionLabel("Workspace")
-            WarpDestination.workspace.forEach { destination ->
-                DrawerRow(
-                    destination = destination,
-                    selected = destination == current,
-                    onClick = { onSelect(destination) },
-                )
-            }
+            // So the last conversation is not hard against the bottom bar, and
+            // so there is somewhere for the list to end.
+            Spacer(Modifier.size(WarpSpace.section))
         }
 
-        DrawerDivider()
-        AccountRow(
-            modelLabel = modelLabel,
-            selected = current == WarpDestination.SETTINGS,
-            onClick = { onSelect(WarpDestination.SETTINGS) },
-        )
-    }
+        // The bottom bar: the one filled control, and the way into Settings.
+        //
+        // A pill rather than the old full-width button, at the bottom rather
+        // than the top. It is where the thumb already rests, and a full-width
+        // filled bar above a list of quiet rows was shouting the loudest thing
+        // in the drawer at the moment you were trying to read the list.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = WarpSpace.medium),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            NewChatButton(onClick = onNewChat)
+            Spacer(Modifier.weight(1f))
+            AccountButton(
+                selected = current == WarpDestination.SETTINGS,
+                onClick = { onSelect(WarpDestination.SETTINGS) },
+            )
+        }
     }
 }
 
@@ -965,17 +999,17 @@ private fun DrawerContents(
 private fun NewChatButton(onClick: () -> Unit) {
     Row(
         modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(WarpRadius.small))
+            // A pill that fits its label, not a bar that fills the drawer. The
+            // full-width version was the loudest thing on screen at exactly the
+            // moment you were trying to read the quiet list underneath it.
+            .clip(CircleShape)
             // Solid `primary`, not `primaryContainer`. The selected row already
             // wears primaryContainer, and when the button wore it too the two
             // were indistinguishable — the primary action has to outrank a
             // selection state, or "the only filled thing" means nothing.
             .background(MaterialTheme.colorScheme.primary)
             .clickable(onClick = onClick)
-            // `medium`, matching every row below it, so the icon column runs
-            // straight down the whole drawer.
-            .padding(horizontal = WarpSpace.medium, vertical = WarpSpace.medium),
+            .padding(horizontal = WarpSpace.large, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
@@ -984,12 +1018,56 @@ private fun NewChatButton(onClick: () -> Unit) {
             modifier = Modifier.size(18.dp),
             tint = MaterialTheme.colorScheme.onPrimary,
         )
-        Spacer(Modifier.size(WarpSpace.medium))
+        Spacer(Modifier.size(WarpSpace.small))
         Text(
             "New chat",
             style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onPrimary,
         )
+    }
+}
+
+/**
+ * The way into Settings, as an avatar.
+ *
+ * The full-width account row it replaces carried the model name as a subtitle,
+ * which the chat's own top bar already shows — so it was a whole row spent
+ * repeating something visible one tap away, sitting across the bottom of the
+ * drawer in the same grey as everything else.
+ */
+@Composable
+private fun AccountButton(selected: Boolean, onClick: () -> Unit) {
+    val initial = currentInitial()
+
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .clip(CircleShape)
+            .background(
+                if (selected) MaterialTheme.colorScheme.primaryContainer
+                else MaterialTheme.colorScheme.surfaceContainerHighest
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (initial == null) {
+            Icon(
+                Icons.Outlined.Person,
+                contentDescription = "Settings",
+                modifier = Modifier.size(20.dp),
+                tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Text(
+                initial,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -1025,21 +1103,34 @@ private fun FolderHeader(
             .padding(horizontal = WarpSpace.medium, vertical = WarpSpace.small),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // A folder icon, because this is a folder. The previous version had a
+        // chevron alone and set the name in the same grey uppercase as Warp's
+        // own section labels — so the one thing in the drawer a person had made
+        // themselves was disguised as a heading the app invented, and it was the
+        // only row that *is* a folder without the icon for one.
         Icon(
-            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+            Icons.Outlined.FolderOpen,
             contentDescription = null,
-            modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = turn },
+            modifier = Modifier.size(16.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.size(WarpSpace.medium))
+        Spacer(Modifier.size(WarpSpace.small))
         Text(
-            name.uppercase(),
-            style = MaterialTheme.typography.labelSmall,
+            name,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        Icon(
+            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+            contentDescription = null,
+            modifier = Modifier.size(16.dp).graphicsLayer { rotationZ = turn },
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.size(WarpSpace.small))
         if (count > 0) {
             Text(
                 count.toString(),
@@ -1080,14 +1171,31 @@ private fun DrawerRowPlain(
     }
 }
 
-/** Small, upper, quiet — present enough to group, easy enough to scan past. */
+/**
+ * A heading over a group.
+ *
+ * **Sentence case at reading size**, and that is the single change that does
+ * most to stop this drawer looking like a console. It used to be small, grey,
+ * letterspaced and uppercase — which is fine once and reads as a command prompt
+ * four times, and with pinned, a folder, recent and workspace all present there
+ * were four. Gemini, ChatGPT and Claude all set theirs as ordinary words.
+ */
 @Composable
 private fun SectionLabel(text: String) {
     Text(
-        text.uppercase(),
-        style = MaterialTheme.typography.labelSmall,
+        text,
+        style = MaterialTheme.typography.bodyMedium,
+        // SemiBold, not Medium. A heading needs to outweigh the rows under it or
+        // it is just another row — and with everything in the drawer previously
+        // sitting between 400 and 500, changing the typeface changed nothing
+        // anyone could see. A face only announces itself through contrast.
+        fontWeight = FontWeight.SemiBold,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = WarpSpace.medium, bottom = WarpSpace.small),
+        modifier = Modifier.padding(
+            start = WarpSpace.medium,
+            top = WarpSpace.small,
+            bottom = WarpSpace.small,
+        ),
     )
 }
 
@@ -1103,42 +1211,23 @@ private fun DrawerDivider() {
 }
 
 /**
- * The second line of a conversation row.
+ * A conversation. One line: what it was about.
  *
- * Time and preview together on one line, because the row is already two lines
- * tall and a third would turn a list you scan into a list you read. The time
- * leads: it is short, it is always there, and it is what tells two similarly
- * named conversations apart at a glance.
- */
-private fun Conversation.subtitle(now: Long = System.currentTimeMillis()): String {
-    val age = ago(now - updatedAt)
-    return if (preview.isBlank()) age else "$age · $preview"
-}
-
-/**
- * A duration, as short as it can be said.
+ * It used to carry a second line — a relative time and a slice of the last
+ * message — on the reasoning that bare titles give you nothing to tell two
+ * similarly named conversations apart by. On the phone the opposite happened:
+ * two conversations whose last message came from the same scripted mock showed
+ * *identical* second lines and read as the same chat listed twice, while every
+ * row cost double the height and the list read as a wall.
  *
- * No "ago" — in a column where every value is an age, the word is on every row
- * and tells you nothing. Days stop at a week because past that the exact number
- * has stopped meaning anything to anyone.
+ * Gemini, ChatGPT and Claude all show the title alone. The title is the thing
+ * being distinguished; anything under it is competing with the thing you are
+ * trying to read.
  */
-private fun ago(millis: Long): String {
-    val minutes = millis / 60_000
-    return when {
-        minutes < 1 -> "now"
-        minutes < 60 -> "${minutes}m"
-        minutes < 60 * 24 -> "${minutes / 60}h"
-        minutes < 60 * 24 * 7 -> "${minutes / (60 * 24)}d"
-        else -> "${minutes / (60 * 24 * 7)}w"
-    }
-}
-
-/** A conversation. Two lines: what it was about, and what answered. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ConversationRow(
     title: String,
-    subtitle: String,
     selected: Boolean,
     pinned: Boolean = false,
     onClick: () -> Unit,
@@ -1167,84 +1256,31 @@ private fun ConversationRow(
                 // anyone not holding their finger down by accident.
                 onLongClickLabel = "Conversation options",
             )
-            .padding(horizontal = WarpSpace.medium, vertical = 9.dp),
+            .padding(horizontal = WarpSpace.medium, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // A leading icon here too, even though chat lists usually have none.
-        // Without it the conversation titles and the workspace labels sat on two
-        // different left margins — a misalignment you feel before you can name
-        // it, and one of the things that read as messy.
-        Icon(
-            if (pinned) Icons.Outlined.PushPin else Icons.Outlined.ChatBubbleOutline,
-            contentDescription = null,
-            modifier = Modifier.size(18.dp),
-            tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-            else MaterialTheme.colorScheme.onSurfaceVariant,
+        Text(
+            title,
+            style = MaterialTheme.typography.bodyMedium,
+            // The bright thing in the drawer. Navigation above it is
+            // deliberately dimmer: the list is what this surface is for.
+            color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+            else MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
         )
-        Spacer(Modifier.size(WarpSpace.medium))
-        Column {
-            Text(
-                title,
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-                else MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+        // On the far side, small, and only when pinned — a mark on the row
+        // rather than a second icon column that every unpinned row pays for.
+        if (pinned) {
+            Spacer(Modifier.size(WarpSpace.small))
+            Icon(
+                Icons.Outlined.PushPin,
+                contentDescription = "Pinned",
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-    }
-}
-
-/**
- * The account row, pinned to the bottom.
- *
- * Where a thumb rests, where every other app puts it, and the reason the avatar
- * in the top bar finally leads somewhere.
- */
-@Composable
-private fun AccountRow(modelLabel: String, selected: Boolean, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = WarpSpace.small)
-            .clip(RoundedCornerShape(WarpRadius.small))
-            .background(
-                if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = WarpSpace.medium, vertical = WarpSpace.small),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Avatar(size = 32.dp)
-        Spacer(Modifier.size(WarpSpace.medium))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                "Ely",
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-                else MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                modelLabel,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Icon(
-            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-            contentDescription = null,
-            modifier = Modifier.size(18.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
@@ -1269,7 +1305,7 @@ private fun DrawerRow(
             .clip(RoundedCornerShape(WarpRadius.small))
             .background(background)
             .clickable(onClick = onClick)
-            .padding(horizontal = WarpSpace.medium, vertical = 9.dp),
+            .padding(horizontal = WarpSpace.medium, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
@@ -1280,21 +1316,21 @@ private fun DrawerRow(
             else MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.size(WarpSpace.medium))
-        Column {
-            Text(
-                destination.label,
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-                else MaterialTheme.colorScheme.onSurface,
-            )
-            // The line that stops a row being an unexplained noun. Six of those
-            // in a column was most of what read as messy.
-            Text(
-                destination.blurb,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        // One line, and grey. Navigation is deliberately dimmer than the
+        // conversations below it — that inversion is the fourth finding in §9g,
+        // and Warp had it backwards: three destinations shouting as loudly as
+        // the list meant the drawer argued with itself about what it was for.
+        //
+        // The explanatory second line went with it. It was added when six flat
+        // rows made every one an unexplained noun; with three, and named Files,
+        // Build and Assets, the noun explains itself, and the blurb was three
+        // extra lines of grey competing with the titles it sat above.
+        Text(
+            destination.label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

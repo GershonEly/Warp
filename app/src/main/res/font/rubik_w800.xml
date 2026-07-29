@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Rubik at weight 800, cut from the one variable file.
+
+  This exists because declaring several Compose Font entries against the same
+  .ttf does not work: Android caches a Typeface by resource id, so every weight
+  resolved to whichever instance was created first and the whole app rendered at
+  400. Proved by forcing weight 900 app-wide and seeing no change at all.
+
+  Giving each weight its own resource id gives each its own cache entry, and
+  fontVariationSettings is applied by the platform rather than by Compose.
+  Costs five small XML files and no extra font data.
+-->
+<font-family xmlns:android="http://schemas.android.com/apk/res/android">
+    <font
+        android:font="@font/rubik"
+        android:fontStyle="normal"
+        android:fontWeight="800"
+        android:fontVariationSettings="'wght' 800" />
+</font-family>

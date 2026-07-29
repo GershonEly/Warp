@@ -30,6 +30,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +48,7 @@ import dev.ely.warp.ai.AiProvider
 import dev.ely.warp.ai.KeyVault
 import dev.ely.warp.ai.Naming
 import dev.ely.warp.ai.ProviderRegistry
+import dev.ely.warp.data.Identity
 import dev.ely.warp.ui.theme.HairlineWidth
 import dev.ely.warp.ui.theme.WarpMono
 import dev.ely.warp.ui.theme.WarpRadius
@@ -101,6 +103,9 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
             }
 
         Spacer(Modifier.size(WarpSpace.section))
+        YourNameSection()
+
+        Spacer(Modifier.size(WarpSpace.section))
         NamingSection(registry)
 
         Spacer(Modifier.size(WarpSpace.large))
@@ -117,6 +122,54 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
         )
         Spacer(Modifier.size(WarpSpace.section))
     }
+}
+
+/**
+ * What Warp should call you.
+ *
+ * One field, and it is the only place a name exists. It used to be a string
+ * literal in the drawer, which meant Warp greeted everyone who sideloaded it as
+ * its author — a bug you cannot see while you are the author.
+ *
+ * Empty is allowed and does not mean broken. Warp does not invent a name and
+ * does not fall back to "User": a greeting that calls you something you never
+ * chose is worse than a greeting with no name in it, and the avatar wears the
+ * mark instead, which is always true.
+ *
+ * Saved as you type rather than behind a button. There is nothing to validate,
+ * nothing to fail, and a Save button next to one text field is a button whose
+ * only job is to be forgotten.
+ */
+@Composable
+private fun YourNameSection() {
+    val context = LocalContext.current
+    val identity = remember { Identity.get(context) }
+    val stored by identity.name.collectAsState()
+    // The field's own state, seeded from storage. Editing writes through to
+    // Identity — which is what makes the avatar change while you type.
+    var name by remember { mutableStateOf(stored.orEmpty()) }
+
+    Text("Your name", style = MaterialTheme.typography.headlineMedium)
+    Spacer(Modifier.size(WarpSpace.tiny))
+    Text(
+        "Used to greet you, and for the letter in your avatar. It stays on this " +
+            "phone. Leave it empty and Warp will not use a name at all.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    Spacer(Modifier.size(WarpSpace.medium))
+
+    OutlinedTextField(
+        value = name,
+        onValueChange = {
+            name = it.take(Identity.MAX).replace("\n", "")
+            identity.setName(name)
+        },
+        singleLine = true,
+        placeholder = { Text("Your name") },
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 /**

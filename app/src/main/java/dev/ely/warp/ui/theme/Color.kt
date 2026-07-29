@@ -15,14 +15,26 @@ import androidx.compose.ui.graphics.Color
  */
 
 // ── Dark ─────────────────────────────────────────────────────────────────
-val DarkBackground = Color(0xFF0B0D10)        // near-black, blue cast
-val DarkSurface = Color(0xFF12151A)
-val DarkSurfaceContainer = Color(0xFF181C22)  // cards, the composer
-val DarkSurfaceHigh = Color(0xFF1F242C)       // raised: sheets, menus
+//
+// The whole ladder was lifted about eight points after seeing it on the phone
+// with real content in it. It had been near-black — the page was RGB(11,13,16) —
+// and near-black is a large part of why the drawer read as a console: every edge
+// becomes a hard line and every piece of text sits at maximum contrast against
+// it. Claude's sidebar is nearer RGB(38,38,36) and reads as a surface rather
+// than as a hole.
+//
+// The steps between the rungs are unchanged, so depth still works the same way;
+// the ladder simply starts higher. The blue cast stays — that was right.
+val DarkBackground = Color(0xFF13161B)        // the page — soft dark, blue cast
+val DarkSurface = Color(0xFF1A1E24)           // drawer, plain panels
+val DarkSurfaceContainer = Color(0xFF21252D)  // cards, the composer
+val DarkSurfaceHigh = Color(0xFF292F38)       // raised: sheets, menus
 val DarkOnSurface = Color(0xFFE8EAED)
 val DarkOnSurfaceVariant = Color(0xFF99A1AC)
 val DarkOutline = Color(0xFF39414C)
-val DarkPrimaryContainer = Color(0xFF0E3350)
+val DarkPrimaryContainer = Color(0xFF12405F)  // lifted with the rest, so a
+                                              // selected row still reads as a
+                                              // step up from the new surface
 
 // ── Light ────────────────────────────────────────────────────────────────
 //
@@ -82,5 +94,6 @@ val LightHairline = Color(0x1F0B0D10)  // near-black at 12% — white cards need
  * is a step *below* the card, on light a step below white. Deriving it from
  * `surface` made it vanish the moment light-mode cards became white too.
  */
-val DarkCodeSurface = Color(0xFF0B0D10)
+val DarkCodeSurface = Color(0xFF0F1216)  // a step below the lifted page, so
+                                         // machine output still reads as recessed
 val LightCodeSurface = Color(0xFFF1F3F7)
