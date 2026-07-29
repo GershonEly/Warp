@@ -28,6 +28,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -42,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.ely.warp.ai.ChatEngine
 import dev.ely.warp.ai.ProviderRegistry
+import dev.ely.warp.data.DrawerState
 import dev.ely.warp.diag.DeviceProbe
 import dev.ely.warp.ui.BuildScreen
 import dev.ely.warp.ui.ChatScreen
@@ -56,6 +58,7 @@ import dev.ely.warp.ui.theme.WarpSuccess
 import dev.ely.warp.ui.theme.WarpTheme
 import dev.ely.warp.ui.theme.WarpWarning
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
@@ -99,6 +102,13 @@ private fun WarpApp() {
     val engine = remember { ChatEngine(scope, registry.selected, store = conversations) }
     var choice by remember { mutableStateOf(registry.choice) }
 
+    // The drawer's list, straight from the database. It updates itself: sending
+    // a message touches the conversation, and the row reorders without anyone
+    // having to remember to refresh anything.
+    val drawer by remember { conversations.observeDrawer() }
+        .collectAsState(initial = DrawerState())
+    val openConversationId by engine.conversationId.collectAsState()
+
     // Pick up a key added in Settings; the model itself is chosen in the picker.
     LaunchedEffect(destination) {
         if (destination == WarpDestination.CHAT) {
@@ -139,6 +149,18 @@ private fun WarpApp() {
             },
             destination = destination,
             onDestinationChange = { destination = it },
+            conversations = drawer.conversations,
+            openConversationId = openConversationId,
+            onOpenConversation = { id ->
+                scope.launch {
+                    // Loaded before the screen is switched, so the chat never
+                    // appears holding the previous conversation's messages for a
+                    // frame. A transcript flashing someone else's words, even
+                    // briefly, is the one thing this list must never do.
+                    engine.open(id, conversations.loadMessages(id))
+                    destination = WarpDestination.CHAT
+                }
+            },
         ) { screen ->
             when (screen) {
                 WarpDestination.CHAT -> ChatScreen(

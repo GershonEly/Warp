@@ -1,6 +1,7 @@
 package dev.ely.warp.data
 
 import android.content.Context
+import dev.ely.warp.ai.AiError
 import dev.ely.warp.ai.ChatEngine
 import dev.ely.warp.ai.ChatMessage
 import dev.ely.warp.ai.Role
@@ -53,6 +54,18 @@ class ConversationRepository(context: Context) : ChatEngine.ConversationStore {
     fun observeMessages(conversationId: String): Flow<List<ChatMessage>> =
         messages.observeFor(conversationId).map { rows -> rows.map { it.toModel() } }
 
+    /**
+     * Read a transcript once, for opening it.
+     *
+     * Deliberately not a flow. While a reply is streaming, the engine holds the
+     * live message list and writes it out; a flow feeding back in would have the
+     * screen rendering the database's idea of the text a beat behind the
+     * engine's, which reads as the answer stuttering as it arrives. The store is
+     * where a conversation is kept, not where it happens.
+     */
+    suspend fun loadMessages(conversationId: String): List<ChatMessage> =
+        messages.forConversation(conversationId).map { it.toModel() }
+
     suspend fun search(query: String): List<Conversation> {
         // FTS treats bare punctuation as syntax, so a stray quote in what
         // someone typed would throw rather than find nothing. Quoting the whole
@@ -104,6 +117,8 @@ class ConversationRepository(context: Context) : ChatEngine.ConversationStore {
                 role = message.role.name,
                 text = message.text,
                 toolCallsJson = message.toolCalls.toJsonOrNull(),
+                errorKind = message.error?.storageKind(),
+                errorDetail = message.error?.storageDetail(),
                 createdAt = message.createdAt,
             )
         )
@@ -177,8 +192,50 @@ class ConversationRepository(context: Context) : ChatEngine.ConversationStore {
         role = runCatching { Role.valueOf(role) }.getOrDefault(Role.ASSISTANT),
         text = text,
         toolCalls = toolCallsJson.toToolCalls(),
+        error = readError(errorKind, errorDetail),
         createdAt = createdAt,
     )
+
+    // ── errors, to columns and back ──────────────────────────────────────
+    //
+    // Written out by hand rather than serialised. AiError is a sealed class the
+    // app reasons about — whether a failure can be retried is decided by which
+    // one it is — so what is stored is the identity of the case, and the mapping
+    // back is a `when` the compiler checks. A reflective scheme would survive a
+    // rename silently and produce an unreadable row a version later.
+
+    private fun AiError.storageKind(): String = when (this) {
+        AiError.NoKey -> "NO_KEY"
+        AiError.BadKey -> "BAD_KEY"
+        AiError.RateLimited -> "RATE_LIMITED"
+        AiError.Offline -> "OFFLINE"
+        is AiError.Server -> "SERVER"
+        is AiError.Unknown -> "UNKNOWN"
+    }
+
+    private fun AiError.storageDetail(): String? = when (this) {
+        is AiError.Server -> detail
+        is AiError.Unknown -> detail
+        else -> null
+    }
+
+    /**
+     * Rebuild a failure from its columns.
+     *
+     * An unrecognised kind becomes [AiError.Unknown] rather than null. A row
+     * written by a newer build knows something happened, and showing "something
+     * went wrong" is honest where showing nothing would put the blank gap back —
+     * which is the entire bug this pair of columns exists to fix.
+     */
+    private fun readError(kind: String?, detail: String?): AiError? = when (kind) {
+        null -> null
+        "NO_KEY" -> AiError.NoKey
+        "BAD_KEY" -> AiError.BadKey
+        "RATE_LIMITED" -> AiError.RateLimited
+        "OFFLINE" -> AiError.Offline
+        "SERVER" -> AiError.Server(detail.orEmpty())
+        else -> AiError.Unknown(detail ?: "This reply did not finish.")
+    }
 
     private fun List<ToolCall>.toJsonOrNull(): String? {
         if (isEmpty()) return null

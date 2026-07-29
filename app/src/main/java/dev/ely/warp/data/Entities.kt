@@ -63,6 +63,19 @@ data class ConversationEntity(
  * Tool calls are stored as JSON rather than as their own table. They are only
  * ever read back with their message, never queried across, and a join for
  * something never queried is a table you maintain for nothing.
+ *
+ * `errorKind` and `errorDetail` were added after the first version shipped
+ * without them, and the omission was not harmless. A failed reply has no text,
+ * so a conversation reopened after two failures showed two blank gaps where two
+ * error cards had been. Nothing was lost, but it was indistinguishable from the
+ * app quietly eating the conversation — and an app you cannot trust to keep
+ * things is one you stop putting things into.
+ *
+ * The kind is stored apart from the detail because the kind is a closed set the
+ * app reasons about — whether a failure can be retried depends on it — while the
+ * detail is opaque text from a provider. Flattening them into one string would
+ * mean parsing that string back out to answer a question the schema can just
+ * answer.
  */
 @Entity(
     tableName = "messages",
@@ -85,6 +98,10 @@ data class MessageEntity(
     val role: String,
     val text: String,
     val toolCallsJson: String? = null,
+    /** The name of the [dev.ely.warp.ai.AiError] subclass, or null if it worked. */
+    val errorKind: String? = null,
+    /** Provider text for the kinds that carry any. */
+    val errorDetail: String? = null,
     val createdAt: Long,
 )
 

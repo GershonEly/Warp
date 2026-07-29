@@ -68,6 +68,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import dev.ely.warp.data.Conversation
 import dev.ely.warp.ui.theme.HairlineWidth
 import dev.ely.warp.ui.theme.WarpMotion
 import dev.ely.warp.ui.theme.WarpRadius
@@ -128,6 +129,9 @@ fun WarpShell(
     onNewChat: () -> Unit,
     destination: WarpDestination,
     onDestinationChange: (WarpDestination) -> Unit,
+    conversations: List<Conversation> = emptyList(),
+    openConversationId: String? = null,
+    onOpenConversation: (String) -> Unit = {},
     content: @Composable (WarpDestination) -> Unit,
 ) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -150,12 +154,18 @@ fun WarpShell(
                 DrawerContents(
                     current = destination,
                     modelLabel = title,
+                    conversations = conversations,
+                    openConversationId = openConversationId,
                     onSelect = {
                         onDestinationChange(it)
                         scope.launch { drawerState.close() }
                     },
                     onNewChat = {
                         onNewChat()
+                        scope.launch { drawerState.close() }
+                    },
+                    onOpenConversation = {
+                        onOpenConversation(it)
                         scope.launch { drawerState.close() }
                     },
                 )
@@ -333,8 +343,11 @@ private fun IconButtonBox(onClick: () -> Unit, content: @Composable () -> Unit) 
 private fun DrawerContents(
     current: WarpDestination,
     modelLabel: String,
+    conversations: List<Conversation>,
+    openConversationId: String?,
     onSelect: (WarpDestination) -> Unit,
     onNewChat: () -> Unit,
+    onOpenConversation: (String) -> Unit,
 ) {
     // Compact when the drawer is short — a landscape phone, or a portrait one at
     // the largest system font. Scrolling alone was not enough: everything was
@@ -388,30 +401,45 @@ private fun DrawerContents(
             // Everything above the hairline is the conversation; everything
             // below it is the project. Two ideas instead of six flat rows.
             SectionLabel("Recent")
-            ConversationRow(
-                title = "Current session",
-                subtitle = modelLabel,
-                selected = current == WarpDestination.CHAT,
-                onClick = { onSelect(WarpDestination.CHAT) },
-            )
-            // The first thing dropped when space is tight. It explains an
-            // absence, which matters less than showing the sections that are
-            // actually there.
-            if (!compact) {
-                Text(
-                    "Older conversations are kept once project storage lands.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(
-                        // Indented to the rows' text column (12 padding + 18
-                        // icon + 12 gap), so it reads as belonging to the list
-                        // rather than as a stray paragraph beside it.
-                        start = 42.dp,
-                        end = WarpSpace.medium,
-                        top = WarpSpace.small,
-                        bottom = WarpSpace.small,
-                    ),
-                )
+
+            if (conversations.isEmpty()) {
+                // The chat open right now has not been saved yet — a
+                // conversation is created by the first message, not by opening
+                // one. Showing a row for it would be a row that vanishes when
+                // you tap New chat, so the slot says what it is for instead.
+                //
+                // First thing dropped when space is tight: explaining an absence
+                // matters less than showing the sections that are there.
+                if (!compact) {
+                    Text(
+                        "Conversations appear here once you send a message.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(
+                            // Indented to the rows' text column (12 padding + 18
+                            // icon + 12 gap), so it reads as belonging to the
+                            // list rather than as a stray paragraph beside it.
+                            start = 42.dp,
+                            end = WarpSpace.medium,
+                            top = WarpSpace.small,
+                            bottom = WarpSpace.small,
+                        ),
+                    )
+                }
+            } else {
+                conversations.forEach { conversation ->
+                    ConversationRow(
+                        title = conversation.title,
+                        subtitle = conversation.subtitle(),
+                        // Selected means "this is the conversation on screen",
+                        // which is only true while Chat is the visible screen.
+                        // Leaving a row highlighted from Settings claims you are
+                        // somewhere you are not.
+                        selected = current == WarpDestination.CHAT &&
+                            conversation.id == openConversationId,
+                        onClick = { onOpenConversation(conversation.id) },
+                    )
+                }
             }
 
             Spacer(Modifier.size(if (compact) WarpSpace.small else WarpSpace.medium))
@@ -495,6 +523,37 @@ private fun DrawerDivider() {
             .height(HairlineWidth)
             .background(MaterialTheme.colorScheme.outlineVariant)
     )
+}
+
+/**
+ * The second line of a conversation row.
+ *
+ * Time and preview together on one line, because the row is already two lines
+ * tall and a third would turn a list you scan into a list you read. The time
+ * leads: it is short, it is always there, and it is what tells two similarly
+ * named conversations apart at a glance.
+ */
+private fun Conversation.subtitle(now: Long = System.currentTimeMillis()): String {
+    val age = ago(now - updatedAt)
+    return if (preview.isBlank()) age else "$age · $preview"
+}
+
+/**
+ * A duration, as short as it can be said.
+ *
+ * No "ago" — in a column where every value is an age, the word is on every row
+ * and tells you nothing. Days stop at a week because past that the exact number
+ * has stopped meaning anything to anyone.
+ */
+private fun ago(millis: Long): String {
+    val minutes = millis / 60_000
+    return when {
+        minutes < 1 -> "now"
+        minutes < 60 -> "${minutes}m"
+        minutes < 60 * 24 -> "${minutes / 60}h"
+        minutes < 60 * 24 * 7 -> "${minutes / (60 * 24)}d"
+        else -> "${minutes / (60 * 24 * 7)}w"
+    }
 }
 
 /** A conversation. Two lines: what it was about, and what answered. */

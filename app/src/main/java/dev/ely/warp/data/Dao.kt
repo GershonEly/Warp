@@ -124,13 +124,20 @@ interface MessageDao {
      * more visible: without it the preview under a conversation can show the
      * question instead of the answer, because the two share a timestamp and the
      * "last message" is then whichever one SQLite felt like returning.
+     *
+     * Empty messages are skipped, and that is not tidiness. A reply that failed
+     * has no text, so the newest message in a conversation that ended badly is a
+     * blank one — and taking it literally gave every such conversation a blank
+     * preview line for ever. The last message that actually said something is
+     * what tells you which conversation this is, which is the only reason the
+     * line exists.
      */
     @Query(
         """
         SELECT conversationId, text FROM messages
         WHERE id IN (
             SELECT id FROM messages m
-            WHERE m.conversationId = messages.conversationId
+            WHERE m.conversationId = messages.conversationId AND m.text != ''
             ORDER BY m.createdAt DESC, m.rowid DESC LIMIT 1
         )
         """
