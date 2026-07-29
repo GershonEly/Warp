@@ -7,8 +7,10 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -38,19 +40,33 @@ import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,6 +76,10 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -75,6 +95,15 @@ import dev.ely.warp.ui.theme.WarpRadius
 import dev.ely.warp.ui.theme.WarpSpace
 import dev.ely.warp.ui.theme.warpTween
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+
+/**
+ * How long the undo bar stays up after a delete.
+ *
+ * Six seconds. Long enough to read a bar you were not expecting and reach it;
+ * short enough that it is gone before you have started doing something else.
+ */
+private const val UNDO_VISIBLE_MS = 6_000L
 
 /**
  * The app shell: side drawer, top bar, content, bottom navigation.
@@ -132,10 +161,22 @@ fun WarpShell(
     conversations: List<Conversation> = emptyList(),
     openConversationId: String? = null,
     onOpenConversation: (String) -> Unit = {},
+    onRenameConversation: (String, String) -> Unit = { _, _ -> },
+    onPinConversation: (String, Boolean) -> Unit = { _, _ -> },
+    onDeleteConversation: (String) -> Unit = {},
+    onUndoDelete: (String) -> Unit = {},
     content: @Composable (WarpDestination) -> Unit,
 ) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val snackbars = remember { SnackbarHostState() }
+
+    // The long-press menu, and the rename dialog it can open. Held here rather
+    // than inside the drawer because both outlive it: deleting closes the
+    // drawer, and the undo has to survive that.
+    var menuFor by remember { mutableStateOf<Conversation?>(null) }
+    var renaming by remember { mutableStateOf<Conversation?>(null) }
+    var confirmingDelete by remember { mutableStateOf<Conversation?>(null) }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -168,6 +209,7 @@ fun WarpShell(
                         onOpenConversation(it)
                         scope.launch { drawerState.close() }
                     },
+                    onConversationMenu = { menuFor = it },
                 )
             }
         },
@@ -182,6 +224,7 @@ fun WarpShell(
             // keyboard, but with no bottom bar left there is nothing holding
             // content off the gesture area — the composer sat on top of it.
             contentWindowInsets = WindowInsets.navigationBars,
+            snackbarHost = { SnackbarHost(snackbars) },
             topBar = {
                 WarpTopBar(
                     title = title,
@@ -226,6 +269,235 @@ fun WarpShell(
             }
         }
     }
+
+    menuFor?.let { conversation ->
+        ConversationMenu(
+            conversation = conversation,
+            onDismiss = { menuFor = null },
+            onRename = {
+                menuFor = null
+                renaming = conversation
+            },
+            onTogglePin = {
+                menuFor = null
+                onPinConversation(conversation.id, !conversation.pinned)
+            },
+            onDelete = {
+                menuFor = null
+                confirmingDelete = conversation
+            },
+        )
+    }
+
+    confirmingDelete?.let { conversation ->
+        DeleteDialog(
+            conversation = conversation,
+            onDismiss = { confirmingDelete = null },
+            onConfirm = {
+                confirmingDelete = null
+                onDeleteConversation(conversation.id)
+                // The drawer closes because the snackbar cannot be seen through
+                // it — the drawer draws above the Scaffold. An undo you cannot
+                // reach is not an undo.
+                scope.launch {
+                    drawerState.close()
+                    // Indefinite plus an explicit timeout, because Material
+                    // offers 4 seconds or 10 and neither is right. Four is not
+                    // long enough to notice a bar you were not expecting; ten
+                    // leaves it sitting over the composer long after the moment
+                    // has passed.
+                    val result = withTimeoutOrNull(UNDO_VISIBLE_MS) {
+                        snackbars.showSnackbar(
+                            message = "Deleted \"${conversation.title}\"",
+                            actionLabel = "Undo",
+                            withDismissAction = false,
+                            duration = SnackbarDuration.Indefinite,
+                        )
+                    }
+                    if (result == SnackbarResult.ActionPerformed) {
+                        onUndoDelete(conversation.id)
+                    }
+                }
+            },
+        )
+    }
+
+    renaming?.let { conversation ->
+        RenameDialog(
+            conversation = conversation,
+            onDismiss = { renaming = null },
+            onConfirm = { name ->
+                renaming = null
+                onRenameConversation(conversation.id, name)
+            },
+        )
+    }
+}
+
+/**
+ * The long-press menu.
+ *
+ * A sheet rather than a dropdown: a dropdown anchors to the row it came from,
+ * and a row near the bottom of a full drawer gets a menu that opens upward,
+ * off-centre, and sometimes clipped. A sheet always arrives in the same place,
+ * which is what makes the second use of it faster than the first.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ConversationMenu(
+    conversation: Conversation,
+    onDismiss: () -> Unit,
+    onRename: () -> Unit,
+    onTogglePin: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = WarpSpace.large),
+        ) {
+            Text(
+                conversation.title,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(
+                    start = WarpSpace.screen,
+                    end = WarpSpace.screen,
+                    bottom = WarpSpace.medium,
+                ),
+            )
+
+            MenuRow(Icons.Outlined.Edit, "Rename", onRename)
+            MenuRow(
+                icon = Icons.Outlined.PushPin,
+                label = if (conversation.pinned) "Unpin" else "Pin to top",
+                onClick = onTogglePin,
+            )
+            // Delete is tinted, and it is the only tinted thing here. In a menu
+            // where every row looks the same, the irreversible one is a thumb's
+            // width from the reversible ones.
+            MenuRow(
+                icon = Icons.Outlined.Delete,
+                label = "Delete",
+                onClick = onDelete,
+                tint = MaterialTheme.colorScheme.error,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MenuRow(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    tint: Color = MaterialTheme.colorScheme.onSurface,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = WarpSpace.screen, vertical = WarpSpace.medium),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = tint)
+        Spacer(Modifier.size(WarpSpace.medium))
+        Text(label, style = MaterialTheme.typography.bodyLarge, color = tint)
+    }
+}
+
+/**
+ * Are you sure.
+ *
+ * The plan originally had undo *instead of* a confirmation, on the sound
+ * reasoning that a dialog is a thing people learn to tap through without
+ * reading. Using it found the hole: the undo bar is visible for seconds, and if
+ * you look away during those seconds there is no second chance at all. A
+ * confirmation costs one tap on a rare action; missing the bar costs the
+ * conversation.
+ *
+ * So both, and they guard different mistakes — the dialog catches the wrong tap,
+ * the undo catches the right tap made too quickly. Delete is the destructive
+ * button and wears the error colour; Cancel is the plain one, because the safe
+ * choice should not have to be aimed for.
+ */
+@Composable
+private fun DeleteDialog(
+    conversation: Conversation,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Delete conversation?") },
+        text = {
+            Text(
+                "\"${conversation.title}\" and everything in it will be removed. " +
+                    "You will have a few seconds to undo."
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error,
+                ),
+            ) { Text("Delete") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+/**
+ * Rename.
+ *
+ * Opens with the current name selected, so the common case — replacing it
+ * outright — is one keystroke, and the rarer case of editing it is one tap.
+ * An empty name is refused rather than accepted and silently replaced, because
+ * a row that quietly renames itself back looks broken.
+ */
+@Composable
+private fun RenameDialog(
+    conversation: Conversation,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var text by remember {
+        mutableStateOf(
+            TextFieldValue(
+                text = conversation.title,
+                selection = TextRange(0, conversation.title.length),
+            )
+        )
+    }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename") },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().focusRequester(focus),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(text.text) },
+                enabled = text.text.isNotBlank(),
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable
@@ -348,6 +620,7 @@ private fun DrawerContents(
     onSelect: (WarpDestination) -> Unit,
     onNewChat: () -> Unit,
     onOpenConversation: (String) -> Unit,
+    onConversationMenu: (Conversation) -> Unit,
 ) {
     // Compact when the drawer is short — a landscape phone, or a portrait one at
     // the largest system font. Scrolling alone was not enough: everything was
@@ -400,9 +673,32 @@ private fun DrawerContents(
 
             // Everything above the hairline is the conversation; everything
             // below it is the project. Two ideas instead of six flat rows.
+
+            // Pinned first, and the label only exists when something is pinned.
+            // An always-present "Pinned" heading over an empty space is a
+            // permanent reminder of a feature you are not using.
+            val pinned = conversations.filter { it.pinned }
+            val recent = conversations.filterNot { it.pinned }
+
+            if (pinned.isNotEmpty()) {
+                SectionLabel("Pinned")
+                pinned.forEach { conversation ->
+                    ConversationRow(
+                        title = conversation.title,
+                        subtitle = conversation.subtitle(),
+                        selected = current == WarpDestination.CHAT &&
+                            conversation.id == openConversationId,
+                        pinned = true,
+                        onClick = { onOpenConversation(conversation.id) },
+                        onLongClick = { onConversationMenu(conversation) },
+                    )
+                }
+                Spacer(Modifier.size(if (compact) WarpSpace.small else WarpSpace.medium))
+            }
+
             SectionLabel("Recent")
 
-            if (conversations.isEmpty()) {
+            if (recent.isEmpty() && pinned.isEmpty()) {
                 // The chat open right now has not been saved yet — a
                 // conversation is created by the first message, not by opening
                 // one. Showing a row for it would be a row that vanishes when
@@ -427,7 +723,7 @@ private fun DrawerContents(
                     )
                 }
             } else {
-                conversations.forEach { conversation ->
+                recent.forEach { conversation ->
                     ConversationRow(
                         title = conversation.title,
                         subtitle = conversation.subtitle(),
@@ -438,6 +734,7 @@ private fun DrawerContents(
                         selected = current == WarpDestination.CHAT &&
                             conversation.id == openConversationId,
                         onClick = { onOpenConversation(conversation.id) },
+                        onLongClick = { onConversationMenu(conversation) },
                     )
                 }
             }
@@ -557,12 +854,15 @@ private fun ago(millis: Long): String {
 }
 
 /** A conversation. Two lines: what it was about, and what answered. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ConversationRow(
     title: String,
     subtitle: String,
     selected: Boolean,
+    pinned: Boolean = false,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val background by animateColorAsState(
         targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer
@@ -579,7 +879,14 @@ private fun ConversationRow(
             // the whole framework.
             .clip(RoundedCornerShape(WarpRadius.small))
             .background(background)
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+                // Named so TalkBack announces the gesture rather than leaving
+                // the only way to rename a conversation undiscoverable to
+                // anyone not holding their finger down by accident.
+                onLongClickLabel = "Conversation options",
+            )
             .padding(horizontal = WarpSpace.medium, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -588,7 +895,7 @@ private fun ConversationRow(
         // different left margins — a misalignment you feel before you can name
         // it, and one of the things that read as messy.
         Icon(
-            Icons.Outlined.ChatBubbleOutline,
+            if (pinned) Icons.Outlined.PushPin else Icons.Outlined.ChatBubbleOutline,
             contentDescription = null,
             modifier = Modifier.size(18.dp),
             tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer

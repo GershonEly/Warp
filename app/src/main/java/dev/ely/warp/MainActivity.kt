@@ -165,6 +165,31 @@ private fun WarpApp() {
                     destination = WarpDestination.CHAT
                 }
             },
+            onRenameConversation = { id, name ->
+                scope.launch { conversations.rename(id, name, System.currentTimeMillis()) }
+            },
+            onPinConversation = { id, pinned ->
+                scope.launch { conversations.setPinned(id, pinned, System.currentTimeMillis()) }
+            },
+            onDeleteConversation = { id ->
+                scope.launch {
+                    conversations.softDelete(id, System.currentTimeMillis())
+                    // You cannot be left reading something you just deleted. The
+                    // chat empties only when the deleted conversation is the one
+                    // on screen; deleting any other must not disturb it.
+                    if (engine.conversationId.value == id) engine.clear()
+                }
+            },
+            onUndoDelete = { id ->
+                scope.launch {
+                    conversations.undoDelete(id)
+                    // Put it back on screen as well as back in the list. Undo
+                    // means "that did not happen", and a restored conversation
+                    // you then have to go and find has only half happened.
+                    engine.open(id, conversations.loadMessages(id))
+                    destination = WarpDestination.CHAT
+                }
+            },
         ) { screen ->
             when (screen) {
                 WarpDestination.CHAT -> ChatScreen(
