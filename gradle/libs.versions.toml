@@ -9,6 +9,11 @@ lifecycle = "2.11.0"
 activityCompose = "1.13.0"
 composeBom = "2026.06.01"
 
+# Conversation storage. KSP now versions independently of Kotlin — 2.3.x is
+# KSP's own number, not a Kotlin one, so it does not track kotlin = 2.4.10.
+room = "2.8.4"
+ksp = "2.3.10"
+
 # On-device build engine (pure-Java, runs on ART or the bundled JDK)
 r8 = "9.1.31"
 apksig = "9.3.1"
@@ -32,6 +37,12 @@ androidx-compose-material3 = { group = "androidx.compose.material3", name = "mat
 # material3 is about forty icons and has no chat, folder or palette.
 androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
 
+# Conversations, folders and message search. FTS4 rather than FTS5 — FTS5 is
+# not guaranteed present on every Android SQLite build, and Warp targets 28.
+androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
+androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
+androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+
 # Signs the APKs that Warp builds on-device. Pure Java, runs on ART.
 apksig = { group = "com.android.tools.build", name = "apksig", version.ref = "apksig" }
 # Provides D8 (.class -> .dex). Pure Java.
@@ -44,3 +55,4 @@ androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "a
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

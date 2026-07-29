@@ -3,6 +3,10 @@ plugins {
     // AGP 9.0+ ships Kotlin support built in — the standalone
     // org.jetbrains.kotlin.android plugin must NOT be applied.
     alias(libs.plugins.kotlin.compose)
+    // Room's annotation processor. KSP rather than kapt: kapt runs the Java
+    // compiler over stubs of every Kotlin file, and on a project this size that
+    // is the difference between a build you wait for and one you don't.
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -170,6 +174,11 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    // ── Conversation storage ────────────────────────────────────────────
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)   // suspend DAOs and Flow queries
+    ksp(libs.androidx.room.compiler)
 
     // ── On-device build engine ──────────────────────────────────────────
     // Both are pure Java and run on ART inside Warp — no JVM needed for these.
