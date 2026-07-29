@@ -65,6 +65,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import dev.ely.warp.ui.theme.HairlineWidth
 import dev.ely.warp.ui.theme.LocalCodeSurface
@@ -121,6 +122,11 @@ fun ChatScreen(
         val bodyIn = motionDuration(WarpMotion.SLOW)
         val bodyOut = motionDuration(WarpMotion.QUICK)
 
+        // Hoisted for the same reason: the item scope inside a LazyColumn is not
+        // a place these can be read.
+        val itemSpec = warpTween<Float>(WarpMotion.NORMAL)
+        val itemPlacement = warpTween<IntOffset>(WarpMotion.NORMAL)
+
         Column(modifier = Modifier.fillMaxSize()) {
             if (!engine.provider.requiresKey) DemoChip(onOpenSettings = onOpenSettings)
 
@@ -154,7 +160,19 @@ fun ChatScreen(
                         itemsIndexed(messages, key = { _, m -> m.id }) { index, message ->
                             // animateItem moves neighbours smoothly as the list
                             // grows; Appear handles each message's own entrance.
-                            Appear(modifier = Modifier.animateItem()) {
+                            //
+                            // Given explicit specs rather than left on the
+                            // default: animateItem's built-in spring is the one
+                            // animation in the app that was ignoring the
+                            // reduce-motion setting, because it never passed
+                            // through warpTween.
+                            Appear(
+                                modifier = Modifier.animateItem(
+                                    fadeInSpec = itemSpec,
+                                    placementSpec = itemPlacement,
+                                    fadeOutSpec = itemSpec,
+                                )
+                            ) {
                                 MessageItem(
                                     message = message,
                                     // Only the first reply inherits the travelling

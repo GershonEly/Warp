@@ -63,20 +63,28 @@ fun ThinkingMark(
     size: Dp = 24.dp,
     tint: Color = MaterialTheme.colorScheme.primary,
 ) {
-    val animate = LocalAnimationsEnabled.current
-    val transition = rememberInfiniteTransition(label = "thinking")
-
-    val angle by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            // Linear on purpose: any easing would make one point of the turn
-            // read as the "start", and this loop has none.
-            animation = tween(ROTATION_MILLIS, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "angle",
-    )
+    // The transition is only created when it will actually be used. Building it
+    // and then ignoring its value — which is what happened before — leaves an
+    // animation clock running forever, invalidating this layer every frame to
+    // draw the identical picture. Wasted frames matter most on exactly the
+    // devices where someone turns animations off.
+    val angle = if (LocalAnimationsEnabled.current) {
+        val transition = rememberInfiniteTransition(label = "thinking")
+        val a by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                // Linear on purpose: any easing would make one point of the turn
+                // read as the "start", and this loop has none.
+                animation = tween(ROTATION_MILLIS, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "angle",
+        )
+        a
+    } else {
+        0f
+    }
 
     Image(
         painter = markPainter(size),
@@ -86,7 +94,7 @@ fun ThinkingMark(
             .size(size)
             // Honours the system's reduce-animations setting: the mark still
             // appears, it simply holds still.
-            .rotate(if (animate) angle else 0f),
+            .rotate(angle),
     )
 }
 

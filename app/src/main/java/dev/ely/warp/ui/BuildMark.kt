@@ -52,14 +52,26 @@ fun BuildMark(
 
     // A gentle turn while working, so the shape reads as alive without
     // spinning like a loading indicator.
+    //
+    // Created only when it will be used. Building the transition unconditionally
+    // and then discarding its value keeps an animation clock running for the
+    // whole life of the screen — including when the build is not even going.
     val animate = LocalAnimationsEnabled.current && active
-    val transition = rememberInfiniteTransition(label = "buildSpin")
-    val angle by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(24_000, easing = LinearEasing), RepeatMode.Restart),
-        label = "buildAngle",
-    )
+    val angle = if (animate) {
+        val transition = rememberInfiniteTransition(label = "buildSpin")
+        val a by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                tween(24_000, easing = LinearEasing),
+                RepeatMode.Restart,
+            ),
+            label = "buildAngle",
+        )
+        a
+    } else {
+        0f
+    }
 
     val lit = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
     val glow = if (failed) MaterialTheme.colorScheme.error else WarpAccent
@@ -72,7 +84,7 @@ fun BuildMark(
         val scale = this.size.minDimension / VIEWPORT
         val stroke = (this.size.minDimension / 90f).coerceAtLeast(1.5f)
 
-        rotate(if (animate) angle else 0f) {
+        rotate(angle) {
             EDGES.forEachIndexed { index, edge ->
                 // Each edge has its own threshold, so the solid fills in a
                 // steady sweep rather than all at once.

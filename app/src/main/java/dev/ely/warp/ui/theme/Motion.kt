@@ -55,18 +55,33 @@ val LocalAnimationsEnabled = compositionLocalOf { true }
 /**
  * Reads the system animation setting.
  *
- * `TRANSITION_ANIMATION_SCALE` is 0 when the user has disabled animations —
- * including via battery saver, which also turns them off.
+ * Android keeps **three** independent scales, and picking the wrong one is easy:
+ *
+ * - `WINDOW_ANIMATION_SCALE` — windows opening and closing
+ * - `TRANSITION_ANIMATION_SCALE` — transitions *between activities*
+ * - `ANIMATOR_DURATION_SCALE` — ObjectAnimator, and so everything Compose
+ *   animates inside a screen
+ *
+ * This originally read only `TRANSITION_ANIMATION_SCALE`, which is the one that
+ * has nothing to do with Warp's animations. It happened to work for the case it
+ * was written for — accessibility's "Remove animations" sets all three to zero —
+ * but Developer Options sets them independently, and turning off only
+ * `animator_duration_scale`, which is the usual choice, left every animation in
+ * the app running at full length.
+ *
+ * Any of the three being zero is now taken as "off". Someone who has silenced
+ * one of them did not mean "except in this app".
  */
 @Composable
 fun rememberAnimationsEnabled(): Boolean {
     val context = LocalContext.current
     return runCatching {
-        Settings.Global.getFloat(
-            context.contentResolver,
+        val scales = listOf(
+            Settings.Global.ANIMATOR_DURATION_SCALE,
             Settings.Global.TRANSITION_ANIMATION_SCALE,
-            1f,
-        ) != 0f
+            Settings.Global.WINDOW_ANIMATION_SCALE,
+        )
+        scales.none { Settings.Global.getFloat(context.contentResolver, it, 1f) == 0f }
     }.getOrDefault(true)
 }
 
