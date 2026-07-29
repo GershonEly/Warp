@@ -63,20 +63,43 @@ class MockProvider(
 
         val script = scriptFor(prompt)
 
-        for (segment in script.segments) {
+        for ((index, segment) in script.segments.withIndex()) {
             when (segment) {
-                is Segment.Text -> emitWords(segment.text)
+                is Segment.Text -> {
+                    // A blank line between text that sits either side of a tool
+                    // call. emitWords drops the trailing space of its last word,
+                    // so without this the two ran together as "the file
+                    // now.Done." — and even with the space they would read as
+                    // one paragraph rather than as before and after.
+                    if (index > 0) emit(AiEvent.TextDelta("\n\n"))
+                    emitWords(segment.text)
+                }
+
                 is Segment.Tool -> {
+                    // The full lifecycle, not just the request. The card is
+                    // supposed to show a tool being called and finishing, and it
+                    // can only do that if something says it finished.
+                    val id = UUID.randomUUID().toString()
                     emit(
                         AiEvent.ToolCallRequested(
                             ToolCall(
-                                id = UUID.randomUUID().toString(),
+                                id = id,
                                 name = segment.name,
                                 argumentsJson = segment.argumentsJson,
                             )
                         )
                     )
-                    delay(500)
+                    delay(400)
+                    emit(AiEvent.ToolCallUpdated(id, ToolCall.Status.RUNNING))
+                    delay(700)
+                    emit(
+                        AiEvent.ToolCallUpdated(
+                            id = id,
+                            status = ToolCall.Status.DONE,
+                            result = segment.result,
+                        )
+                    )
+                    delay(200)
                 }
             }
         }
@@ -116,7 +139,11 @@ class MockProvider(
 
     private sealed interface Segment {
         data class Text(val text: String) : Segment
-        data class Tool(val name: String, val argumentsJson: String) : Segment
+        data class Tool(
+            val name: String,
+            val argumentsJson: String,
+            val result: String,
+        ) : Segment
     }
 
     private class Script(val segments: List<Segment>)
@@ -140,8 +167,10 @@ class MockProvider(
                     listOf(
                         Segment.Text(CREATE_INTRO),
                         Segment.Tool(
-                            "write_file",
-                            """{"path":"src/MainActivity.kt","summary":"a one-screen counter app"}""",
+                            name = "write_file",
+                            argumentsJson =
+                                """{"path":"src/MainActivity.kt","summary":"a one-screen counter app"}""",
+                            result = "wrote 34 lines",
                         ),
                         Segment.Text(CREATE_OUTRO),
                     )

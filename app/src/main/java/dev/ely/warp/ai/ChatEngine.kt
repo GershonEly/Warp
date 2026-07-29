@@ -97,6 +97,23 @@ class ChatEngine(
                     it.copy(toolCalls = it.toolCalls + event.call)
                 }
 
+                is AiEvent.ToolCallUpdated -> update(replyId) { message ->
+                    message.copy(
+                        toolCalls = message.toolCalls.map { call ->
+                            if (call.id == event.id) {
+                                call.copy(
+                                    status = event.status,
+                                    // A later event carrying no result must not
+                                    // erase one an earlier event already set.
+                                    result = event.result ?: call.result,
+                                )
+                            } else {
+                                call
+                            }
+                        },
+                    )
+                }
+
                 is AiEvent.Completed -> update(replyId) { it.copy(streaming = false) }
 
                 is AiEvent.Failed -> update(replyId) {

@@ -164,6 +164,22 @@ sealed interface AiEvent {
     /** The model wants to call a tool. */
     data class ToolCallRequested(val call: ToolCall) : AiEvent
 
+    /**
+     * A tool call changed state — started, finished, failed, was refused.
+     *
+     * Without this the card that announces a tool has no way to ever stop
+     * saying "waiting", which is how it shipped: the reply said the file was
+     * written while the card beside it still claimed to be waiting to write it.
+     *
+     * It belongs on the interface rather than in the mock, because every
+     * provider needs it the moment tools actually run in Step 5.
+     */
+    data class ToolCallUpdated(
+        val id: String,
+        val status: ToolCall.Status,
+        val result: String? = null,
+    ) : AiEvent
+
     /** The turn ended normally. */
     data class Completed(val stopReason: String = "end_turn") : AiEvent
 

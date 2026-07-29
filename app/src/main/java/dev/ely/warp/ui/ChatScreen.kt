@@ -572,6 +572,22 @@ private fun ToolCard(call: ToolCall) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            // What the tool actually did. A card that shows only what was asked
+            // for stops halfway through the story.
+            call.result?.let { result ->
+                Spacer(Modifier.size(6.dp))
+                Ltr {
+                    Text(
+                        result,
+                        style = WarpMono,
+                        color = if (call.status == ToolCall.Status.FAILED) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            WarpSuccess
+                        },
+                    )
+                }
+            }
             // Allow / Always belong here, and arrive with Step 5 — when tools
             // actually run, and a decision means something.
         }
