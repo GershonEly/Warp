@@ -192,4 +192,16 @@ interface FolderDao {
 
     @Query("UPDATE folders SET name = :name WHERE id = :id")
     suspend fun rename(id: String, name: String)
+
+    /**
+     * Move a folder in the order, and touch nothing else.
+     *
+     * Not an upsert of the whole row. Reordering was rewriting `createdAt` to
+     * the moment of the drag, because the model the UI works in does not carry a
+     * creation date and the entity had to be rebuilt from it. Dragging a folder
+     * is not the same event as creating one, and a store that cannot tell them
+     * apart has lost something it was asked to keep.
+     */
+    @Query("UPDATE folders SET sortKey = :sortKey WHERE id = :id")
+    suspend fun setSortKey(id: String, sortKey: Long)
 }

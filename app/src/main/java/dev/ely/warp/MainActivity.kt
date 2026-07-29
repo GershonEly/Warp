@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import dev.ely.warp.ai.ChatEngine
 import dev.ely.warp.ai.ConversationTitler
 import dev.ely.warp.ai.ProviderRegistry
+import dev.ely.warp.data.DrawerPrefs
 import dev.ely.warp.data.DrawerState
 import dev.ely.warp.diag.DeviceProbe
 import dev.ely.warp.ui.BuildScreen
@@ -112,6 +113,13 @@ private fun WarpApp() {
     val drawer by remember { conversations.observeDrawer() }
         .collectAsState(initial = DrawerState())
     val openConversationId by engine.conversationId.collectAsState()
+
+    // Which folders are folded shut. Held as state as well as on disk, because
+    // SharedPreferences is not observable and a drawer that only redrew when
+    // something else changed would fold a folder on the next recomposition
+    // rather than on the tap.
+    val drawerPrefs = remember { DrawerPrefs(context) }
+    var collapsedFolders by remember { mutableStateOf(drawerPrefs.collapsed) }
 
     // Pick up a key added in Settings; the model itself is chosen in the picker.
     LaunchedEffect(destination) {
@@ -189,6 +197,31 @@ private fun WarpApp() {
                     engine.open(id, conversations.loadMessages(id))
                     destination = WarpDestination.CHAT
                 }
+            },
+            folders = drawer.folders,
+            collapsedFolders = collapsedFolders,
+            onMoveConversation = { id, folderId ->
+                scope.launch {
+                    conversations.moveToFolder(id, folderId, System.currentTimeMillis())
+                }
+            },
+            onToggleFolder = { id ->
+                drawerPrefs.toggle(id)
+                // Read back rather than computed here, so the one place that
+                // decides what "toggled" means is the one that stores it.
+                collapsedFolders = drawerPrefs.collapsed
+            },
+            onCreateFolder = { name ->
+                scope.launch { conversations.createFolder(name, System.currentTimeMillis()) }
+            },
+            onRenameFolder = { id, name ->
+                scope.launch { conversations.renameFolder(id, name) }
+            },
+            onDeleteFolder = { folder ->
+                scope.launch { conversations.deleteFolder(folder) }
+            },
+            onReorderFolders = { ordered ->
+                scope.launch { conversations.reorderFolders(ordered) }
             },
         ) { screen ->
             when (screen) {

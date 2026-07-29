@@ -40,6 +40,8 @@ import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
@@ -72,6 +74,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,7 +91,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.graphicsLayer
 import dev.ely.warp.data.Conversation
+import dev.ely.warp.data.Folder
 import dev.ely.warp.ui.theme.HairlineWidth
 import dev.ely.warp.ui.theme.WarpMotion
 import dev.ely.warp.ui.theme.WarpRadius
@@ -159,12 +164,20 @@ fun WarpShell(
     destination: WarpDestination,
     onDestinationChange: (WarpDestination) -> Unit,
     conversations: List<Conversation> = emptyList(),
+    folders: List<Folder> = emptyList(),
+    collapsedFolders: Set<String> = emptySet(),
     openConversationId: String? = null,
     onOpenConversation: (String) -> Unit = {},
     onRenameConversation: (String, String) -> Unit = { _, _ -> },
     onPinConversation: (String, Boolean) -> Unit = { _, _ -> },
     onDeleteConversation: (String) -> Unit = {},
     onUndoDelete: (String) -> Unit = {},
+    onMoveConversation: (String, String?) -> Unit = { _, _ -> },
+    onToggleFolder: (String) -> Unit = {},
+    onCreateFolder: (String) -> Unit = {},
+    onRenameFolder: (String, String) -> Unit = { _, _ -> },
+    onDeleteFolder: (Folder) -> Unit = {},
+    onReorderFolders: (List<Folder>) -> Unit = {},
     content: @Composable (WarpDestination) -> Unit,
 ) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -177,6 +190,8 @@ fun WarpShell(
     var menuFor by remember { mutableStateOf<Conversation?>(null) }
     var renaming by remember { mutableStateOf<Conversation?>(null) }
     var confirmingDelete by remember { mutableStateOf<Conversation?>(null) }
+    var moving by remember { mutableStateOf<Conversation?>(null) }
+    var managingFolders by remember { mutableStateOf(false) }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -210,6 +225,13 @@ fun WarpShell(
                         scope.launch { drawerState.close() }
                     },
                     onConversationMenu = { menuFor = it },
+                    folders = folders,
+                    collapsedFolders = collapsedFolders,
+                    onToggleFolder = onToggleFolder,
+                    onManageFolders = {
+                        managingFolders = true
+                        scope.launch { drawerState.close() }
+                    },
                 )
             }
         },
@@ -282,10 +304,41 @@ fun WarpShell(
                 menuFor = null
                 onPinConversation(conversation.id, !conversation.pinned)
             },
+            onMove = {
+                menuFor = null
+                moving = conversation
+            },
             onDelete = {
                 menuFor = null
                 confirmingDelete = conversation
             },
+        )
+    }
+
+    moving?.let { conversation ->
+        MoveToFolderSheet(
+            conversation = conversation,
+            folders = folders,
+            onDismiss = { moving = null },
+            onPick = { folderId ->
+                moving = null
+                onMoveConversation(conversation.id, folderId)
+            },
+            onManageFolders = {
+                moving = null
+                managingFolders = true
+            },
+        )
+    }
+
+    if (managingFolders) {
+        ManageFoldersSheet(
+            folders = folders,
+            onDismiss = { managingFolders = false },
+            onCreate = onCreateFolder,
+            onRename = onRenameFolder,
+            onDelete = onDeleteFolder,
+            onReorder = onReorderFolders,
         )
     }
 
@@ -349,6 +402,7 @@ private fun ConversationMenu(
     onDismiss: () -> Unit,
     onRename: () -> Unit,
     onTogglePin: () -> Unit,
+    onMove: () -> Unit,
     onDelete: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -375,6 +429,7 @@ private fun ConversationMenu(
                 label = if (conversation.pinned) "Unpin" else "Pin to top",
                 onClick = onTogglePin,
             )
+            MenuRow(Icons.Outlined.FolderOpen, "Move to folder", onMove)
             // Delete is tinted, and it is the only tinted thing here. In a menu
             // where every row looks the same, the irreversible one is a thumb's
             // width from the reversible ones.
@@ -394,6 +449,7 @@ private fun MenuRow(
     label: String,
     onClick: () -> Unit,
     tint: Color = MaterialTheme.colorScheme.onSurface,
+    selected: Boolean = false,
 ) {
     Row(
         modifier = Modifier
@@ -404,7 +460,86 @@ private fun MenuRow(
     ) {
         Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = tint)
         Spacer(Modifier.size(WarpSpace.medium))
-        Text(label, style = MaterialTheme.typography.bodyLarge, color = tint)
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = tint,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        // Marks where the conversation already is, so the sheet answers "where
+        // is this?" as well as "where should it go?".
+        if (selected) {
+            Icon(
+                Icons.Outlined.Check,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+}
+
+/**
+ * Where to put this conversation.
+ *
+ * Recent is offered as a destination rather than as a "remove from folder"
+ * action, because that is what it is — the place conversations live when they
+ * are not filed. Naming it as a choice means moving out of a folder and moving
+ * between folders are the same gesture instead of two different ones.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MoveToFolderSheet(
+    conversation: Conversation,
+    folders: List<Folder>,
+    onDismiss: () -> Unit,
+    onPick: (String?) -> Unit,
+    onManageFolders: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = WarpSpace.large),
+        ) {
+            Text(
+                "Move to",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(
+                    start = WarpSpace.screen,
+                    end = WarpSpace.screen,
+                    bottom = WarpSpace.medium,
+                ),
+            )
+
+            MenuRow(
+                icon = Icons.Outlined.ChatBubbleOutline,
+                label = "Recent",
+                onClick = { onPick(null) },
+                selected = conversation.folderId == null,
+            )
+
+            folders.forEach { folder ->
+                MenuRow(
+                    icon = Icons.Outlined.FolderOpen,
+                    label = folder.name,
+                    onClick = { onPick(folder.id) },
+                    selected = conversation.folderId == folder.id,
+                )
+            }
+
+            // The way out of an empty list. Without it, someone who has never
+            // made a folder opens this and finds one row that does nothing they
+            // wanted, with no hint that folders are a thing they can create.
+            MenuRow(
+                icon = Icons.Outlined.CreateNewFolder,
+                label = if (folders.isEmpty()) "New folder" else "Manage folders",
+                onClick = onManageFolders,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
     }
 }
 
@@ -616,11 +751,15 @@ private fun DrawerContents(
     current: WarpDestination,
     modelLabel: String,
     conversations: List<Conversation>,
+    folders: List<Folder>,
+    collapsedFolders: Set<String>,
     openConversationId: String?,
     onSelect: (WarpDestination) -> Unit,
     onNewChat: () -> Unit,
     onOpenConversation: (String) -> Unit,
     onConversationMenu: (Conversation) -> Unit,
+    onToggleFolder: (String) -> Unit,
+    onManageFolders: () -> Unit,
 ) {
     // Compact when the drawer is short — a landscape phone, or a portrait one at
     // the largest system font. Scrolling alone was not enough: everything was
@@ -678,7 +817,11 @@ private fun DrawerContents(
             // An always-present "Pinned" heading over an empty space is a
             // permanent reminder of a feature you are not using.
             val pinned = conversations.filter { it.pinned }
-            val recent = conversations.filterNot { it.pinned }
+            // Pinning outranks filing. A pinned conversation is at the top
+            // because you put it there, and a folder quietly reclaiming it would
+            // undo the one thing pinning is for.
+            val filed = conversations.filterNot { it.pinned }.groupBy { it.folderId }
+            val recent = filed[null].orEmpty()
 
             if (pinned.isNotEmpty()) {
                 SectionLabel("Pinned")
@@ -693,6 +836,46 @@ private fun DrawerContents(
                         onLongClick = { onConversationMenu(conversation) },
                     )
                 }
+                Spacer(Modifier.size(if (compact) WarpSpace.small else WarpSpace.medium))
+            }
+
+            folders.forEach { folder ->
+                val inside = filed[folder.id].orEmpty()
+                val open = folder.id !in collapsedFolders
+
+                FolderHeader(
+                    name = folder.name,
+                    count = inside.size,
+                    expanded = open,
+                    onClick = { onToggleFolder(folder.id) },
+                )
+                if (open) {
+                    inside.forEach { conversation ->
+                        ConversationRow(
+                            title = conversation.title,
+                            subtitle = conversation.subtitle(),
+                            selected = current == WarpDestination.CHAT &&
+                                conversation.id == openConversationId,
+                            onClick = { onOpenConversation(conversation.id) },
+                            onLongClick = { onConversationMenu(conversation) },
+                        )
+                    }
+                    if (inside.isEmpty()) {
+                        Text(
+                            "Empty",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(
+                                start = 42.dp,
+                                top = WarpSpace.tiny,
+                                bottom = WarpSpace.small,
+                            ),
+                        )
+                    }
+                }
+            }
+
+            if (folders.isNotEmpty()) {
                 Spacer(Modifier.size(if (compact) WarpSpace.small else WarpSpace.medium))
             }
 
@@ -738,6 +921,16 @@ private fun DrawerContents(
                     )
                 }
             }
+
+            // Below the conversations, not above them: the list is what the
+            // drawer is for, and a control for organising it should not be the
+            // first thing in the way of reaching it.
+            Spacer(Modifier.size(WarpSpace.small))
+            DrawerRowPlain(
+                icon = Icons.Outlined.CreateNewFolder,
+                label = if (folders.isEmpty()) "New folder" else "Manage folders",
+                onClick = onManageFolders,
+            )
 
             Spacer(Modifier.size(if (compact) WarpSpace.small else WarpSpace.medium))
             DrawerDivider()
@@ -796,6 +989,93 @@ private fun NewChatButton(onClick: () -> Unit) {
             "New chat",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onPrimary,
+        )
+    }
+}
+
+/**
+ * A folder, as a header you can fold.
+ *
+ * Built to read like [SectionLabel] rather than like [ConversationRow], because
+ * that is what it is — a heading over a group, not another item in the list. The
+ * count sits on the right so a collapsed folder still says how much is inside;
+ * without it, folding a folder hides the fact that it has anything in it.
+ */
+@Composable
+private fun FolderHeader(
+    name: String,
+    count: Int,
+    expanded: Boolean,
+    onClick: () -> Unit,
+) {
+    // Rotated rather than swapped for a second icon: the turn is what says the
+    // two states are the same control, and a cut animation between two glyphs
+    // reads as the row being replaced.
+    val turn by animateFloatAsState(
+        targetValue = if (expanded) 90f else 0f,
+        animationSpec = warpTween(WarpMotion.QUICK),
+        label = "folderChevron",
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(WarpRadius.small))
+            .clickable(onClick = onClick)
+            .padding(horizontal = WarpSpace.medium, vertical = WarpSpace.small),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = turn },
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.size(WarpSpace.medium))
+        Text(
+            name.uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (count > 0) {
+            Text(
+                count.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** A drawer row that is an action rather than a place. */
+@Composable
+private fun DrawerRowPlain(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(WarpRadius.small))
+            .clickable(onClick = onClick)
+            .padding(horizontal = WarpSpace.medium, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.size(WarpSpace.medium))
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

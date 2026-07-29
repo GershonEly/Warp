@@ -166,12 +166,10 @@ class ConversationRepository(context: Context) : ChatEngine.ConversationStore {
         folders.delete(FolderEntity(folder.id, folder.name, folder.sortKey, 0))
 
     /** Persist a new order after a drag in the Manage folders sheet. */
-    suspend fun reorderFolders(ordered: List<Folder>, now: Long) =
-        folders.upsertAll(
-            ordered.mapIndexed { index, folder ->
-                FolderEntity(folder.id, folder.name, sortKey = index.toLong(), createdAt = now)
-            }
-        )
+    suspend fun reorderFolders(ordered: List<Folder>) =
+        ordered.forEachIndexed { index, folder ->
+            folders.setSortKey(folder.id, index.toLong())
+        }
 
     // ── mapping ──────────────────────────────────────────────────────────
 
