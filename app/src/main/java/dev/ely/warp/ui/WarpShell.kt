@@ -97,6 +97,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import dev.ely.warp.data.ConversationOrder
+import androidx.compose.material.icons.automirrored.outlined.Sort
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import dev.ely.warp.data.Conversation
@@ -173,6 +179,11 @@ fun WarpShell(
     onDestinationChange: (WarpDestination) -> Unit,
     conversations: List<Conversation> = emptyList(),
     folders: List<Folder> = emptyList(),
+    searchQuery: String = "",
+    searchResults: List<Conversation> = emptyList(),
+    searchOrder: ConversationOrder = ConversationOrder.RECENT,
+    onSearchChange: (String) -> Unit = {},
+    onSearchOrderChange: (ConversationOrder) -> Unit = {},
     collapsedFolders: Set<String> = emptySet(),
     openConversationId: String? = null,
     onOpenConversation: (String) -> Unit = {},
@@ -234,6 +245,11 @@ fun WarpShell(
                         scope.launch { drawerState.close() }
                     },
                     onConversationMenu = { menuFor = it },
+                    searchQuery = searchQuery,
+                    searchResults = searchResults,
+                    searchOrder = searchOrder,
+                    onSearchChange = onSearchChange,
+                    onSearchOrderChange = onSearchOrderChange,
                     folders = folders,
                     collapsedFolders = collapsedFolders,
                     onToggleFolder = onToggleFolder,
@@ -846,6 +862,11 @@ private fun DrawerContents(
     conversations: List<Conversation>,
     folders: List<Folder>,
     collapsedFolders: Set<String>,
+    searchQuery: String,
+    searchResults: List<Conversation>,
+    searchOrder: ConversationOrder,
+    onSearchChange: (String) -> Unit,
+    onSearchOrderChange: (ConversationOrder) -> Unit,
     openConversationId: String?,
     onSelect: (WarpDestination) -> Unit,
     onNewChat: () -> Unit,
@@ -889,8 +910,29 @@ private fun DrawerContents(
                 )
             }
 
-            // Navigation, first and quiet. Short, fixed, and always exactly
-            // where it was yesterday.
+            // Search sits directly under the wordmark, and it is the largest
+            // control in the drawer.
+            //
+            // Everything else here is a way of *browsing* what you have; this is
+            // the way of *finding* it, and finding beats browsing the moment
+            // there are more conversations than fit on a screen. Putting it
+            // fourth, in a row the size of the others, made it a thing you had to
+            // notice rather than a thing you reach for.
+            SearchField(query = searchQuery, onChange = onSearchChange)
+
+            Spacer(Modifier.size(WarpSpace.small))
+
+            // Fixed rows above a growing list, for the same structural reason
+            // navigation is: below the list they walk a little further down the
+            // drawer with every conversation, until the day you have enough of
+            // them that the only way to make a folder is to scroll past
+            // everything you were trying to organise.
+            DrawerRowPlain(
+                icon = Icons.Outlined.CreateNewFolder,
+                label = if (folders.isEmpty()) "New folder" else "Manage folders",
+                onClick = onManageFolders,
+            )
+
             WarpDestination.workspace.forEach { destination ->
                 DrawerRow(
                     destination = destination,
@@ -912,6 +954,43 @@ private fun DrawerContents(
             // undo the one thing pinning is for.
             val filed = conversations.filterNot { it.pinned }.groupBy { it.folderId }
             val recent = filed[null].orEmpty()
+
+            if (searchQuery.isNotBlank()) {
+                // Search replaces the list rather than filtering it in place.
+                // Pinned, folders and Recent are ways of organising conversations
+                // you already know about; a search is a question about all of
+                // them at once, and answering it inside those groupings would
+                // scatter three matches across three headings.
+                // The count and the ordering on one line, and the ordering
+                // exists only here. Outside a search the drawer's arrangement is
+                // its own — pinned above folders above recent — and a sort
+                // control there would be offering to break it.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    SectionLabel(
+                        if (searchResults.isEmpty()) "No matches"
+                        else "${searchResults.size} found"
+                    )
+                    Spacer(Modifier.weight(1f))
+                    if (searchResults.size > 1) {
+                        SortToggle(order = searchOrder, onChange = onSearchOrderChange)
+                    }
+                }
+                searchResults.forEach { conversation ->
+                    ConversationRow(
+                        title = conversation.title,
+                        selected = current == WarpDestination.CHAT &&
+                            conversation.id == openConversationId,
+                        pinned = conversation.pinned,
+                        onClick = { onOpenConversation(conversation.id) },
+                        onLongClick = { onConversationMenu(conversation) },
+                    )
+                }
+                Spacer(Modifier.size(WarpSpace.section))
+                return@Column
+            }
 
             if (pinned.isNotEmpty()) {
                 SectionLabel("Pinned")
@@ -1001,15 +1080,6 @@ private fun DrawerContents(
                     )
                 }
             }
-
-            // Under the list it organises, and quiet, because it is maintenance
-            // rather than something anyone opens the drawer to do.
-            Spacer(Modifier.size(WarpSpace.small))
-            DrawerRowPlain(
-                icon = Icons.Outlined.CreateNewFolder,
-                label = if (folders.isEmpty()) "New folder" else "Manage folders",
-                onClick = onManageFolders,
-            )
 
             // So the last conversation is not hard against the bottom bar, and
             // so there is somewhere for the list to end.
@@ -1214,6 +1284,111 @@ private fun DrawerRowPlain(
         Text(
             label,
             style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * Search, across every message ever sent.
+ *
+ * The moment conversations persist a list becomes an archive, and an archive
+ * without search is a drawer you stop opening. The index behind this — an FTS4
+ * shadow of every message body — has existed since the store was written and had
+ * never been read from.
+ *
+ * It searches **message text, not titles.** Titles are four words the model
+ * guessed; the thing you actually remember is something you said.
+ */
+@Composable
+private fun SearchField(query: String, onChange: (String) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .padding(horizontal = WarpSpace.medium, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Outlined.Search,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.size(WarpSpace.medium))
+        Box(modifier = Modifier.weight(1f)) {
+            BasicTextField(
+                value = query,
+                onValueChange = onChange,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                    color = MaterialTheme.colorScheme.onSurface,
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (query.isEmpty()) {
+                Text(
+                    "Search your chats",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        // Only while there is something to clear. A permanent X on an empty
+        // field is a control that does nothing most of the time.
+        if (query.isNotEmpty()) {
+            Icon(
+                Icons.Outlined.Close,
+                contentDescription = "Clear search",
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable { onChange("") }
+                    .padding(2.dp)
+                    .size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * Newest, or by name.
+ *
+ * A toggle rather than a menu: there are two answers and a menu for two answers
+ * is a menu that costs a tap to tell you what you already knew. The label shows
+ * the order you are *in*, not the one you would switch to — a button that names
+ * the thing it is not is the most reliable way to make somebody press it twice.
+ *
+ * Only while searching, and only with more than one result. One result has no
+ * order.
+ */
+@Composable
+private fun SortToggle(order: ConversationOrder, onChange: (ConversationOrder) -> Unit) {
+    Row(
+        modifier = Modifier
+            .clip(CircleShape)
+            .clickable {
+                onChange(
+                    if (order == ConversationOrder.RECENT) ConversationOrder.ALPHABETICAL
+                    else ConversationOrder.RECENT
+                )
+            }
+            .padding(horizontal = WarpSpace.small, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.AutoMirrored.Outlined.Sort,
+            contentDescription = "Change order",
+            modifier = Modifier.size(15.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.size(4.dp))
+        Text(
+            order.label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

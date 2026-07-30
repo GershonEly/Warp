@@ -31,6 +31,34 @@ interface ConversationDao {
     @Query("SELECT * FROM conversations WHERE id = :id AND deletedAt IS NULL")
     suspend fun byId(id: String): ConversationEntity?
 
+    // ── search, by name ──────────────────────────────────────────────────
+    //
+    // Two queries rather than one with a parameter, because Room cannot bind an
+    // ORDER BY — the ordering is part of the compiled statement. Two small
+    // queries beats a @RawQuery that gives up compile-time checking of the
+    // column names for the sake of one clause.
+    //
+    // `ESCAPE` matters: without it a typed % or _ is a LIKE wildcard, so
+    // searching for "50%" would quietly match everything.
+
+    @Query(
+        """
+        SELECT * FROM conversations
+        WHERE deletedAt IS NULL AND title LIKE '%' || :name || '%' ESCAPE '\'
+        ORDER BY pinned DESC, updatedAt DESC
+        """
+    )
+    suspend fun searchByNameRecent(name: String): List<ConversationEntity>
+
+    @Query(
+        """
+        SELECT * FROM conversations
+        WHERE deletedAt IS NULL AND title LIKE '%' || :name || '%' ESCAPE '\'
+        ORDER BY title COLLATE NOCASE ASC
+        """
+    )
+    suspend fun searchByNameAlphabetical(name: String): List<ConversationEntity>
+
     @Upsert
     suspend fun upsert(conversation: ConversationEntity)
 

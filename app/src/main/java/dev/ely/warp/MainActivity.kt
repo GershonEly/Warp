@@ -44,6 +44,9 @@ import androidx.compose.ui.unit.dp
 import dev.ely.warp.ai.ChatEngine
 import dev.ely.warp.ai.ConversationTitler
 import dev.ely.warp.ai.ProviderRegistry
+import dev.ely.warp.data.Conversation
+import dev.ely.warp.data.ConversationOrder
+import kotlinx.coroutines.delay
 import dev.ely.warp.data.DrawerPrefs
 import dev.ely.warp.data.DrawerState
 import dev.ely.warp.diag.DeviceProbe
@@ -128,6 +131,24 @@ private fun WarpApp() {
     val drawerPrefs = remember { DrawerPrefs(context) }
     var collapsedFolders by remember { mutableStateOf(drawerPrefs.collapsed) }
 
+    // Search runs against the FTS index, which has been written and unused since
+    // the store landed. Debounced: FTS is fast, but a query per keystroke means a
+    // query for every prefix of a word nobody finished typing.
+    var searchQuery by remember { mutableStateOf("") }
+    var searchOrder by remember { mutableStateOf(ConversationOrder.RECENT) }
+    var searchResults by remember { mutableStateOf<List<Conversation>>(emptyList()) }
+    LaunchedEffect(searchQuery, searchOrder) {
+        if (searchQuery.isBlank()) {
+            searchResults = emptyList()
+        } else {
+            // Debounced on the query only in spirit — changing the order reruns
+            // immediately in practice, and a fifth of a second on a button press
+            // is the difference between a control that answers and one that lags.
+            delay(220)
+            searchResults = conversations.searchByName(searchQuery, searchOrder)
+        }
+    }
+
     // Pick up a key added in Settings; the model itself is chosen in the picker.
     LaunchedEffect(destination) {
         if (destination == WarpDestination.CHAT) {
@@ -180,6 +201,11 @@ private fun WarpApp() {
             destination = destination,
             onDestinationChange = { destination = it },
             conversations = drawer.conversations,
+            searchQuery = searchQuery,
+            searchResults = searchResults,
+            searchOrder = searchOrder,
+            onSearchChange = { searchQuery = it },
+            onSearchOrderChange = { searchOrder = it },
             openConversationId = openConversationId,
             onOpenConversation = { id ->
                 scope.launch {
@@ -189,6 +215,10 @@ private fun WarpApp() {
                     // briefly, is the one thing this list must never do.
                     engine.open(id, conversations.loadMessages(id))
                     destination = WarpDestination.CHAT
+                    // The question has been answered. Leaving the query in place
+                    // means the next time the drawer opens it opens on a search
+                    // for something you already found.
+                    searchQuery = ""
                 }
             },
             onRenameConversation = { id, name ->

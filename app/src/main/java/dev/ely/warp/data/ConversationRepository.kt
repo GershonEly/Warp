@@ -66,14 +66,61 @@ class ConversationRepository(context: Context) : ChatEngine.ConversationStore {
     suspend fun loadMessages(conversationId: String): List<ChatMessage> =
         messages.forConversation(conversationId).map { it.toModel() }
 
-    suspend fun search(query: String): List<Conversation> {
-        // FTS treats bare punctuation as syntax, so a stray quote in what
-        // someone typed would throw rather than find nothing. Quoting the whole
-        // thing as a phrase and appending * makes it a prefix search over
-        // literal text, which is what a search box is expected to do.
-        val safe = query.replace("\"", "").trim()
-        if (safe.isEmpty()) return emptyList()
-        return messages.search("\"$safe\"*").map { it.toModel(null) }
+    /**
+     * Conversations whose **name** contains what was typed.
+     *
+     * Names, not message bodies, and that was decided by using it: a chat called
+     * "yo yo yo" could not be found by typing its own name, while a different
+     * chat that happened to contain those words *inside* it came back instead.
+     * Searching everything makes the thing you are looking at unfindable by the
+     * one label you gave it.
+     *
+     * The FTS index over message text still exists and still works — see
+     * [searchMessages]. It is the right tool for "somewhere I discussed
+     * Gradle", which is a different question from "where is that chat called
+     * yo yo yo", and it belongs behind its own control rather than silently
+     * competing with this one.
+     *
+     * `%` and `_` are escaped rather than stripped: they are LIKE wildcards, so
+     * an unescaped "50%" would match every conversation there is.
+     */
+    suspend fun searchByName(
+        query: String,
+        order: ConversationOrder = ConversationOrder.RECENT,
+    ): List<Conversation> {
+        val name = query.trim()
+            .replace("""\""", """\\""")
+            .replace("%", """\%""")
+            .replace("_", """\_""")
+        if (name.isEmpty()) return emptyList()
+
+        val rows = when (order) {
+            ConversationOrder.RECENT -> conversations.searchByNameRecent(name)
+            ConversationOrder.ALPHABETICAL -> conversations.searchByNameAlphabetical(name)
+        }
+        return rows.map { it.toModel(null) }
+    }
+
+    /**
+     * Conversations containing a word *inside* a message.
+     *
+     * Not wired to the drawer's search box — see [searchByName] for why. Kept
+     * because it works, it is tested, and "find the chat where I mentioned
+     * kotlinc" is a real question that will want answering.
+     *
+     * Each word becomes its own prefix term. Quoting the whole query as a phrase
+     * looked equivalent and is not: quoting makes it an exact phrase match and
+     * the trailing star stops being a prefix operator, so whole words matched
+     * and partial ones silently never did.
+     */
+    suspend fun searchMessages(query: String): List<Conversation> {
+        val terms = query.split(FTS_SPLIT).filter { it.isNotBlank() }
+        if (terms.isEmpty()) return emptyList()
+
+        val match = terms.joinToString(" ") { "$it*" }
+        return runCatching { messages.search(match) }
+            .getOrDefault(emptyList())
+            .map { it.toModel(null) }
     }
 
     // ── what the chat engine writes through ──────────────────────────────
@@ -270,6 +317,14 @@ class ConversationRepository(context: Context) : ChatEngine.ConversationStore {
     }
 
     companion object {
+        /**
+         * Everything FTS would read as an operator, plus whitespace.
+         *
+         * Splitting on these rather than deleting them means a search for
+         * `warp-toolchain` looks for both halves instead of one nonsense word.
+         */
+        private val FTS_SPLIT = Regex("""[\s"'*()\[\]:^\-,.;!?]+""")
+
         const val UNTITLED = "New chat"
 
         /** How long a deleted conversation can still be brought back. */
@@ -294,6 +349,15 @@ data class Folder(
     val name: String,
     val sortKey: Long,
 )
+
+/** How a list of found conversations is arranged. */
+enum class ConversationOrder(val label: String) {
+    /** Newest first. What you want when you half-remember something recent. */
+    RECENT("Newest"),
+
+    /** By name. What you want when you know exactly what it is called. */
+    ALPHABETICAL("A–Z"),
+}
 
 data class DrawerState(
     val conversations: List<Conversation> = emptyList(),
