@@ -163,14 +163,64 @@ class GoogleProvider(private val context: Context) : AiProvider {
     private fun buildBody(request: AiRequest): JSONObject {
         val contents = JSONArray()
         request.messages
-            .filter { it.text.isNotBlank() && it.role != Role.SYSTEM }
+            // A turn that only called tools still has to be sent, or the model
+            // is asked to carry on from a conversation it never had.
+            .filter { (it.text.isNotBlank() || it.toolCalls.isNotEmpty()) && it.role != Role.SYSTEM }
             .forEach { message ->
-                contents.put(
-                    JSONObject()
-                        // Gemini calls the assistant "model", not "assistant".
-                        .put("role", if (message.role == Role.USER) "user" else "model")
-                        .put("parts", JSONArray().put(JSONObject().put("text", message.text)))
-                )
+                if (message.role == Role.USER || message.toolCalls.isEmpty()) {
+                    contents.put(
+                        JSONObject()
+                            // Gemini calls the assistant "model", not "assistant".
+                            .put("role", if (message.role == Role.USER) "user" else "model")
+                            .put("parts", JSONArray().put(JSONObject().put("text", message.text)))
+                    )
+                    return@forEach
+                }
+
+                // A third arrangement of the same facts: parts rather than
+                // blocks, `functionResponse` rather than a tool role, and the
+                // result matched by *name* — Gemini's function calls carry no id,
+                // which is why the one made up at parse time is never sent back.
+                val parts = JSONArray()
+                if (message.text.isNotBlank()) {
+                    parts.put(JSONObject().put("text", message.text))
+                }
+                message.toolCalls.forEach { call ->
+                    parts.put(
+                        JSONObject().put(
+                            "functionCall",
+                            JSONObject()
+                                .put("name", call.name)
+                                .put(
+                                    "args",
+                                    runCatching { JSONObject(call.argumentsJson) }
+                                        .getOrDefault(JSONObject())
+                                )
+                        )
+                    )
+                }
+                contents.put(JSONObject().put("role", "model").put("parts", parts))
+
+                val results = JSONArray()
+                message.toolCalls.forEach { call ->
+                    results.put(
+                        JSONObject().put(
+                            "functionResponse",
+                            JSONObject()
+                                .put("name", call.name)
+                                .put(
+                                    "response",
+                                    JSONObject().put(
+                                        "result",
+                                        call.body?.takeIf { it.isNotBlank() }
+                                            ?: call.result
+                                            ?: "no output",
+                                    )
+                                )
+                        )
+                    )
+                }
+                contents.put(JSONObject().put("role", "user").put("parts", results))
             }
 
         return JSONObject().apply {

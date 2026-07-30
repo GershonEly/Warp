@@ -20,6 +20,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -775,10 +776,21 @@ private fun ThinkingLine() {
 
 @Composable
 private fun ToolCard(call: ToolCall) {
+    // Collapsed by default, and only openable when there is something inside.
+    // The summary line is the point of the card — four hundred lines of a file
+    // in the middle of a conversation is not reading, it is scrolling.
+    var open by remember(call.id) { mutableStateOf(false) }
+    val body = call.body?.takeIf { it.isNotBlank() }
+
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (body == null) Modifier
+                else Modifier.clickable { open = !open }
+            ),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -840,8 +852,38 @@ private fun ToolCard(call: ToolCall) {
                     )
                 }
             }
-            // Allow / Always belong here, and arrive with Step 5 — when tools
-            // actually run, and a decision means something.
+            body?.let { text ->
+                Spacer(Modifier.size(8.dp))
+                if (open) {
+                    // Scrolls sideways rather than wrapping, for the same reason
+                    // code blocks do: a wrapped path or a wrapped match line is
+                    // a different string from the one on disk.
+                    Ltr {
+                        Text(
+                            text,
+                            style = WarpMono,
+                            softWrap = false,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 260.dp)
+                                .verticalScroll(rememberScrollState())
+                                .horizontalScroll(rememberScrollState()),
+                        )
+                    }
+                } else {
+                    // Says how much is hidden. "Show output" alone gives no way
+                    // to judge whether opening it is worth the scroll.
+                    Text(
+                        "Show output · ${text.lines().size} lines",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            // Allow / Always belong here, and arrive with the write tools — a
+            // decision only means something once something can be changed.
         }
     }
 }

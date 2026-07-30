@@ -120,7 +120,41 @@ if len(a["results"]) > 1:
     check("A–Z really is sorted", titles == sorted(titles), f"{titles}")
 
 
-print("\n7. SETTINGS ROUND-TRIP")
+print("\n7. TOOLS REALLY RUN")
+# Nothing in this section is scripted. The mock asks for list_dir, the runner
+# walks the app's own project folder, and the result goes back into the next
+# request. Every earlier version of the tool cards passed by looking right.
+call("POST", "/chat/new")
+call("POST", "/chat/send", {"text": "look at the project files"})
+time.sleep(10)
+s, st = call("GET", "/state")
+s, m = call("GET", "/messages?id=" + st["conversationId"])
+msgs = m["messages"]
+calls = [c for msg in msgs for c in msg.get("toolCalls", [])]
+
+check("the model's tool call was executed",
+      len(calls) == 1 and calls[0]["status"] == "DONE",
+      f"{[(c['name'], c['status']) for c in calls]}")
+check("the result says what it did, not 'ok'",
+      bool(calls) and "entries" in (calls[0]["result"] or ""),
+      f"result={calls[0]['result'] if calls else None}")
+check("the full output came back with it",
+      bool(calls) and bool(calls[0]["body"]),
+      f"body={calls[0]['body'] if calls else None!r}")
+check("the tool output reached the model",
+      len(msgs) >= 3 and bool(calls)
+      and (calls[0]["body"] or "|").split("\n")[0] in msgs[-1]["text"],
+      "the last reply quotes what the tool found")
+check("one round of tools, not eight — the budget is not the brake",
+      len(msgs) == 3, f"messages={len(msgs)}")
+
+s, out = call("POST", "/tool",
+              {"name": "read_file", "args": {"path": "../databases/warp.db"}})
+check("a path outside the project is refused",
+      "outside" in json.dumps(out), json.dumps(out)[:90])
+
+
+print("\n8. SETTINGS ROUND-TRIP")
 s, r = call("POST", "/settings", {"name": "ambient", "value": "false"})
 check("turning the atmosphere off reads back as off", r.get("value") == "false")
 s, r = call("POST", "/settings", {"name": "ambient", "value": "true"})
@@ -130,7 +164,7 @@ s, r = call("POST", "/settings", {"name": "nonsense", "value": "x"})
 check("an unknown setting is refused rather than silently ignored", s == 400)
 
 
-print("\n8. NAVIGATION")
+print("\n9. NAVIGATION")
 for dest in ("SETTINGS", "BUILD", "CHAT"):
     call("POST", "/nav", {"to": dest})
     s, st = call("GET", "/state")

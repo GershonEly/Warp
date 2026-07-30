@@ -205,14 +205,31 @@ object DebugServer {
             "GET /messages" -> runBlocking {
                 val id = query["id"] ?: return@runBlocking 400 to error("expected ?id=")
                 val array = JSONArray()
-                store.loadMessages(id).forEach {
+                store.loadMessages(id).forEach { message ->
+                    // Tool calls are reported too. Without them the one thing
+                    // this surface exists to check — that a tool really ran and
+                    // really returned something — is the one thing it cannot
+                    // see, and "the card looked right on my phone" is back to
+                    // being the test.
+                    val calls = JSONArray()
+                    message.toolCalls.forEach { call ->
+                        calls.put(
+                            JSONObject()
+                                .put("name", call.name)
+                                .put("arguments", call.argumentsJson)
+                                .put("status", call.status.name)
+                                .put("result", call.result ?: JSONObject.NULL)
+                                .put("body", call.body ?: JSONObject.NULL)
+                        )
+                    }
                     array.put(
                         JSONObject()
-                            .put("id", it.id)
-                            .put("role", it.role.name)
-                            .put("text", it.text)
-                            .put("error", it.error?.message ?: JSONObject.NULL)
-                            .put("createdAt", it.createdAt)
+                            .put("id", message.id)
+                            .put("role", message.role.name)
+                            .put("text", message.text)
+                            .put("toolCalls", calls)
+                            .put("error", message.error?.message ?: JSONObject.NULL)
+                            .put("createdAt", message.createdAt)
                     )
                 }
                 200 to JSONObject().put("messages", array)

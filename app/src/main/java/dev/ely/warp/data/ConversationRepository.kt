@@ -304,6 +304,10 @@ class ConversationRepository(context: Context) : ChatEngine.ConversationStore {
                     .put("argumentsJson", call.argumentsJson)
                     .put("status", call.status.name)
                     .put("result", call.result ?: JSONObject.NULL)
+                    // Kept too. Reopening a conversation and finding every tool
+                    // card emptied out is the same loss as reopening it and
+                    // finding the replies gone — the output *is* the work.
+                    .put("body", call.body ?: JSONObject.NULL)
             )
         }
         return array.toString()
@@ -322,6 +326,7 @@ class ConversationRepository(context: Context) : ChatEngine.ConversationStore {
                     status = runCatching { ToolCall.Status.valueOf(o.getString("status")) }
                         .getOrDefault(ToolCall.Status.DONE),
                     result = if (o.isNull("result")) null else o.getString("result"),
+                    body = if (o.isNull("body")) null else o.getString("body"),
                 )
             }
         }.getOrDefault(emptyList())

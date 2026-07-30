@@ -52,6 +52,7 @@ import dev.ely.warp.data.Appearance
 import dev.ely.warp.data.Identity
 import dev.ely.warp.debug.DebugBridge
 import dev.ely.warp.data.DrawerPrefs
+import dev.ely.warp.tools.ToolRunner
 import dev.ely.warp.data.DrawerState
 import dev.ely.warp.diag.DeviceProbe
 import dev.ely.warp.ui.BuildScreen
@@ -116,8 +117,21 @@ private fun WarpApp() {
         (context.applicationContext as WarpApplication).conversations
     }
     val titler = remember { ConversationTitler(conversations, registry) }
+    val toolRunner = remember { ToolRunner(context) }
     val engine = remember {
-        ChatEngine(scope, registry.selected, store = conversations, titler = titler)
+        ChatEngine(
+            scope,
+            registry.selected,
+            store = conversations,
+            titler = titler,
+            // The engine still knows nothing about files — it is handed something
+            // that can execute a call and hands back the outcome.
+            tools = object : ChatEngine.ToolExecutor {
+                override val specs = dev.ely.warp.tools.READ_TOOL_SPECS
+                override suspend fun execute(call: dev.ely.warp.ai.ToolCall) =
+                    toolRunner.run(call)
+            },
+        )
     }
     var choice by remember { mutableStateOf(registry.choice) }
 

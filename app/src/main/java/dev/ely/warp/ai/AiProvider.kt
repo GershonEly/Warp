@@ -182,7 +182,18 @@ data class ToolCall(
     val name: String,
     val argumentsJson: String,
     val status: Status = Status.PENDING,
+    /** One line for the card — what it did, never "ok". */
     val result: String? = null,
+    /**
+     * The full output, kept apart from the summary.
+     *
+     * Separate because they are read by different readers: the summary is for
+     * the person glancing at a card, and the body is what goes back to the model
+     * and what a person opens when the summary is not enough. Merging them means
+     * either a card with four hundred lines in it or a model that only ever
+     * learns "12 matches".
+     */
+    val body: String? = null,
 ) {
     enum class Status { PENDING, RUNNING, DONE, FAILED, DENIED }
 }

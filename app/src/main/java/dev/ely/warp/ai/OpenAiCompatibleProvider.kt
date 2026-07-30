@@ -182,13 +182,57 @@ abstract class OpenAiCompatibleProvider(
         }
 
         request.messages
-            .filter { it.text.isNotBlank() && it.role != Role.SYSTEM }
+            // Tool calls count as content. Filtering on text alone would drop
+            // the turn where the model went and looked at something.
+            .filter { (it.text.isNotBlank() || it.toolCalls.isNotEmpty()) && it.role != Role.SYSTEM }
             .forEach { message ->
+                if (message.role == Role.USER || message.toolCalls.isEmpty()) {
+                    messages.put(
+                        JSONObject()
+                            .put("role", if (message.role == Role.USER) "user" else "assistant")
+                            .put("content", message.text)
+                    )
+                    return@forEach
+                }
+
+                // This dialect keeps the calls on the assistant message and puts
+                // each result in its own `tool` message — the same information
+                // as Anthropic's blocks, arranged differently. Hence one mapping
+                // per provider rather than a shared one pretending they agree.
+                val calls = JSONArray()
+                message.toolCalls.forEach { call ->
+                    calls.put(
+                        JSONObject()
+                            .put("id", call.id)
+                            .put("type", "function")
+                            .put(
+                                "function",
+                                JSONObject()
+                                    .put("name", call.name)
+                                    .put("arguments", call.argumentsJson.ifBlank { "{}" })
+                            )
+                    )
+                }
                 messages.put(
                     JSONObject()
-                        .put("role", if (message.role == Role.USER) "user" else "assistant")
-                        .put("content", message.text)
+                        .put("role", "assistant")
+                        .put("content", message.text.ifBlank { JSONObject.NULL })
+                        .put("tool_calls", calls)
                 )
+
+                message.toolCalls.forEach { call ->
+                    messages.put(
+                        JSONObject()
+                            .put("role", "tool")
+                            .put("tool_call_id", call.id)
+                            .put(
+                                "content",
+                                call.body?.takeIf { it.isNotBlank() }
+                                    ?: call.result
+                                    ?: "no output",
+                            )
+                    )
+                }
             }
 
         return JSONObject().apply {

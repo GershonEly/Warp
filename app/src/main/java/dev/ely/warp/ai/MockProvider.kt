@@ -73,6 +73,19 @@ class MockProvider(
         // never shows its "thinking" state, so it never gets tested.
         delay(if (request.effort == Effort.LOW) 350 else 900)
 
+        // A tool has just run: say what it found and stop.
+        //
+        // Not politeness — this is the only way to prove the result got back to
+        // the provider at all. Without it the mock re-runs its script every
+        // round, calls the same tool eight times, and hits the round budget; the
+        // loop looked broken when what was broken was a mock that never listened.
+        toolResults(request)?.let { found ->
+            emitWords("Here is what came back:")
+            emit(AiEvent.TextDelta("\n\n```\n$found\n```"))
+            emit(AiEvent.Completed())
+            return@flow
+        }
+
         val script = scriptFor(prompt)
 
         for ((index, segment) in script.segments.withIndex()) {
@@ -88,9 +101,9 @@ class MockProvider(
                 }
 
                 is Segment.Tool -> {
-                    // The full lifecycle, not just the request. The card is
-                    // supposed to show a tool being called and finishing, and it
-                    // can only do that if something says it finished.
+                    // The request only. What happens next is not the mock's to
+                    // say — the runner executes it and reports back, the same as
+                    // it would for a real model.
                     val id = UUID.randomUUID().toString()
                     emit(
                         AiEvent.ToolCallRequested(
@@ -99,16 +112,6 @@ class MockProvider(
                                 name = segment.name,
                                 argumentsJson = segment.argumentsJson,
                             )
-                        )
-                    )
-                    delay(400)
-                    emit(AiEvent.ToolCallUpdated(id, ToolCall.Status.RUNNING))
-                    delay(700)
-                    emit(
-                        AiEvent.ToolCallUpdated(
-                            id = id,
-                            status = ToolCall.Status.DONE,
-                            result = segment.result,
                         )
                     )
                     delay(200)
@@ -180,6 +183,22 @@ class MockProvider(
         Call it from `setContent`, and it is a working app.
     """.trimIndent()
 
+    /**
+     * What the tools found last turn, or null if the last turn used none.
+     *
+     * Only the final assistant message is examined. Anything earlier has already
+     * been answered, and treating an old result as new is how a mock ends up
+     * replying to a question from four turns ago.
+     */
+    private fun toolResults(request: AiRequest): String? {
+        val last = request.messages.lastOrNull { it.role == Role.ASSISTANT } ?: return null
+        if (last.toolCalls.isEmpty()) return null
+        return last.toolCalls.joinToString("\n\n") { call ->
+            val outcome = call.body?.takeIf { it.isNotBlank() } ?: call.result ?: "no output"
+            "${call.name} → $outcome"
+        }
+    }
+
     // ── naming a conversation ────────────────────────────────────────────
 
     /**
@@ -219,10 +238,17 @@ class MockProvider(
 
     private sealed interface Segment {
         data class Text(val text: String) : Segment
+        /**
+         * A tool the mock asks for. It carries no result, and cannot.
+         *
+         * Deliberately has nowhere to put one: the executor fills the card in
+         * from what actually happened. A field for a scripted outcome is a field
+         * that will eventually be used to make a broken tool look fine, which is
+         * exactly what "wrote 34 lines" was doing while nothing was written.
+         */
         data class Tool(
             val name: String,
             val argumentsJson: String,
-            val result: String,
         ) : Segment
     }
 
@@ -246,21 +272,32 @@ class MockProvider(
             "build" in p || "compile" in p || "apk" in p ->
                 Script(listOf(Segment.Text(BUILD_ANSWER)))
 
-            // Anything that sounds like "make me an app" shows the tool flow,
-            // because that is the interaction the real product is built around.
-            "app" in p || "create" in p || "make" in p || "write" in p ->
+            // Asks for a tool that now really runs, against the real project
+            // folder. It used to claim "wrote 34 lines" while nothing happened —
+            // a scripted result is indistinguishable from a working one, which
+            // is precisely why the tool cards were a picture for so long.
+            "read" in p || "look" in p || "files" in p || "project" in p ->
                 Script(
                     listOf(
-                        Segment.Text(CREATE_INTRO),
+                        Segment.Text("Let me look at what is here."),
                         Segment.Tool(
-                            name = "write_file",
-                            argumentsJson =
-                                """{"path":"src/MainActivity.kt","summary":"a one-screen counter app"}""",
-                            result = "wrote 34 lines",
+                            name = "list_dir",
+                            argumentsJson = """{"path":"."}""",
                         ),
-                        Segment.Text(CREATE_OUTRO),
+                        Segment.Text("That is the project as it stands."),
                     )
                 )
+
+            // No fake write_file here any more.
+            //
+            // It used to call one and report "wrote 34 lines" while no file was
+            // ever touched. Now that tool calls really execute, that card gets
+            // refused by the runner — correctly, because no write tool exists —
+            // and a scripted success would have papered straight over it. A mock
+            // that can make a missing tool look like a working one is worse than
+            // no mock, so this branch says what is true instead.
+            "app" in p || "create" in p || "make" in p || "write" in p ->
+                Script(listOf(Segment.Text(CREATE_ANSWER)))
 
             "who are you" in p || "what are you" in p ->
                 Script(listOf(Segment.Text(IDENTITY)))
@@ -288,13 +325,11 @@ class MockProvider(
                 "Note 13 Pro+ a small app takes about 18 seconds once the " +
                 "Kotlin runtime is cached."
 
-        const val CREATE_INTRO =
-            "Sure. I'll write a small counter app — one screen, a number, and " +
-                "a button that increases it. Creating the file now."
-
-        const val CREATE_OUTRO =
-            "Done. That's the file written. Tap Build to compile it, and Warp " +
-                "will produce an installable APK without leaving the phone."
+        const val CREATE_ANSWER =
+            "I can read the project already — ask me to look at the files and " +
+                "I really will. Writing them is the next piece: the write tools " +
+                "and their Allow / Always prompt are not built yet, and I would " +
+                "rather say so than show you a card claiming a file was saved."
 
         const val FALLBACK =
             "I'm the mock AI, so my answers are scripted rather than thought " +

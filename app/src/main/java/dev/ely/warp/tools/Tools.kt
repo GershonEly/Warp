@@ -46,6 +46,18 @@ interface Tool {
     val name: String
     val risk: Risk
 
+    /**
+     * What this is for, addressed to the model.
+     *
+     * Lives on the tool rather than in a table somewhere, because a description
+     * that drifts from the behaviour is worse than none — it teaches the model
+     * something untrue with full confidence.
+     */
+    val description: String
+
+    /** JSON Schema for the arguments. */
+    val schemaJson: String
+
     /** One line for the card, from the arguments alone, before it runs. */
     fun describe(args: JSONObject): String
 
@@ -73,6 +85,8 @@ internal fun resolve(project: File, path: String): File? {
 }
 
 object ReadFile : Tool {
+    override val description = "Read a file inside the project and return its text."
+    override val schemaJson = """{"type":"object","properties":{"path":{"type":"string","description":"Path relative to the project root."}},"required":["path"]}"""
     override val name = "read_file"
     override val risk = Risk.FREE
     override fun describe(args: JSONObject) = args.optString("path")
@@ -93,6 +107,8 @@ object ReadFile : Tool {
 }
 
 object ListDir : Tool {
+    override val description = "List the files and folders at a path inside the project."
+    override val schemaJson = """{"type":"object","properties":{"path":{"type":"string","description":"Folder relative to the project root. Defaults to the root."}}}"""
     override val name = "list_dir"
     override val risk = Risk.FREE
     override fun describe(args: JSONObject) = args.optString("path").ifBlank { "." }
@@ -115,6 +131,8 @@ object ListDir : Tool {
 }
 
 object Glob : Tool {
+    override val description = "Find files by name pattern, e.g. **/*.kt. Returns paths, not contents."
+    override val schemaJson = """{"type":"object","properties":{"pattern":{"type":"string","description":"Shell glob. ** crosses folders, * does not."}},"required":["pattern"]}"""
     override val name = "glob"
     override val risk = Risk.FREE
     override fun describe(args: JSONObject) = args.optString("pattern")
@@ -139,6 +157,8 @@ object Glob : Tool {
 }
 
 object Grep : Tool {
+    override val description = "Search file contents with a regular expression. Returns path:line: match."
+    override val schemaJson = """{"type":"object","properties":{"pattern":{"type":"string","description":"Regular expression."},"glob":{"type":"string","description":"Only search files matching this glob."}},"required":["pattern"]}"""
     override val name = "grep"
     override val risk = Risk.FREE
     override fun describe(args: JSONObject) = args.optString("pattern")
@@ -211,3 +231,9 @@ private const val LIMIT = 200
 /** Every tool the model can be offered, by name. */
 val READ_TOOLS: Map<String, Tool> =
     listOf(ReadFile, ListDir, Glob, Grep).associateBy { it.name }
+
+/** The same tools, in the shape a provider hands to a model. */
+val READ_TOOL_SPECS: List<dev.ely.warp.ai.ToolSpec> =
+    READ_TOOLS.values.map {
+        dev.ely.warp.ai.ToolSpec(it.name, it.description, it.schemaJson)
+    }

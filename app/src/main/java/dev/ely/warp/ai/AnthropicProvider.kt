@@ -227,14 +227,64 @@ class AnthropicProvider(
         val messages = JSONArray()
         request.messages
             // The API rejects empty content, and a placeholder assistant turn
-            // carries no meaning to the model.
-            .filter { it.text.isNotBlank() && it.role != Role.SYSTEM }
+            // carries no meaning to the model. A message with tool calls and no
+            // text is not empty, though — dropping it would delete the half of
+            // the conversation where anything actually happened.
+            .filter { (it.text.isNotBlank() || it.toolCalls.isNotEmpty()) && it.role != Role.SYSTEM }
             .forEach { message ->
-                messages.put(
-                    JSONObject()
-                        .put("role", if (message.role == Role.USER) "user" else "assistant")
-                        .put("content", message.text)
-                )
+                if (message.role == Role.USER || message.toolCalls.isEmpty()) {
+                    messages.put(
+                        JSONObject()
+                            .put("role", if (message.role == Role.USER) "user" else "assistant")
+                            .put("content", message.text)
+                    )
+                    return@forEach
+                }
+
+                // An assistant turn that used tools is two API messages: what it
+                // said and asked for, then what came back. The results go in a
+                // *user* turn — that is the shape the API requires, and getting
+                // it wrong is a 400 rather than a bad answer, which is at least
+                // a failure you can see.
+                val content = JSONArray()
+                if (message.text.isNotBlank()) {
+                    content.put(JSONObject().put("type", "text").put("text", message.text))
+                }
+                message.toolCalls.forEach { call ->
+                    content.put(
+                        JSONObject()
+                            .put("type", "tool_use")
+                            .put("id", call.id)
+                            .put("name", call.name)
+                            .put(
+                                "input",
+                                runCatching { JSONObject(call.argumentsJson) }
+                                    .getOrDefault(JSONObject())
+                            )
+                    )
+                }
+                messages.put(JSONObject().put("role", "assistant").put("content", content))
+
+                val results = JSONArray()
+                message.toolCalls.forEach { call ->
+                    results.put(
+                        JSONObject()
+                            .put("type", "tool_result")
+                            .put("tool_use_id", call.id)
+                            .put("is_error", call.status == ToolCall.Status.FAILED)
+                            // The body, falling back to the summary. The model
+                            // needs the file, not the sentence "112 lines"; every
+                            // block must carry something, because a tool_use with
+                            // no matching result is rejected outright.
+                            .put(
+                                "content",
+                                call.body?.takeIf { it.isNotBlank() }
+                                    ?: call.result
+                                    ?: "no output",
+                            )
+                    )
+                }
+                messages.put(JSONObject().put("role", "user").put("content", results))
             }
 
         return JSONObject().apply {

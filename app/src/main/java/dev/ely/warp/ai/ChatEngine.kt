@@ -27,6 +27,8 @@ class ChatEngine(
     private val store: ConversationStore? = null,
     /** Who gives a conversation its name. Null leaves them unnamed. */
     private val titler: Titler? = null,
+    /** What actually performs a tool call. Null shows the card and does nothing. */
+    private val tools: ToolExecutor? = null,
 ) {
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
@@ -49,6 +51,17 @@ class ChatEngine(
 
     /** Last time the in-flight reply was written to disk. */
     private var lastPersist = 0L
+
+    /**
+     * The message currently being written into.
+     *
+     * Not the same as the id [send] created, once a turn can span several
+     * rounds of tool calls. Stopping or failing has to close whichever message
+     * is actually open — closing the first one would leave a later bubble
+     * spinning for ever with no way to reach it.
+     */
+    @Volatile
+    private var activeReplyId: String? = null
 
     /**
      * Point the engine at a conversation and load it.
@@ -89,6 +102,7 @@ class ChatEngine(
         )
         _messages.value = _messages.value + userMessage + reply
         _busy.value = true
+        activeReplyId = replyId
 
         turn = scope.launch {
             try {
@@ -105,29 +119,90 @@ class ChatEngine(
             } catch (e: CancellationException) {
                 // Stopped by the user: keep whatever text already arrived
                 // rather than discarding a half-finished answer.
-                finish(replyId) { it.copy(streaming = false) }
+                val open = activeReplyId ?: replyId
+                finish(open) { it.copy(streaming = false) }
                 // A cancelled coroutine throws at its next suspension point, and
                 // a database write is one — so without this exemption, stopping
                 // a reply would be the exact case where the partial text fails
                 // to be saved.
-                withContext(NonCancellable) { persistNow(replyId) }
+                withContext(NonCancellable) { persistNow(open) }
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "turn failed", e)
-                finish(replyId) {
+                val open = activeReplyId ?: replyId
+                finish(open) {
                     it.copy(
                         streaming = false,
                         error = AiError.Unknown("${e.javaClass.simpleName}: ${e.message}"),
                     )
                 }
-                persistNow(replyId)
+                persistNow(open)
             } finally {
                 _busy.value = false
+                activeReplyId = null
             }
         }
     }
 
-    private suspend fun runTurn(replyId: String) {
+    /**
+     * Keep going until the model has nothing left to ask for.
+     *
+     * A model that calls a tool has not finished its answer — it has paused
+     * mid-sentence to go and look at something. Stopping there leaves "let me
+     * check that file" as the whole reply, which is the shape this had until
+     * now: the tool ran, the card filled in, and the model never heard a word
+     * of what came back.
+     *
+     * Each round gets its own message rather than appending to one, because a
+     * turn is *look, then say* and squashing several of those into one bubble
+     * loses which answer followed which lookup.
+     */
+    private suspend fun runTurn(firstReplyId: String) {
+        var replyId = firstReplyId
+        var round = 0
+
+        while (true) {
+            val ranTools = streamInto(replyId)
+            if (!ranTools) return
+
+            if (round >= MAX_TOOL_ROUNDS) {
+                // Said out loud rather than stopping quietly. A budget that ends
+                // a turn silently is indistinguishable from a model that decided
+                // it was done, and those need different responses from you.
+                update(replyId) {
+                    it.copy(
+                        streaming = false,
+                        error = AiError.Unknown(
+                            "Stopped after $MAX_TOOL_ROUNDS rounds of tool calls. " +
+                                "Say “continue” to let it keep going."
+                        ),
+                    )
+                }
+                persistNow(replyId)
+                return
+            }
+
+            round++
+            replyId = UUID.randomUUID().toString()
+            activeReplyId = replyId
+            _messages.value = _messages.value + ChatMessage(
+                id = replyId,
+                role = Role.ASSISTANT,
+                text = "",
+                streaming = true,
+            )
+        }
+    }
+
+    /**
+     * One request, streamed into one message.
+     *
+     * @return true when a tool actually ran, which is what tells [runTurn] the
+     *   model is owed an answer and the turn is not over.
+     */
+    private suspend fun streamInto(replyId: String): Boolean {
+        var ranTools = false
+
         val request = AiRequest(
             model = model,
             // The placeholder reply is excluded: sending an empty assistant
@@ -135,14 +210,44 @@ class ChatEngine(
             messages = _messages.value.filter { it.id != replyId },
             systemPrompt = systemPrompt,
             effort = effort,
+            // Offered every turn. A model that is not told a tool exists will
+            // describe reading the file instead of reading it, and be perfectly
+            // convincing about it.
+            tools = tools?.specs.orEmpty(),
         )
 
         provider.stream(request).collect { event ->
             when (event) {
                 is AiEvent.TextDelta -> update(replyId) { it.copy(text = it.text + event.text) }
 
-                is AiEvent.ToolCallRequested -> update(replyId) {
-                    it.copy(toolCalls = it.toolCalls + event.call)
+                is AiEvent.ToolCallRequested -> {
+                    update(replyId) { it.copy(toolCalls = it.toolCalls + event.call) }
+
+                    // Run it here rather than waiting for the provider to say
+                    // so. A provider that emits a call has already decided; the
+                    // mock has been emitting cards nothing ever executed, and
+                    // that gap is what made the tool cards a picture.
+                    tools?.let { executor ->
+                        update(replyId) { message ->
+                            message.copy(
+                                toolCalls = message.toolCalls.map {
+                                    if (it.id == event.call.id) {
+                                        it.copy(status = ToolCall.Status.RUNNING)
+                                    } else it
+                                },
+                            )
+                        }
+
+                        val finished = executor.execute(event.call)
+                        update(replyId) { message ->
+                            message.copy(
+                                toolCalls = message.toolCalls.map {
+                                    if (it.id == finished.id) finished else it
+                                },
+                            )
+                        }
+                        ranTools = true
+                    }
                 }
 
                 is AiEvent.ToolCallUpdated -> update(replyId) { message ->
@@ -182,6 +287,7 @@ class ChatEngine(
 
         // Whatever the throttle skipped.
         persistNow(replyId)
+        return ranTools
     }
 
     /** Stop the current reply where it is. */
@@ -297,6 +403,21 @@ class ChatEngine(
      * entirely; whether it does any of those is a setting, and the engine is
      * deliberately not told which.
      */
+    /**
+     * What the engine needs from the tools.
+     *
+     * An interface for the same reason the store and the titler are: the engine
+     * moves messages and must not learn what a file is. It also means the whole
+     * chat still works with tools absent, which is what it did until today.
+     */
+    interface ToolExecutor {
+        /** What to offer the model. Empty means it is told about nothing. */
+        val specs: List<ToolSpec>
+
+        /** Do it, and return the call with its outcome filled in. */
+        suspend fun execute(call: ToolCall): ToolCall
+    }
+
     interface Titler {
         /** Name it from the question alone. Called before the answer exists. */
         suspend fun nameNow(conversationId: String, question: String)
@@ -312,6 +433,15 @@ class ChatEngine(
 
         /** How often a streaming reply is written to disk. */
         private const val PERSIST_EVERY_MS = 1_000L
+
+        /**
+         * How many times a single turn may go and look before it must speak.
+         *
+         * A ceiling, not a target — §5c calls for a hard budget on anything
+         * that can call itself, and a model in a loop reading the same file is
+         * a loop that spends your money at full speed.
+         */
+        private const val MAX_TOOL_ROUNDS = 8
 
         val DEFAULT_SYSTEM_PROMPT = """
             You are Warp, an AI coding assistant that runs entirely on an Android phone.
