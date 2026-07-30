@@ -742,12 +742,11 @@ private fun AssistantMessage(message: ChatMessage, markModifier: Modifier = Modi
             // happening rather than leaving an empty space.
             if (working) ThinkingLine()
 
+            // Markdown, not plain text. Only the assistant's side: what you
+            // typed is what you typed, and reinterpreting somebody's own words
+            // as formatting is how a message about `**` loses its asterisks.
             if (message.text.isNotEmpty()) {
-                Text(
-                    message.text,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
+                MarkdownText(message.text)
             }
 
             message.toolCalls.forEach { call ->

@@ -147,6 +147,39 @@ class MockProvider(
         }
     }
 
+    /**
+     * A scripted answer containing real markdown.
+     *
+     * Without this the renderer could only be checked by hand against a paid
+     * model, which is the kind of test nobody runs twice. Anything that can only
+     * be verified by spending money gets verified once.
+     */
+    private fun markdownScript() = """
+        Here is a counter, in **Compose**.
+
+        ## The composable
+
+        ```kotlin
+        @Composable
+        fun Counter() {
+            var count by remember { mutableStateOf(0) }
+            Button(onClick = { count++ }) {
+                Text("Tapped ${'$'}count times")
+            }
+        }
+        ```
+
+        Three things to notice:
+
+        - `remember` keeps the value across recompositions
+        - `by` unwraps the state, so you read `count` and not `count.value`
+        - the lambda is the whole button, not just its label
+
+        ---
+
+        Call it from `setContent`, and it is a working app.
+    """.trimIndent()
+
     // ── naming a conversation ────────────────────────────────────────────
 
     /**
@@ -203,6 +236,12 @@ class MockProvider(
 
             "hello" in p || "hi" in p || "היי" in p || "שלום" in p ->
                 Script(listOf(Segment.Text(GREETING)))
+
+            // Ahead of the "app" branch, which would otherwise swallow it —
+            // "show me code" contains neither, but "counter" and "compose" both
+            // sit near words that do.
+            "code" in p || "counter" in p || "compose" in p || "markdown" in p ->
+                Script(listOf(Segment.Text(markdownScript())))
 
             "build" in p || "compile" in p || "apk" in p ->
                 Script(listOf(Segment.Text(BUILD_ANSWER)))
