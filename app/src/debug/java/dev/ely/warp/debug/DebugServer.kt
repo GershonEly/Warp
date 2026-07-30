@@ -279,6 +279,27 @@ object DebugServer {
                 200 to JSONObject().put("stillListed", store.titleOf(id) != null)
             }
 
+            // Runs a tool directly, against the project folder, with no model
+            // involved. That separation is the point: it answers "does the tool
+            // work" without also asking "did the model choose to call it", which
+            // are two failures that look identical from the chat.
+            "POST /tool" -> runBlocking {
+                val name = json.optString("name")
+                val tool = dev.ely.warp.tools.READ_TOOLS[name]
+                    ?: return@runBlocking 400 to error("no tool called $name")
+
+                val args = json.optJSONObject("args") ?: JSONObject()
+                val project = java.io.File(context.filesDir, "project").apply { mkdirs() }
+
+                when (val r = tool.run(project, args)) {
+                    is dev.ely.warp.tools.ToolResult.Ok -> 200 to JSONObject()
+                        .put("summary", r.summary)
+                        .put("body", r.body ?: JSONObject.NULL)
+                    is dev.ely.warp.tools.ToolResult.Failed -> 200 to JSONObject()
+                        .put("failed", r.reason)
+                }
+            }
+
             else -> 404 to error("no route for $method $path")
         }
     }
