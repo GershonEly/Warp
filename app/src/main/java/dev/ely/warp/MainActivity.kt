@@ -49,12 +49,15 @@ import dev.ely.warp.data.DrawerState
 import dev.ely.warp.diag.DeviceProbe
 import dev.ely.warp.ui.BuildScreen
 import dev.ely.warp.ui.ChatScreen
+import dev.ely.warp.ui.ambientWash
+import dev.ely.warp.ui.DemoChip
 import dev.ely.warp.ui.ComingSoonScreen
 import dev.ely.warp.ui.Ltr
 import dev.ely.warp.ui.ModelPickerDialog
 import dev.ely.warp.ui.SettingsScreen
 import dev.ely.warp.ui.WarpDestination
 import dev.ely.warp.ui.WarpShell
+import dev.ely.warp.ui.theme.grain
 import dev.ely.warp.ui.theme.WarpMono
 import dev.ely.warp.ui.theme.WarpSuccess
 import dev.ely.warp.ui.theme.WarpTheme
@@ -69,8 +72,12 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             WarpTheme {
+                // Grain over everything, once, at the root. Applied here rather
+                // than per surface so nothing can be missed and nothing gets it
+                // twice — and because it must sit over the text as well as the
+                // background, or the type looks cut out and pasted on.
                 Surface(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().grain(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
                     WarpApp()
@@ -152,9 +159,20 @@ private fun WarpApp() {
     // at the wrong end. Real right-to-left support means translating the app,
     // not flipping English text — that is separate work.
     Ltr {
+      // The light belongs to the app, not to the chat. Settings and Build were
+      // the only flat screens left, and a room that is lit in one doorway and
+      // bare in the next is worse than one that is bare throughout.
+      Box(modifier = Modifier.fillMaxSize().ambientWash(choice.effort)) {
         WarpShell(
-            title = choice.label,
-            onTitleClick = { showPicker = true },
+            // The demo notice sits at the very top of the screen, in the space
+            // the model picker left behind. It only appears on Chat: it is a
+            // statement about the answer you are about to get, and on Settings
+            // or Build it would be a notice about something you are not doing.
+            topBarCenter = {
+                if (destination == WarpDestination.CHAT && !engine.provider.requiresKey) {
+                    DemoChip(onOpenSettings = { destination = WarpDestination.SETTINGS })
+                }
+            },
             onNewChat = {
                 engine.clear()
                 destination = WarpDestination.CHAT
@@ -228,6 +246,11 @@ private fun WarpApp() {
                 WarpDestination.CHAT -> ChatScreen(
                     engine = engine,
                     onOpenSettings = { destination = WarpDestination.SETTINGS },
+                    // The picker moved out of the top bar and into the composer,
+                    // so the screen that owns the message owns the choice too.
+                    modelLabel = choice.label,
+                    onPickModel = { showPicker = true },
+                    effort = choice.effort,
                 )
                 WarpDestination.BUILD -> BuildScreen()
                 WarpDestination.SETTINGS -> SettingsScreen()
@@ -245,6 +268,7 @@ private fun WarpApp() {
                 )
             }
         }
+      }
     }
 }
 

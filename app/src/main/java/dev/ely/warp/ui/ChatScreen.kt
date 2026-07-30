@@ -6,12 +6,17 @@ import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.rememberScrollState
@@ -29,6 +34,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -42,6 +52,7 @@ import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.SuggestionChip
@@ -56,21 +67,56 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import java.util.Locale
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import kotlinx.coroutines.delay
+import androidx.compose.animation.AnimatedVisibility
+import kotlinx.coroutines.flow.MutableStateFlow
+import dev.ely.warp.voice.VoiceInput
+import androidx.core.content.ContextCompat
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.rememberLauncherForActivityResult
+import android.content.pm.PackageManager
+import android.Manifest
+import androidx.compose.ui.graphics.graphicsLayer
 import dev.ely.warp.ui.theme.HairlineWidth
 import dev.ely.warp.ui.theme.LocalCodeSurface
 import dev.ely.warp.ui.theme.LocalIsDark
+import dev.ely.warp.ui.theme.WarpRadius
+import dev.ely.warp.ui.theme.WarpAccent
+import dev.ely.warp.ui.theme.WarpIndigo
+import dev.ely.warp.ui.theme.aurora
 import dev.ely.warp.ui.theme.WarpSpace
+import dev.ely.warp.ui.theme.LocalAnimationsEnabled
+import dev.ely.warp.data.Appearance
+import dev.ely.warp.data.Identity
+import dev.ely.warp.ai.Effort
 import dev.ely.warp.ai.AiError
 import dev.ely.warp.ai.ChatEngine
 import dev.ely.warp.ai.ChatMessage
@@ -82,6 +128,79 @@ import dev.ely.warp.ui.theme.WarpSuccess
 import dev.ely.warp.ui.theme.WarpWarning
 import dev.ely.warp.ui.theme.motionDuration
 import dev.ely.warp.ui.theme.warpTween
+import kotlin.math.sin
+
+/**
+ * The blue the room is lit by.
+ *
+ * A wash rising from behind the composer, and it is **state rather than
+ * decoration** — its depth follows how hard the model has been asked to think.
+ * That is worth doing because effort is the one setting whose consequences
+ * cannot be seen: you pick High, you wait longer, you pay more, and nothing on
+ * screen acknowledges any of it. Here the room simply gets warmer.
+ *
+ * Three rules keep it from being a gimmick:
+ *
+ * - **It never sits behind text.** It lives in the bottom third, behind the
+ *   composer, and fades to nothing well before the transcript. Contrast is not
+ *   negotiable and this must never be what costs a legible message.
+ * - **You should not be able to catch it.** If you can point at it and say it
+ *   just changed, it is too strong. It is meant to be noticed by its absence.
+ * - **It is drawn, not laid out.** `drawBehind` costs no measure pass and no
+ *   composable, so an always-present effect is not an always-present cost.
+ *
+ * Off entirely when [Appearance.ambient] is off — atmosphere is the one thing
+ * here that could reasonably annoy somebody.
+ */
+@Composable
+fun Modifier.ambientWash(effort: Effort?): Modifier {
+    val on by Appearance.get(LocalContext.current).ambient.collectAsState()
+    if (!on) return this
+
+    val dark = LocalIsDark.current
+
+    // Roughly four times the first attempt. Measured, that one peaked at +4 of
+    // 255 — under two per cent, which is not subtle, it is invisible, and what
+    // it produced was a flat grey screen with a smudge near the bottom.
+    val target = when (effort) {
+        null, Effort.LOW -> 0.55f
+        Effort.MEDIUM -> 0.80f
+        Effort.HIGH -> 1.10f
+        Effort.MAX -> 1.35f
+    } * if (dark) 1f else 0.30f
+
+    // Eased, so changing effort settles rather than cuts. Slower than anything
+    // else in the app: this is weather, not feedback.
+    val strength by animateFloatAsState(
+        targetValue = target,
+        animationSpec = tween(motionDuration(900)),
+        label = "auroraStrength",
+    )
+
+    // One slow value, three different responses to it inside `aurora`. Forty
+    // seconds a cycle, which is far too slow to watch and exactly fast enough
+    // that the screen is never twice the same.
+    val drift = if (LocalAnimationsEnabled.current) {
+        val t = rememberInfiniteTransition(label = "aurora")
+        val phase by t.animateFloat(
+            initialValue = 0f,
+            targetValue = (2 * Math.PI).toFloat(),
+            animationSpec = infiniteRepeatable(tween(40_000, easing = LinearEasing)),
+            label = "auroraDrift",
+        )
+        sin(phase)
+    } else {
+        0f
+    }
+
+    return aurora(
+        strength = strength,
+        drift = drift,
+        primary = MaterialTheme.colorScheme.primary,
+        accent = WarpAccent,
+        indigo = WarpIndigo,
+    )
+}
 
 /**
  * The chat.
@@ -98,6 +217,9 @@ import dev.ely.warp.ui.theme.warpTween
 fun ChatScreen(
     engine: ChatEngine,
     onOpenSettings: () -> Unit,
+    modelLabel: String,
+    onPickModel: () -> Unit,
+    effort: Effort?,
     modifier: Modifier = Modifier,
 ) {
     val messages by engine.messages.collectAsState()
@@ -105,6 +227,14 @@ fun ChatScreen(
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val haptics = LocalHapticFeedback.current
+
+    // Null when the phone has no recogniser at all, and the mic is then simply
+    // absent rather than dead. MIUI has surprised this project twice already,
+    // and a button that does nothing is worse than a button that is not there.
+    val context = LocalContext.current
+    val voice = remember {
+        if (VoiceInput.isAvailable(context)) VoiceInput(context) else null
+    }
 
     // Follow the newest text as it streams in.
     LaunchedEffect(messages.size, messages.lastOrNull()?.text?.length) {
@@ -128,8 +258,6 @@ fun ChatScreen(
         val itemPlacement = warpTween<IntOffset>(WarpMotion.NORMAL)
 
         Column(modifier = Modifier.fillMaxSize()) {
-            if (!engine.provider.requiresKey) DemoChip(onOpenSettings = onOpenSettings)
-
             AnimatedContent(
                 targetState = messages.isEmpty(),
                 modifier = Modifier.weight(1f),
@@ -189,6 +317,8 @@ fun ChatScreen(
                 value = input,
                 onValueChange = { input = it },
                 busy = busy,
+                modelLabel = modelLabel,
+                onPickModel = onPickModel,
                 onSend = {
                     // A light tap on send. Haptics are for things that happen,
                     // never for navigation — a phone that buzzes at everything
@@ -198,6 +328,7 @@ fun ChatScreen(
                     input = ""
                 },
                 onStop = { engine.stop() },
+                voice = voice,
             )
         }
     }
@@ -238,7 +369,7 @@ private fun Appear(modifier: Modifier = Modifier, content: @Composable () -> Uni
  * Demo mode is a fact worth stating once, not an alarm.
  */
 @Composable
-private fun DemoChip(onOpenSettings: () -> Unit) {
+fun DemoChip(onOpenSettings: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(top = WarpSpace.small),
         horizontalArrangement = Arrangement.Center,
@@ -285,6 +416,8 @@ private fun EmptyState(
     modifier: Modifier = Modifier,
     onPick: (String) -> Unit,
 ) {
+    val context = LocalContext.current
+
     // Two arrangements, chosen by the shape of the space rather than by a
     // device category. Rotating the phone cut this screen to about 400dp of
     // height and a plain Column clipped everything below the mark — heading and
@@ -296,13 +429,38 @@ private fun EmptyState(
     // above it, which is the arrangement that space was always asking for.
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val short = maxHeight < 480.dp
-        val beside = short && maxWidth > maxHeight
+        // A genuinely wide screen, not merely a squashed one. `maxWidth >
+        // maxHeight` was true in portrait the moment the keyboard opened — the
+        // content area is shorter than it is wide long before the phone is
+        // landscape — so typing threw the empty state into the side-by-side
+        // arrangement and jammed it into the top-left corner. The width floor is
+        // what tells a landscape phone from a portrait one wearing a keyboard.
+        val beside = short && maxWidth > maxHeight && maxWidth >= 600.dp
 
-        val markSize = if (short) 44.dp else 56.dp
+        // A slow, tiny rise and fall. Off entirely when the system's animation
+        // scale is zero — an infinite animation is exactly the kind someone who
+        // turned animations off meant to be rid of, and it would otherwise run
+        // forever behind a screen they are trying to read.
+        val drift = if (LocalAnimationsEnabled.current) {
+            val float = rememberInfiniteTransition(label = "float")
+            val phase by float.animateFloat(
+                initialValue = 0f,
+                targetValue = (2 * Math.PI).toFloat(),
+                animationSpec = infiniteRepeatable(
+                    animation = tween(5000, easing = LinearEasing),
+                ),
+                label = "floatPhase",
+            )
+            with(LocalDensity.current) { (sin(phase) * 6f).dp.toPx() }
+        } else {
+            0f
+        }
+
+        val markSize = if (short) 44.dp else 76.dp
         val glowSize = when {
             short -> 120.dp
-            LocalIsDark.current -> 200.dp
-            else -> 150.dp
+            LocalIsDark.current -> 260.dp
+            else -> 190.dp
         }
 
         // Scrollable as a floor, not as a feature: at some combination of small
@@ -311,6 +469,13 @@ private fun EmptyState(
         val scroll = Modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
+            // The camera sits in the left edge in landscape, and nothing above
+            // this handles it: the Scaffold insets only the navigation bar, so
+            // the greeting was printed underneath the lens. `safeDrawing` on the
+            // horizontal sides clears the cutout on whichever edge it lands —
+            // which is the other edge entirely if the phone is turned the other
+            // way, so a fixed left padding would have been wrong half the time.
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
             .padding(horizontal = WarpSpace.screen)
 
         val mark: @Composable () -> Unit = {
@@ -322,32 +487,84 @@ private fun EmptyState(
             // way it does on a dark one — at dark-mode strength this bloom read
             // as a grey-blue smudge behind the mark rather than as a glow.
             val dark = LocalIsDark.current
-            Box(contentAlignment = Alignment.Center) {
-                Box(
-                    modifier = Modifier
-                        .size(glowSize)
-                        .background(
-                            Brush.radialGradient(
-                                listOf(
-                                    MaterialTheme.colorScheme.primary
-                                        .copy(alpha = if (dark) 0.18f else 0.07f),
-                                    Color.Transparent,
-                                )
-                            )
+            val glow = MaterialTheme.colorScheme.primary
+                .copy(alpha = if (dark) 0.18f else 0.07f)
+            val glowPx = with(LocalDensity.current) { glowSize.toPx() }
+
+            // Drawn behind, not laid out. As a sized Box the glow was a 260dp
+            // tall element in the column, which is why the name it sits above
+            // could never reach the middle of the screen — most of the group's
+            // height was empty air belonging to a gradient.
+            Box(
+                modifier = Modifier
+                    .size(markSize)
+                    .drawBehind {
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colors = listOf(glow, Color.Transparent),
+                                center = center,
+                                radius = glowPx / 2,
+                            ),
+                            radius = glowPx / 2,
                         )
-                )
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
                 WarpMark(size = markSize, modifier = markModifier)
             }
         }
 
+        // The greeting uses your name when there is one, and simply does not
+        // when there is not — no "User", no "there", no placeholder. Warp
+        // already knows the name; not using it was a wasted greeting, and
+        // inventing one would be worse than having none.
+        //
+        // "We" rather than "you": Warp compiles the thing. It is not asking what
+        // you will go and build, it is asking what the two of you are building.
+        val name by remember { Identity.get(context).name }.collectAsState()
+
+        // Two lines, not one, and the split is the point.
+        //
+        // "What are we building, <name>?" put the name at the end of a sentence,
+        // where it is the last thing read and carries no more weight than the
+        // words around it. Standing alone above the question it is the first
+        // thing on the screen — which is what a greeting is for.
+        //
+        // The question then drops to a supporting size and colour. It is the
+        // same information either way; the hierarchy is what changed.
         val heading: @Composable (TextAlign) -> Unit = { align ->
-            Text(
-                "What would you like to build today?",
-                style = if (short) MaterialTheme.typography.titleLarge
-                else MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                textAlign = align,
-            )
+            Column(
+                horizontalAlignment = if (align == TextAlign.Center) {
+                    Alignment.CenterHorizontally
+                } else {
+                    Alignment.Start
+                },
+            ) {
+                name?.let { person ->
+                    Text(
+                        person,
+                        style = if (short) MaterialTheme.typography.headlineMedium
+                        else MaterialTheme.typography.displaySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = align,
+                    )
+                    Spacer(Modifier.size(WarpSpace.tiny))
+                }
+                Text(
+                    "What are we building?",
+                    // Without a name this line *is* the greeting, so it takes the
+                    // display size. With one it steps down and greys out, because
+                    // two things at 32sp is two headlines and no hierarchy.
+                    style = when {
+                        short -> MaterialTheme.typography.titleMedium
+                        name == null -> MaterialTheme.typography.displaySmall
+                        else -> MaterialTheme.typography.titleLarge
+                    },
+                    color = if (name == null) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = align,
+                )
+            }
         }
 
         // FlowRow, not Row: at the largest font size two pills no longer fit
@@ -371,12 +588,19 @@ private fun EmptyState(
 
         if (beside) {
             Row(
-                // Sits high and to the left rather than centred as a group.
+                // Sits to the left rather than centred as a group.
                 // Centring was tried and looked worse: the composer runs the
                 // full width beneath it, so a floating centred cluster has
                 // nothing to line up with, where a left-aligned one shares the
                 // composer's edge.
-                modifier = scroll.padding(bottom = WarpSpace.large),
+                // `heightIn` for the same reason the portrait column needs it:
+                // inside a vertical scroll a Row is measured with unbounded
+                // height, so `CenterVertically` has nothing to centre within and
+                // quietly behaves like Top. Giving it the viewport's height is
+                // what makes the alignment mean anything.
+                modifier = scroll
+                    .heightIn(min = maxHeight)
+                    .padding(bottom = WarpSpace.large),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Start,
             ) {
@@ -392,21 +616,50 @@ private fun EmptyState(
                 }
             }
         } else {
-            // The group sits at the top and the empty space falls below it.
-            // Content pushed to the bottom makes the screen read as though it
-            // has scrolled away from something; starting at the top gives the
-            // conversation room to grow downward into the space it will use.
+            // Centred in the space, not pinned to the top.
+            //
+            // The first version sat at the top on the reasoning that content
+            // pushed downward reads as though the screen had scrolled away from
+            // something. On the phone the opposite was true: the group sat high
+            // with a large dead area under it, which reads as an unfinished
+            // screen rather than a patient one. Gemini and Claude both centre
+            // theirs, and an empty state has one thing to say — the middle is
+            // where you look for it.
+            //
+            // `heightIn(min = maxHeight)` is what makes centring possible at all.
+            // Inside a vertical scroll the column is measured with unbounded
+            // height, so `Arrangement.Center` has nothing to centre within and
+            // silently behaves exactly like `Top`. Giving the content at least
+            // the viewport's height fixes that, and it still scrolls when a large
+            // font makes the group taller than the screen.
             Column(
-                modifier = scroll.padding(top = WarpSpace.section),
-                verticalArrangement = Arrangement.Top,
+                modifier = scroll.heightIn(min = maxHeight),
+                verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                mark()
-                Spacer(Modifier.size(WarpSpace.large))
-                heading(TextAlign.Center)
+                // The mark and the greeting drift together, as one object.
+                //
+                // Small and slow — 6dp over five seconds. Anything you can catch
+                // moving is a distraction on a screen you are about to type on;
+                // this is meant to be noticed only as the screen not being quite
+                // still. It carries the glow with it, which is what sells it as
+                // something suspended rather than something sliding.
+                Box(modifier = Modifier.graphicsLayer { translationY = drift }) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        mark()
+                        Spacer(Modifier.size(WarpSpace.large))
+                        heading(TextAlign.Center)
+                    }
+                }
+
                 Spacer(Modifier.size(WarpSpace.section))
                 pills(Alignment.CenterHorizontally, Modifier.fillMaxWidth())
-                Spacer(Modifier.size(WarpSpace.section))
+
+                // Balances what sits above the name against what sits below it,
+                // so the name itself lands on the centre line rather than the
+                // group's midpoint landing there. Measured on the device: the
+                // mark and its gap are what the name has to be pushed down past.
+                Spacer(Modifier.size(markSize + WarpSpace.large))
             }
         }
     }
@@ -611,24 +864,102 @@ private fun ErrorCard(error: AiError) {
 }
 
 /**
- * The floating pill input.
+ * The composer, as one card.
  *
- * Attachments and voice belong here too, per the plan — they are left out until
- * they do something, because a button that does nothing is worse than no
- * button.
+ * It was a pill with the send button floating outside it — two objects doing one
+ * job, with a gap between them that belonged to neither. Claude, ChatGPT and
+ * Gemini all put everything the message needs inside a single surface, and the
+ * reason is not tidiness: what you are writing and what you are about to do with
+ * it are one act, and a control that sits outside the thing it acts on has to be
+ * aimed at separately.
+ *
+ * **The model chip moved in here from the top bar.** It is a property of the
+ * message you are about to send, not of the app you are in — you change it
+ * *because* of what you are about to ask. Claude puts it here for the same
+ * reason, and it leaves the top bar with nothing in it but navigation.
+ *
+ * Attachments and voice belong here too, per the plan. They are left out until
+ * they do something: a button that does nothing is worse than no button.
  */
 @Composable
 private fun Composer(
     value: String,
     onValueChange: (String) -> Unit,
     busy: Boolean,
+    modelLabel: String,
+    onPickModel: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
+    voice: VoiceInput?,
 ) {
     var focused by remember { mutableStateOf(false) }
 
+    val voiceState by (voice?.state ?: remember { MutableStateFlow(VoiceInput.State.Idle) })
+        .collectAsState()
+    val level by (voice?.level ?: remember { MutableStateFlow(0f) }).collectAsState()
+    val listening = voiceState is VoiceInput.State.Listening
+
+    // How far up the finger has travelled, as 0..1 of the cancel distance.
+    var cancelProgress by remember { mutableStateOf(0f) }
+    val cancelPx = with(LocalDensity.current) { CANCEL_DISTANCE.toPx() }
+    val haptics = LocalHapticFeedback.current
+    var buzzed by remember { mutableStateOf(false) }
+
+    val permission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        // Started straight from the callback: someone who has just granted the
+        // microphone asked to talk, and making them tap the mic a second time is
+        // the app forgetting what they were doing.
+        if (granted) voice?.start { heard -> onValueChange(merge(value, heard)) }
+    }
+
+    val context = LocalContext.current
+    fun beginListening() {
+        val allowed = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+
+        cancelProgress = 0f
+        buzzed = false
+        if (allowed) {
+            voice?.start { heard -> onValueChange(merge(value, heard)) }
+        } else {
+            permission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    var pickingLanguage by remember { mutableStateOf(false) }
+
+    if (pickingLanguage && voice != null) {
+        VoiceLanguageSheet(
+            current = voice.language,
+            options = remember { VoiceInput.languages(context) },
+            onPick = {
+                voice.language = it
+                pickingLanguage = false
+            },
+            onDismiss = { pickingLanguage = false },
+        )
+    }
+
+    // Let go of the microphone if the screen goes away mid-sentence.
+    DisposableEffect(voice) { onDispose { voice?.release() } }
+
+    // Half a second in. Someone who taps the mic and starts talking immediately
+    // never needs to be told about a gesture they were not going to use; someone
+    // still deciding is exactly who the hint is for.
+    var hintShown by remember { mutableStateOf(false) }
+    LaunchedEffect(listening) {
+        hintShown = false
+        if (listening) {
+            delay(500)
+            hintShown = true
+        }
+    }
+
     // The border eases to the accent on focus rather than switching, so the
-    // field wakes up instead of blinking.
+    // card wakes up instead of blinking.
     val border by animateColorAsState(
         targetValue = if (focused) MaterialTheme.colorScheme.primary
         else MaterialTheme.colorScheme.outlineVariant,
@@ -636,22 +967,138 @@ private fun Composer(
         label = "composerBorder",
     )
 
-    Row(
+    // Texture, without a shadow. The plan settled long ago that depth here comes
+    // from a hairline and a step in lightness rather than from a drop shadow —
+    // a black shadow is invisible on a dark background and looks cheap on a
+    // light one. So the card is lit instead of raised: very slightly brighter
+    // along its top edge, falling away down the face, which is what a real
+    // surface catching light from above actually does.
+    val face = MaterialTheme.colorScheme.surfaceContainer
+    val lit = Brush.verticalGradient(
+        listOf(
+            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f).compositeOver(face),
+            face,
+        )
+    )
+
+    Column {
+        // Above the card, and only while recording. Delayed rather than instant:
+        // help for someone who paused, not clutter for someone who did not.
+        AnimatedVisibility(
+            visible = listening && hintShown,
+            enter = fadeIn(warpTween(WarpMotion.NORMAL)),
+            exit = fadeOut(warpTween(WarpMotion.QUICK)),
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+        ) {
+            CancelHint(progress = cancelProgress)
+        }
+
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = WarpSpace.large, vertical = WarpSpace.medium),
-        verticalAlignment = Alignment.Bottom,
+            .padding(horizontal = WarpSpace.medium, vertical = WarpSpace.medium),
+        // Rounded, not a circle. A pill only reads right around a single line,
+        // and this grows to six.
+        shape = RoundedCornerShape(WarpRadius.large),
+        color = Color.Transparent,
+        border = BorderStroke(HairlineWidth, border),
     ) {
-        Surface(
-            modifier = Modifier.weight(1f),
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            border = BorderStroke(HairlineWidth, border),
+        Box(modifier = Modifier.background(lit)) {
+        // One row, not two, and the reason is the send button. It is a 52dp
+        // circle, so any row holding it is 52dp tall — and a row holding only the
+        // chip and the button pins them to opposite corners and leaves the middle
+        // empty. Tightening the padding moved that gap by four pixels, because
+        // padding was never what made it.
+        //
+        // Gemini and ChatGPT both put everything on one line. Claude uses two,
+        // and gets away with it by filling the second row with four controls;
+        // with two, the emptiness is the loudest thing in the card.
+        //
+        // `Bottom` rather than centred: as the message grows to six lines the
+        // text rises and the controls stay where your thumb left them.
+        if (listening) {
+            VoiceBar(
+                level = level,
+                progress = cancelProgress,
+                onCancel = { voice?.cancel(); cancelProgress = 0f },
+                onDone = { voice?.stop() },
+                // The drag lives on the whole bar rather than on one control:
+                // the finger that started the recording is already somewhere on
+                // this card, and asking it to find a handle first would defeat
+                // the point of a gesture.
+                modifier = Modifier.pointerInput(Unit) {
+                    detectVerticalDragGestures(
+                        onDragEnd = {
+                            // Only cancelling happens here. Releasing short of
+                            // the threshold puts everything back and keeps
+                            // listening — it must not finish the recording,
+                            // because then any stray wobble on the card ends the
+                            // sentence, and a finger resting on a phone always
+                            // wobbles. Finishing is the tick, and only the tick.
+                            if (cancelProgress >= 1f) voice?.cancel()
+                            cancelProgress = 0f
+                            buzzed = false
+                        },
+                        onDragCancel = { cancelProgress = 0f; buzzed = false },
+                        onVerticalDrag = { change, delta ->
+                            change.consume()
+                            // Only upward travel counts, and sideways drift is
+                            // ignored entirely — `detectVerticalDragGestures`
+                            // reports the vertical component of whatever arc the
+                            // thumb makes, which is exactly the forgiveness this
+                            // gesture needs. A thumb sliding up a phone curves.
+                            cancelProgress =
+                                (cancelProgress - delta / cancelPx).coerceIn(0f, 1f)
+
+                            // One buzz, at the moment it becomes true. Buzzing
+                            // continuously past the line would be the phone
+                            // nagging rather than telling.
+                            if (cancelProgress >= 1f && !buzzed) {
+                                buzzed = true
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            } else if (cancelProgress < 1f) {
+                                buzzed = false
+                            }
+                        },
+                    )
+                },
+            )
+        } else {
+        Row(
+            modifier = Modifier.padding(WarpSpace.tiny),
+            verticalAlignment = Alignment.Bottom,
         ) {
+            // Far left, before the message. It is the other way into writing
+            // one, so it sits where writing one starts.
+            if (voice != null) {
+                MicButton(
+                    onClick = ::beginListening,
+                    onLongClick = { pickingLanguage = true },
+                )
+            }
+
             Box(
                 modifier = Modifier
-                    .heightIn(min = 52.dp)
-                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                    .weight(1f)
+                    // The same 44dp as the chip and the send button, with the
+                    // text centred inside it. Without the floor this box was
+                    // text-height plus its own padding — about 53dp — and with
+                    // everything bottom-aligned the bottoms lined up while the
+                    // centres did not, leaving the message sitting visibly higher
+                    // than the two controls beside it.
+                    .heightIn(min = 44.dp)
+                    // Asymmetric by 4dp, which lifts the centred text 2dp. An
+                    // optical correction, not a fudge: centring a *line box*
+                    // centres the room reserved for ascenders and descenders, so
+                    // a string with descenders — "Message Warp" has g and p —
+                    // always reads low beside a symmetric glyph like the send
+                    // arrow. Measured at 5.5px on this screen, which is 2dp.
+                    .padding(
+                        start = 12.dp,
+                        end = 12.dp,
+                        top = WarpSpace.tiny,
+                        bottom = WarpSpace.tiny + 4.dp,
+                    ),
                 contentAlignment = Alignment.CenterStart,
             ) {
                 // BasicTextField rather than OutlinedTextField: the stock field
@@ -669,8 +1116,22 @@ private fun Composer(
                     ),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     maxLines = 6,
+                    // The Box is load-bearing. Emitting the placeholder and the
+                    // field as two siblings stacks them, so an empty composer was
+                    // two lines tall instead of one — and bottom-aligned in the
+                    // row, that pushed the placeholder about 5px above the chip
+                    // and the send arrow. Measured, not guessed: three attempts
+                    // at "centre it" failed because the box was the wrong height,
+                    // not the alignment.
                     decorationBox = { field ->
+                        Box(contentAlignment = Alignment.CenterStart) {
                         if (value.isEmpty()) {
+                            // Regular weight, and grey. Light was tried and
+                            // looked like a *different typeface* rather than a
+                            // quieter one — Rubik Light is thin enough that
+                            // beside Medium text it stops reading as the same
+                            // family. The colour is what makes a placeholder
+                            // quiet; the weight is what keeps it Rubik.
                             Text(
                                 "Message Warp",
                                 style = MaterialTheme.typography.bodyLarge,
@@ -678,16 +1139,165 @@ private fun Composer(
                             )
                         }
                         field()
+                        }
                     },
                 )
             }
-        }
 
-        Spacer(Modifier.size(WarpSpace.small))
-
-        SendButton(busy = busy, enabled = busy || value.isNotBlank()) {
-            if (busy) onStop() else onSend()
+            ModelChip(label = modelLabel, onClick = onPickModel)
+            SendButton(busy = busy, enabled = busy || value.isNotBlank()) {
+                if (busy) onStop() else onSend()
+            }
         }
+        }
+        }
+    }
+    }
+}
+
+/**
+ * The way in to talking instead of typing.
+ *
+ * At the far left of the card, before the message: it is the other way to write
+ * one, so it belongs where writing one starts. Quiet — the same weight as the
+ * model chip — because the loud control in this card is Send.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun MicButton(onClick: () -> Unit, onLongClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+                onLongClickLabel = "Choose language",
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            Icons.Outlined.Mic,
+            contentDescription = "Speak",
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * Which language the mic listens in.
+ *
+ * Behind a long-press rather than sitting in the composer, because it is set
+ * rarely and changing it is not part of sending a message. The mic itself is the
+ * right place for it — the setting belongs to the thing it changes.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun VoiceLanguageSheet(
+    current: String,
+    options: List<Locale>,
+    onPick: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.fillMaxWidth().padding(bottom = WarpSpace.large)) {
+            Text(
+                "Speak in",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(
+                    start = WarpSpace.screen,
+                    end = WarpSpace.screen,
+                    bottom = WarpSpace.small,
+                ),
+            )
+            Text(
+                "Taken from the languages your keyboards are set up for.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(
+                    start = WarpSpace.screen,
+                    end = WarpSpace.screen,
+                    bottom = WarpSpace.medium,
+                ),
+            )
+
+            options.forEach { locale ->
+                val chosen = Locale.forLanguageTag(current).language == locale.language
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onPick(locale.toLanguageTag()) }
+                        .padding(horizontal = WarpSpace.screen, vertical = WarpSpace.medium),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // Named in its own language, not in the app's. Somebody
+                    // looking for Hebrew is looking for "עברית".
+                    Text(
+                        locale.getDisplayLanguage(locale).replaceFirstChar { it.uppercase() },
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (chosen) {
+                        Icon(
+                            Icons.Outlined.Check,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Add spoken words to what is already typed.
+ *
+ * Voice fills the field; it does not own it. Someone who typed half a sentence
+ * and then spoke the rest meant both, and replacing what they wrote would be the
+ * app deciding the earlier half was a mistake.
+ */
+private fun merge(existing: String, heard: String): String =
+    if (existing.isBlank()) heard else existing.trimEnd() + " " + heard
+
+/**
+ * Which model will answer, as a chip you can press.
+ *
+ * Quiet on purpose. It has to be legible and reachable without competing with
+ * the send button beside it — there is one loud control in this card and it is
+ * not this one.
+ */
+@Composable
+private fun ModelChip(label: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            // Matches the send button's height, so with both bottom-aligned in a
+            // row that grows upward their centres stay level.
+            .heightIn(min = 44.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            // Capped. Sharing one row with the message means a long model name
+            // would otherwise eat the space you are trying to type in.
+            modifier = Modifier.widthIn(max = 108.dp),
+        )
+        Spacer(Modifier.size(4.dp))
+        Icon(
+            Icons.Outlined.KeyboardArrowDown,
+            contentDescription = "Change model",
+            modifier = Modifier.size(16.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -714,7 +1324,7 @@ private fun SendButton(busy: Boolean, enabled: Boolean, onClick: () -> Unit) {
         // reads as broken; an outline reads as waiting.
         border = if (enabled) null
         else BorderStroke(HairlineWidth, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.size(52.dp),
+        modifier = Modifier.size(44.dp),
         onClick = onClick,
         enabled = enabled,
     ) {

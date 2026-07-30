@@ -71,6 +71,17 @@ val WarpPrimary = Color(0xFF1098E0)
 /** The lighter cyan from the mark, for highlights and the thinking state. */
 val WarpAccent = Color(0xFF18B8F0)
 
+/**
+ * The cold end of the light, used only in the aurora.
+ *
+ * Never appears as an accent on a control — it exists so the ambient field has
+ * somewhere to fall off *to*. Light changes colour as it fades, and a wash that
+ * holds one hue from centre to edge is the thing that reads as a translucent
+ * sticker rather than as light. Kept close enough to the blue that the mix stays
+ * unmistakably Warp's and never drifts into purple.
+ */
+val WarpIndigo = Color(0xFF3D56D6)
+
 val WarpError = Color(0xFFE5484D)
 val WarpSuccess = Color(0xFF30A46C)
 val WarpWarning = Color(0xFFE5A00D)

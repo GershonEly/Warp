@@ -28,6 +28,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -48,6 +49,7 @@ import dev.ely.warp.ai.AiProvider
 import dev.ely.warp.ai.KeyVault
 import dev.ely.warp.ai.Naming
 import dev.ely.warp.ai.ProviderRegistry
+import dev.ely.warp.data.Appearance
 import dev.ely.warp.data.Identity
 import dev.ely.warp.ui.theme.HairlineWidth
 import dev.ely.warp.ui.theme.WarpMono
@@ -107,6 +109,9 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
 
         Spacer(Modifier.size(WarpSpace.section))
         NamingSection(registry)
+
+        Spacer(Modifier.size(WarpSpace.section))
+        AmbientSection()
 
         Spacer(Modifier.size(WarpSpace.large))
         Footnote(
@@ -170,6 +175,56 @@ private fun YourNameSection() {
         placeholder = { Text("Your name") },
         modifier = Modifier.fillMaxWidth(),
     )
+}
+
+/**
+ * The ambient wash, and the switch that turns it off.
+ *
+ * On by default, unlike naming — and the difference matters. Naming spends the
+ * person's money, so it asks first. This spends nothing and is visible the
+ * moment the app opens, which makes it a default someone can disagree with by
+ * *looking* at it rather than by reading a bill.
+ *
+ * It is a switch at all because atmosphere is the one thing in this design that
+ * could reasonably annoy somebody, and anything that cannot be turned off had
+ * better be something nobody wants to turn off.
+ */
+@Composable
+private fun AmbientSection() {
+    val context = LocalContext.current
+    val appearance = remember { Appearance.get(context) }
+    val on by appearance.ambient.collectAsState()
+
+    Text("Atmosphere", style = MaterialTheme.typography.headlineMedium)
+    Spacer(Modifier.size(WarpSpace.tiny))
+    Text(
+        "A soft light behind the composer that deepens the harder the model is " +
+            "asked to think. It costs nothing and sends nothing — it is only how " +
+            "the screen is lit.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    Spacer(Modifier.size(WarpSpace.medium))
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(WarpRadius.small))
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .clickable { appearance.setAmbient(!on) }
+            .padding(WarpSpace.medium),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "Ambient light",
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+        )
+        // The whole row is the target, not just the switch. A 32dp control at
+        // the far edge of a phone is the hardest thing on the screen to hit.
+        Switch(checked = on, onCheckedChange = { appearance.setAmbient(it) })
+    }
 }
 
 /**

@@ -80,11 +80,15 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -162,9 +166,9 @@ enum class WarpDestination(
 
 @Composable
 fun WarpShell(
-    title: String,
-    onTitleClick: () -> Unit,
     onNewChat: () -> Unit,
+    /** Sits in the middle of the top bar. Empty for most screens. */
+    topBarCenter: @Composable () -> Unit = {},
     destination: WarpDestination,
     onDestinationChange: (WarpDestination) -> Unit,
     conversations: List<Conversation> = emptyList(),
@@ -204,8 +208,10 @@ fun WarpShell(
                 // 320dp, not Material's stock 360. The stock width leaves a
                 // sliver of the screen showing that is too narrow to read and
                 // too wide to ignore.
-                modifier = Modifier.width(320.dp),
-                drawerContainerColor = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.width(320.dp).drawerGlass(),
+                // Transparent, because `drawerGlass` paints the panel. A colour
+                // here would sit on top of the gradient and flatten it back out.
+                drawerContainerColor = Color.Transparent,
                 drawerShape = RoundedCornerShape(
                     topEnd = WarpRadius.large,
                     bottomEnd = WarpRadius.large,
@@ -213,7 +219,6 @@ fun WarpShell(
             ) {
                 DrawerContents(
                     current = destination,
-                    modelLabel = title,
                     conversations = conversations,
                     openConversationId = openConversationId,
                     onSelect = {
@@ -250,13 +255,17 @@ fun WarpShell(
             // keyboard, but with no bottom bar left there is nothing holding
             // content off the gesture area — the composer sat on top of it.
             contentWindowInsets = WindowInsets.navigationBars,
+            // Transparent, because the ambient light is drawn at the root and
+            // Scaffold otherwise paints its own opaque background straight over
+            // it. That is what made the wash disappear the moment it stopped
+            // being a modifier on the chat screen and became one on the app.
+            containerColor = Color.Transparent,
             snackbarHost = { SnackbarHost(snackbars) },
             topBar = {
                 WarpTopBar(
-                    title = title,
                     onMenu = { scope.launch { drawerState.open() } },
-                    onTitleClick = onTitleClick,
                     onAvatarClick = { onDestinationChange(WarpDestination.SETTINGS) },
+                    center = topBarCenter,
                 )
             },
             // No bottom navigation. Six stock items with labels is the single
@@ -641,10 +650,9 @@ private fun RenameDialog(
 
 @Composable
 private fun WarpTopBar(
-    title: String,
     onMenu: () -> Unit,
-    onTitleClick: () -> Unit,
     onAvatarClick: () -> Unit,
+    center: @Composable () -> Unit = {},
 ) {
     Row(
         modifier = Modifier
@@ -653,9 +661,13 @@ private fun WarpTopBar(
             // topBar and bottomBar must inset themselves, or they draw at y=0
             // underneath the clock and battery.
             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
-            .padding(horizontal = 6.dp, vertical = 6.dp),
+            .padding(horizontal = WarpSpace.small, vertical = WarpSpace.small),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Inside a filled circle rather than bare on the background. A lone icon
+        // floating on a dark screen has nothing holding it and reads as a mark
+        // rather than a control — giving it a surface is most of what gives all
+        // three reference apps' bars their structure.
         IconButtonBox(onClick = onMenu) {
             Icon(
                 Icons.Outlined.Menu,
@@ -664,28 +676,14 @@ private fun WarpTopBar(
             )
         }
 
-        // The model name doubles as the picker button, as in the plan's mockup.
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .clickable(onClick = onTitleClick)
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-            )
-            Spacer(Modifier.size(4.dp))
-            Text(
-                "▾",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        // The model name used to live here and has moved into the composer,
+        // where it belongs: it is a property of the message you are about to
+        // send, not of the app you are in. What is left is a slot, used by the
+        // one notice that has to sit above everything — see `topBarCenter`.
+        Box(
+            modifier = Modifier.weight(1f),
+            contentAlignment = Alignment.Center,
+        ) { center() }
 
         // Tappable. It is a filled circle sized exactly like a button, and for
         // weeks it did nothing at all — which is the clearest possible case of
@@ -697,9 +695,9 @@ private fun WarpTopBar(
             modifier = Modifier
                 .clip(CircleShape)
                 .clickable(onClick = onAvatarClick)
-                .padding(6.dp),
+                .padding(WarpSpace.tiny),
         ) {
-            Avatar(size = 30.dp)
+            Avatar(size = 32.dp)
         }
     }
 }
@@ -763,11 +761,62 @@ private fun currentInitial(): String? {
 private fun IconButtonBox(onClick: () -> Unit, content: @Composable () -> Unit) {
     Box(
         modifier = Modifier
-            .padding(4.dp)
+            .padding(WarpSpace.tiny)
             .size(40.dp)
+            // Clipped before the background, or the ripple spreads square out of
+            // a round button.
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { content() }
+}
+
+/**
+ * The drawer, lit.
+ *
+ * It was a flat slab with a hard edge sliding over another flat slab, and that
+ * was the largest single reason the surface read as cheap — not the type, not the
+ * spacing. A panel that slides over an app should look like a panel, which means
+ * it has to catch light somewhere.
+ *
+ * Three things, all cheap:
+ *
+ * - **A vertical fall** from a step above the surface colour at the top to the
+ *   surface colour at the bottom. This is what a real panel lit from above does,
+ *   and one step is enough — two looks like a button.
+ * - **A bloom behind the mark**, so the drawer has a light source of its own
+ *   rather than borrowing the chat's.
+ * - **A bright hairline down the leading edge.** One line, and it is the whole
+ *   glass-panel cue: an edge that catches light is an edge that is *in front of*
+ *   something.
+ */
+@Composable
+private fun Modifier.drawerGlass(): Modifier {
+    val surface = MaterialTheme.colorScheme.surface
+    val top = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.045f).compositeOver(surface)
+    val bloom = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+    val edge = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)
+
+    return drawBehind {
+        drawRect(Brush.verticalGradient(listOf(top, surface)))
+
+        // Behind the mark and the navigation, off the left edge so only the
+        // falloff shows — the same trick as the aurora, for the same reason.
+        drawRect(
+            brush = Brush.radialGradient(
+                colors = listOf(bloom, Color.Transparent),
+                center = Offset(size.width * 0.1f, size.height * 0.06f),
+                radius = size.width * 0.9f,
+            )
+        )
+
+        drawRect(
+            color = edge,
+            topLeft = Offset(size.width - 1f, 0f),
+            size = androidx.compose.ui.geometry.Size(1f, size.height),
+        )
+    }
 }
 
 /**
@@ -794,7 +843,6 @@ private fun IconButtonBox(onClick: () -> Unit, content: @Composable () -> Unit) 
 @Composable
 private fun DrawerContents(
     current: WarpDestination,
-    modelLabel: String,
     conversations: List<Conversation>,
     folders: List<Folder>,
     collapsedFolders: Set<String>,

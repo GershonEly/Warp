@@ -71,6 +71,10 @@ private fun weight(w: Int) = FontVariation.Settings(FontVariation.weight(w))
  * no experimental API.
  */
 val Rubik = FontFamily(
+    // Light exists for one job: a placeholder should invite, not assert. Without
+    // this entry, asking for Light silently resolves to the nearest weight
+    // present — which is Normal, so the request would have changed nothing.
+    Font(R.font.rubik_w300, FontWeight.Light),
     Font(R.font.rubik_w400, FontWeight.Normal),
     Font(R.font.rubik_w500, FontWeight.Medium),
     Font(R.font.rubik_w600, FontWeight.SemiBold),

@@ -12,6 +12,21 @@
     <!-- Installing the APKs Warp builds. The user still taps confirm. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- Dictation. Asked for the first time the mic is tapped, never at startup. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!--
+      Android 11+ hides other packages from an app unless it declares what it
+      needs to see. Without this, querying whether a speech recogniser exists
+      returns nothing on every modern device and voice would look unavailable on
+      phones that support it perfectly well.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
     <!-- Warp compiles native-ish workloads; 64-bit arm only. -->
     <uses-feature
         android:name="android.hardware.type.watch"
