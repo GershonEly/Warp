@@ -1,0 +1,322 @@
+package dev.ely.warp.debug
+
+import android.content.Context
+import android.util.Log
+import dev.ely.warp.WarpApplication
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.net.URLDecoder
+
+/**
+ * A control surface for the app, reachable over a USB cable.
+ *
+ * ```
+ * adb forward tcp:8099 tcp:8099
+ * curl -H "X-Warp-Key: <key>" localhost:8099/state
+ * ```
+ *
+ * **This file exists only in debug builds.** It is in `src/debug`, so a release
+ * build does not contain it — not disabled, not guarded, absent.
+ *
+ * It exists because half a feedback loop is not a feedback loop. MIUI refuses
+ * adb's synthetic taps, so during the design pass every check was "please tap
+ * this and tell me what you see" — screenshots came back over the cable and
+ * nothing could go the other way. An app whose purpose is building and testing
+ * software on the device it runs on should not be the one thing on that device
+ * nobody can drive.
+ *
+ * HTTP rather than broadcasts, for one reason: **a request can answer.** A
+ * broadcast can ask the app to do something and cannot report what happened, and
+ * the point is checking the result rather than firing the trigger.
+ *
+ * Written against a raw socket rather than pulling in a server library. The
+ * surface is one loopback port speaking a subset of HTTP/1.1 to one client; a
+ * dependency shipped in every debug build to save eighty lines is a bad trade.
+ */
+object DebugServer {
+
+    /** True where this file is compiled. The release stub answers false. */
+    const val IS_SUPPORTED = true
+
+    private const val TAG = "WarpDebug"
+    const val PORT = 8099
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var socket: ServerSocket? = null
+
+    fun start(context: Context) {
+        if (socket != null) return
+        val app = context.applicationContext
+
+        scope.launch {
+            runCatching {
+                // Loopback only. Not a configuration choice — the bind address is
+                // the security boundary, and a port bound to 0.0.0.0 on a phone
+                // is a port on whatever café network it is standing in.
+                ServerSocket(PORT, 4, InetAddress.getLoopbackAddress()).also {
+                    socket = it
+                    Log.i(TAG, "listening on 127.0.0.1:$PORT")
+                }
+            }.onFailure {
+                Log.w(TAG, "could not listen on $PORT", it)
+                return@launch
+            }
+
+            while (!Thread.currentThread().isInterrupted) {
+                val client = runCatching { socket?.accept() }.getOrNull() ?: break
+                scope.launch { runCatching { serve(app, client) } }
+            }
+        }
+    }
+
+    fun stop() {
+        runCatching { socket?.close() }
+        socket = null
+        Log.i(TAG, "stopped")
+    }
+
+    // ── one request ──────────────────────────────────────────────────────
+
+    private fun serve(context: Context, client: Socket) = client.use {
+        val reader = BufferedReader(InputStreamReader(client.getInputStream()))
+
+        val requestLine = reader.readLine() ?: return@use
+        val parts = requestLine.split(' ')
+        if (parts.size < 2) return@use respond(client, 400, error("malformed request"))
+
+        val method = parts[0]
+        val target = parts[1]
+        val path = target.substringBefore('?')
+        val query = target.substringAfter('?', "").toParams()
+
+        var length = 0
+        var key: String? = null
+        while (true) {
+            val header = reader.readLine()
+            if (header.isNullOrEmpty()) break
+            val name = header.substringBefore(':').trim().lowercase()
+            val value = header.substringAfter(':').trim()
+            when (name) {
+                "content-length" -> length = value.toIntOrNull() ?: 0
+                "x-warp-key" -> key = value
+            }
+        }
+
+        val body = if (length > 0) CharArray(length).let {
+            reader.read(it, 0, length)
+            String(it)
+        } else ""
+
+        // Checked before anything is read out of the app and before anything is
+        // done to it. An unauthenticated request learns only that something is
+        // listening.
+        val expected = DebugBridge.key.value
+        if (expected == null) {
+            return@use respond(client, 503, error("debug surface is closed — set a key in Settings"))
+        }
+        if (key != expected) {
+            return@use respond(client, 401, error("bad or missing X-Warp-Key"))
+        }
+
+        val (status, json) = route(context, method, path, query, body)
+        respond(client, status, json)
+    }
+
+    private fun route(
+        context: Context,
+        method: String,
+        path: String,
+        query: Map<String, String>,
+        body: String,
+    ): Pair<Int, JSONObject> {
+        val json = runCatching { JSONObject(body.ifBlank { "{}" }) }.getOrDefault(JSONObject())
+        val store = (context as WarpApplication).conversations
+
+        return when ("$method $path") {
+            "GET /health" -> 200 to JSONObject().put("ok", true)
+
+            "GET /state" -> {
+                val supplier = DebugBridge.state
+                    ?: return 503 to error("no screen is registered yet")
+                200 to JSONObject(supplier().mapValues { it.value ?: JSONObject.NULL })
+            }
+
+            "POST /chat/send" -> {
+                val text = json.optString("text").takeIf { it.isNotBlank() }
+                    ?: return 400 to error("expected {\"text\": \"...\"}")
+                val send = DebugBridge.send ?: return 503 to error("no chat on screen")
+
+                // What actually happened, not that the request was accepted. The
+                // id is what lets a caller then read the message back and check
+                // it is the message it meant to send.
+                val id = send(text) ?: return 500 to error("the message was not accepted")
+                200 to JSONObject().put("messageId", id)
+            }
+
+            "POST /nav" -> {
+                val to = json.optString("to").takeIf { it.isNotBlank() }
+                    ?: return 400 to error("expected {\"to\": \"CHAT|FILES|BUILD|ASSETS|SETTINGS\"}")
+                val go = DebugBridge.navigate ?: return 503 to error("no shell on screen")
+                if (!go(to.uppercase())) return 400 to error("no destination called $to")
+                200 to JSONObject().put("destination", to.uppercase())
+            }
+
+            "POST /chat/new" -> {
+                val fresh = DebugBridge.newChat ?: return 503 to error("no chat on screen")
+                fresh()
+                200 to JSONObject().put("ok", true)
+            }
+
+            "POST /chat/open" -> {
+                val id = json.optString("id").takeIf { it.isNotBlank() }
+                    ?: return 400 to error("expected {\"id\": \"...\"}")
+                val open = DebugBridge.open ?: return 503 to error("no chat on screen")
+                if (!open(id)) return 404 to error("no conversation $id")
+                200 to JSONObject().put("conversationId", id)
+            }
+
+            "GET /conversations" -> runBlocking {
+                val rows = store.observeDrawer().first()
+                val array = JSONArray()
+                rows.conversations.forEach {
+                    array.put(
+                        JSONObject()
+                            .put("id", it.id)
+                            .put("title", it.title)
+                            .put("pinned", it.pinned)
+                            .put("folderId", it.folderId ?: JSONObject.NULL)
+                            .put("updatedAt", it.updatedAt)
+                    )
+                }
+                200 to JSONObject().put("conversations", array)
+            }
+
+            "GET /messages" -> runBlocking {
+                val id = query["id"] ?: return@runBlocking 400 to error("expected ?id=")
+                val array = JSONArray()
+                store.loadMessages(id).forEach {
+                    array.put(
+                        JSONObject()
+                            .put("id", it.id)
+                            .put("role", it.role.name)
+                            .put("text", it.text)
+                            .put("error", it.error?.message ?: JSONObject.NULL)
+                            .put("createdAt", it.createdAt)
+                    )
+                }
+                200 to JSONObject().put("messages", array)
+            }
+
+            "POST /settings" -> {
+                val name = json.optString("name").takeIf { it.isNotBlank() }
+                    ?: return 400 to error("expected {\"name\": \"...\", \"value\": \"...\"}")
+                val apply = DebugBridge.setting ?: return 503 to error("settings unavailable")
+
+                // The value as read back, not the value that was sent. A setter
+                // that echoes its input proves nothing; this is the difference
+                // between automating the app and testing it.
+                val stored = apply(name, json.optString("value"))
+                    ?: return 400 to error("no setting called $name")
+                200 to JSONObject().put("name", name).put("value", stored)
+            }
+
+            // These go straight to the store rather than through the screen.
+            // Renaming a conversation is a fact about the database, and routing
+            // it through the UI would test the button rather than the behaviour.
+
+            "GET /search" -> runBlocking {
+                val q = query["q"] ?: return@runBlocking 400 to error("expected ?q=")
+                val order = if (query["order"].equals("alpha", true)) {
+                    dev.ely.warp.data.ConversationOrder.ALPHABETICAL
+                } else {
+                    dev.ely.warp.data.ConversationOrder.RECENT
+                }
+                val array = JSONArray()
+                store.searchByName(q, order).forEach {
+                    array.put(JSONObject().put("id", it.id).put("title", it.title))
+                }
+                200 to JSONObject().put("order", order.name).put("results", array)
+            }
+
+            "POST /conversation/rename" -> runBlocking {
+                val id = json.optString("id"); val title = json.optString("title")
+                if (id.isBlank() || title.isBlank()) {
+                    return@runBlocking 400 to error("expected {id, title}")
+                }
+                store.rename(id, title, System.currentTimeMillis())
+                200 to JSONObject().put("title", store.titleOf(id) ?: JSONObject.NULL)
+            }
+
+            "POST /conversation/pin" -> runBlocking {
+                val id = json.optString("id")
+                if (id.isBlank()) return@runBlocking 400 to error("expected {id, pinned}")
+                store.setPinned(id, json.optBoolean("pinned", true), System.currentTimeMillis())
+                200 to JSONObject().put("pinned", store.isPinned(id) ?: JSONObject.NULL)
+            }
+
+            "POST /conversation/delete" -> runBlocking {
+                val id = json.optString("id")
+                if (id.isBlank()) return@runBlocking 400 to error("expected {id}")
+                store.softDelete(id, System.currentTimeMillis())
+                200 to JSONObject().put("stillListed", store.titleOf(id) != null)
+            }
+
+            "POST /conversation/undelete" -> runBlocking {
+                val id = json.optString("id")
+                if (id.isBlank()) return@runBlocking 400 to error("expected {id}")
+                store.undoDelete(id)
+                200 to JSONObject().put("stillListed", store.titleOf(id) != null)
+            }
+
+            else -> 404 to error("no route for $method $path")
+        }
+    }
+
+    // ── plumbing ─────────────────────────────────────────────────────────
+
+    private fun error(message: String) = JSONObject().put("error", message)
+
+    private fun respond(client: Socket, status: Int, json: JSONObject) {
+        val body = json.toString().toByteArray()
+        client.getOutputStream().apply {
+            write(
+                buildString {
+                    append("HTTP/1.1 $status ${reason(status)}\r\n")
+                    append("Content-Type: application/json\r\n")
+                    append("Content-Length: ${body.size}\r\n")
+                    append("Connection: close\r\n\r\n")
+                }.toByteArray()
+            )
+            write(body)
+            flush()
+        }
+    }
+
+    private fun reason(status: Int) = when (status) {
+        200 -> "OK"
+        400 -> "Bad Request"
+        401 -> "Unauthorized"
+        404 -> "Not Found"
+        500 -> "Internal Server Error"
+        503 -> "Service Unavailable"
+        else -> "Unknown"
+    }
+
+    private fun String.toParams(): Map<String, String> =
+        split('&').filter { it.isNotBlank() }.associate {
+            val name = it.substringBefore('=')
+            val value = URLDecoder.decode(it.substringAfter('=', ""), "UTF-8")
+            name to value
+        }
+}

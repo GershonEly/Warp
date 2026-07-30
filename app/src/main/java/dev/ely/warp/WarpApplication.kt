@@ -3,6 +3,8 @@ package dev.ely.warp
 import android.app.Application
 import android.util.Log
 import dev.ely.warp.data.ConversationRepository
+import dev.ely.warp.debug.DebugBridge
+import dev.ely.warp.debug.DebugServer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -38,6 +40,19 @@ class WarpApplication : Application() {
         scope.launch {
             runCatching { conversations.purgeOldDeletes(System.currentTimeMillis()) }
                 .onFailure { Log.w(TAG, "could not sweep deleted conversations", it) }
+        }
+
+        // The debug surface follows the key rather than the launch. Typing a key
+        // opens it, clearing the key shuts it, and a fresh install has no key —
+        // so it has never been open. In a release build this whole branch calls
+        // a stub, because the server is not compiled into that build at all.
+        if (DebugServer.IS_SUPPORTED) {
+            DebugBridge.load(this)
+            scope.launch {
+                DebugBridge.key.collect { key ->
+                    if (key == null) DebugServer.stop() else DebugServer.start(this@WarpApplication)
+                }
+            }
         }
     }
 

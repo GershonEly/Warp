@@ -47,6 +47,10 @@ import dev.ely.warp.ai.ProviderRegistry
 import dev.ely.warp.data.Conversation
 import dev.ely.warp.data.ConversationOrder
 import kotlinx.coroutines.delay
+import androidx.compose.runtime.DisposableEffect
+import dev.ely.warp.data.Appearance
+import dev.ely.warp.data.Identity
+import dev.ely.warp.debug.DebugBridge
 import dev.ely.warp.data.DrawerPrefs
 import dev.ely.warp.data.DrawerState
 import dev.ely.warp.diag.DeviceProbe
@@ -146,6 +150,68 @@ private fun WarpApp() {
             // is the difference between a control that answers and one that lags.
             delay(220)
             searchResults = conversations.searchByName(searchQuery, searchOrder)
+        }
+    }
+
+    // Hand the running screen to whatever is driving from outside, and take it
+    // back when the screen goes. Registered here rather than inside a screen
+    // because these need the engine and the store, which live at this level.
+    DisposableEffect(engine, conversations) {
+        DebugBridge.state = {
+            mapOf(
+                "destination" to destination.name,
+                "conversationId" to engine.conversationId.value,
+                "messageCount" to engine.messages.value.size,
+                "busy" to engine.busy.value,
+                "model" to choice.label,
+                "provider" to choice.providerId,
+                "searchQuery" to searchQuery,
+            )
+        }
+        DebugBridge.send = { text ->
+            engine.send(text)
+            // The id of the message that was actually stored, so a caller can
+            // read it back. Returning "ok" would prove only that the call
+            // returned.
+            engine.messages.value.lastOrNull { it.role == dev.ely.warp.ai.Role.USER }?.id
+        }
+        DebugBridge.navigate = { name ->
+            val target = WarpDestination.entries.firstOrNull { it.name == name }
+            if (target != null) { destination = target; true } else false
+        }
+        DebugBridge.newChat = { engine.clear(); destination = WarpDestination.CHAT }
+        DebugBridge.open = { id ->
+            val known = drawer.conversations.any { it.id == id }
+            if (known) {
+                scope.launch {
+                    engine.open(id, conversations.loadMessages(id))
+                    destination = WarpDestination.CHAT
+                }
+            }
+            known
+        }
+        DebugBridge.setting = { name, value ->
+            val appearance = Appearance.get(context)
+            when (name) {
+                "ambient" -> {
+                    appearance.setAmbient(value.toBoolean())
+                    appearance.ambient.value.toString()
+                }
+                "name" -> {
+                    Identity.get(context).setName(value)
+                    Identity.get(context).name.value ?: ""
+                }
+                else -> null
+            }
+        }
+
+        onDispose {
+            DebugBridge.state = null
+            DebugBridge.send = null
+            DebugBridge.navigate = null
+            DebugBridge.newChat = null
+            DebugBridge.open = null
+            DebugBridge.setting = null
         }
     }
 

@@ -181,6 +181,17 @@ class ConversationRepository(context: Context) : ChatEngine.ConversationStore {
         if (clean.isNotEmpty()) conversations.suggestTitle(id, clean)
     }
 
+    /**
+     * The stored title, or null when the row is gone or soft-deleted.
+     *
+     * Exists so a caller can read back what a write actually did rather than
+     * trust that it returned. Null is the honest answer for a deleted row: the
+     * list query hides it, so "not listed" is what the rest of the app sees.
+     */
+    suspend fun titleOf(id: String): String? = conversations.byId(id)?.title
+
+    suspend fun isPinned(id: String): Boolean? = conversations.byId(id)?.pinned
+
     suspend fun setPinned(id: String, pinned: Boolean, now: Long) =
         conversations.setPinned(id, pinned, now)
 

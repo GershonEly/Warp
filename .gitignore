@@ -45,7 +45,12 @@ captures/
 *.ap_
 *.dex
 *.class
-release/
+
+# Build output only. A bare `release/` was here and it also swallowed
+# `app/src/release/` — the source set holding the release stub of the debug
+# server — so a fresh clone would have compiled a debug build and failed a
+# release one, with the missing file never showing up in `git status`.
+**/build/**/release/
 
 # ─────────────────────────────────────────────────────────────
 #  IDE

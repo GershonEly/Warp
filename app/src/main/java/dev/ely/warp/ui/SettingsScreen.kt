@@ -50,6 +50,8 @@ import dev.ely.warp.ai.KeyVault
 import dev.ely.warp.ai.Naming
 import dev.ely.warp.ai.ProviderRegistry
 import dev.ely.warp.data.Appearance
+import dev.ely.warp.debug.DebugBridge
+import dev.ely.warp.debug.DebugServer
 import dev.ely.warp.data.Identity
 import dev.ely.warp.ui.theme.HairlineWidth
 import dev.ely.warp.ui.theme.WarpMono
@@ -113,6 +115,11 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
         Spacer(Modifier.size(WarpSpace.section))
         AmbientSection()
 
+        if (DebugServer.IS_SUPPORTED) {
+            Spacer(Modifier.size(WarpSpace.section))
+            DebugSection()
+        }
+
         Spacer(Modifier.size(WarpSpace.large))
         Footnote(
             "The Mock AI needs no key and always works — it replays scripted " +
@@ -174,6 +181,74 @@ private fun YourNameSection() {
         singleLine = true,
         placeholder = { Text("Your name") },
         modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+/**
+ * The key that opens the debug surface.
+ *
+ * Absent from release builds entirely — not greyed out, not hidden behind a
+ * gesture. `IS_SUPPORTED` is false there because the server is not compiled into
+ * that build, so this section would be a control for something that does not
+ * exist.
+ *
+ * **Empty means closed**, and that is where a fresh install starts. There is no
+ * default key and no weak one. The surface cannot be left open by forgetting to
+ * shut it, because it was never open.
+ */
+@Composable
+private fun DebugSection() {
+    val context = LocalContext.current
+    val key by DebugBridge.key.collectAsState()
+    var typed by remember { mutableStateOf(key.orEmpty()) }
+
+    Text("Debug surface", style = MaterialTheme.typography.headlineMedium)
+    Spacer(Modifier.size(WarpSpace.tiny))
+    Text(
+        "Lets a computer on the USB cable drive this app and read what happened — " +
+            "for testing. It stays shut until you set a key here, and it only " +
+            "ever listens on this phone, never on a network.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    Spacer(Modifier.size(WarpSpace.medium))
+
+    val mistaken = DebugBridge.looksLikeApiKey(typed)
+
+    OutlinedTextField(
+        value = typed,
+        onValueChange = {
+            typed = it.trim()
+            DebugBridge.setKey(context, typed)
+        },
+        singleLine = true,
+        isError = mistaken,
+        placeholder = { Text("Key — empty keeps it shut") },
+        modifier = Modifier.fillMaxWidth(),
+    )
+
+    if (mistaken) {
+        Spacer(Modifier.size(WarpSpace.small))
+        Text(
+            "That looks like an API key. It belongs in AI keys above, where it is " +
+                "encrypted by the Keystore — this field is stored in plain text, so " +
+                "it will not be saved here.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+
+    Spacer(Modifier.size(WarpSpace.small))
+    Footnote(
+        if (key == null) {
+            "Closed."
+        } else {
+            val port = DebugServer.PORT
+            "Open on port $port. On the computer:\n" +
+                "adb forward tcp:$port tcp:$port\n" +
+                "curl -H \"X-Warp-Key: $key\" localhost:$port/state"
+        }
     )
 }
 
