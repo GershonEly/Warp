@@ -351,6 +351,60 @@ object AskUser : Tool {
 }
 
 /**
+ * Start an app, properly.
+ *
+ * WRITES rather than FREE even though the folder is usually empty, because it
+ * lays down five files under names the whole build depends on. It is also the
+ * moment a project acquires an application id, which is effectively permanent
+ * once the app is installed anywhere — worth one prompt.
+ */
+object NewProjectTool : Tool {
+    override val name = "new_project"
+    override val risk = Risk.WRITES
+    override val description =
+        "Create the skeleton of an Android app: manifest, resources and a " +
+            "MainActivity that already compiles. Do this once, before writing " +
+            "any code, in an empty project. It will refuse if one already exists."
+    override val schemaJson = """
+        {"type":"object","properties":{
+          "name":{"type":"string","description":"What the app is called, as a person would say it."},
+          "package":{"type":"string",
+            "description":"Application id like com.example.notes. Leave out to derive one."}},
+         "required":["name"]}
+    """.trimIndent()
+
+    override fun describe(args: JSONObject): String {
+        val name = args.optString("name")
+        val id = args.optString("package").ifBlank {
+            dev.ely.warp.build.NewProject.derivePackage(name)
+        }
+        return "$name ($id)"
+    }
+
+    override suspend fun run(project: File, args: JSONObject): ToolResult {
+        val name = args.optString("name")
+        val failure = dev.ely.warp.build.NewProject.create(
+            dir = project,
+            name = name,
+            applicationId = args.optString("package"),
+        )
+        if (failure != null) return ToolResult.Failed(failure)
+
+        val meta = dev.ely.warp.build.NewProject.meta(project)
+        // Lists what it made. "Project created" gives you nothing to check, and
+        // the file names are exactly what the next tool call will refer to.
+        return ToolResult.Ok(
+            "created ${meta?.applicationId}",
+            listOf(
+                "AndroidManifest.xml",
+                "res/values/strings.xml",
+                "src/MainActivity.kt",
+            ).joinToString("\n"),
+        )
+    }
+}
+
+/**
  * Say the goal is reached.
  *
  * A tool rather than a phrase, because "I think that's everything!" is
@@ -419,7 +473,7 @@ val READ_TOOLS: Map<String, Tool> =
 
 /** Everything the model can be offered, by name. */
 val ALL_TOOLS: Map<String, Tool> =
-    (READ_TOOLS.values + listOf(WriteFile, EditFile, AskUser, GoalDone))
+    (READ_TOOLS.values + listOf(NewProjectTool, WriteFile, EditFile, AskUser, GoalDone))
         .associateBy { it.name }
 
 /** Everything, plus the way out. What a `/goal` turn is given. */

@@ -387,6 +387,69 @@ object DebugServer {
                 200 to JSONObject().put("answered", text)
             }
 
+            // Reads the project the model works in, and can build it.
+            //
+            // The build route is here rather than as a tool because the tools
+            // that run things are item 5 and must ask permission every time.
+            // This is how the scaffold gets *proven* to compile in the meantime
+            // — a starting project that does not build is worse than none.
+            "GET /project" -> {
+                val dir = java.io.File(context.filesDir, "project")
+                val meta = dev.ely.warp.build.NewProject.meta(dir)
+                200 to JSONObject()
+                    .put("exists", dev.ely.warp.build.NewProject.exists(dir))
+                    .put("name", meta?.name ?: JSONObject.NULL)
+                    .put("applicationId", meta?.applicationId ?: JSONObject.NULL)
+                    .put(
+                        "files",
+                        JSONArray(
+                            dir.walkTopDown().filter { it.isFile }
+                                .map { it.relativeTo(dir).path.replace('\\', '/') }
+                                .sorted().toList()
+                        )
+                    )
+            }
+
+            "POST /project/build" -> runBlocking {
+                val dir = java.io.File(context.filesDir, "project")
+                val meta = dev.ely.warp.build.NewProject.meta(dir)
+                    ?: return@runBlocking 400 to error("no project here")
+
+                // Assembled exactly as the Build screen assembles it, so this
+                // route is testing the real pipeline rather than a second one
+                // that happens to live next to it.
+                val toolchain = dev.ely.warp.build.Toolchain.forContext(context)
+                val workRoot = java.io.File(context.filesDir, "work").apply { mkdirs() }
+                val signer = dev.ely.warp.build.ApkSigner(
+                    toolchain = toolchain,
+                    keystoreFile = java.io.File(context.filesDir, "keys/warp-debug.p12"),
+                )
+                val engine = dev.ely.warp.build.BuildEngine(toolchain, workRoot, signer)
+                val log = StringBuilder()
+                val outcome = engine.build(
+                    dev.ely.warp.build.BuildEngine.Request(
+                        projectDir = dir,
+                        applicationId = meta.applicationId,
+                    ),
+                    onLine = { log.appendLine(it.text) },
+                )
+
+                when (outcome) {
+                    is dev.ely.warp.build.BuildEngine.Outcome.Success -> 200 to JSONObject()
+                        .put("ok", true)
+                        .put("apk", outcome.apk.name)
+                        .put("bytes", outcome.apk.length())
+                        .put("signed", outcome.signed)
+                        .put("ms", outcome.totalMs)
+
+                    is dev.ely.warp.build.BuildEngine.Outcome.Failure -> 200 to JSONObject()
+                        .put("ok", false)
+                        .put("stage", outcome.stage.name)
+                        .put("message", outcome.message)
+                        .put("output", outcome.output.takeLast(1500))
+                }
+            }
+
             "GET /goal" -> {
                 val state = DebugBridge.goal?.invoke()
                 200 to JSONObject()

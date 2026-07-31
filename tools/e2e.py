@@ -20,13 +20,13 @@ KEY = "test123"
 passed, failed = [], []
 
 
-def call(method, path, body=None):
+def call(method, path, body=None, timeout=15):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(BASE + path, data=data, method=method)
     req.add_header("X-Warp-Key", KEY)
     req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, json.loads(r.read().decode())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read().decode())
@@ -495,7 +495,77 @@ check("no messages arrive after stopping",
       f"{before} then {call('GET', '/state')[1]['messageCount']}")
 
 
-print("\n12. SETTINGS ROUND-TRIP")
+print("\n12. A NEW PROJECT IS ONE A COMPILER ACCEPTS")
+# The point of this section is the last check, and only the last check. A
+# scaffold that writes plausible files but does not compile is worse than none:
+# every build after it fails for a reason that looks like your code.
+
+
+def wipe_project():
+    on_device("rm", "-rf", "files/project")
+
+
+def new_project(name, package=None):
+    args = {"name": name}
+    if package is not None:
+        args["package"] = package
+    return call("POST", "/tool", {"name": "new_project", "args": args})[1]
+
+
+wipe_project()
+check("an empty folder is not a project",
+      call("GET", "/project")[1]["exists"] is False)
+
+r = new_project("Notes")
+check("the tool creates one", "com.example.notes" in (r.get("summary") or ""), json.dumps(r)[:80])
+
+p = call("GET", "/project")[1]
+check("it knows what it made", p["name"] == "Notes" and p["applicationId"] == "com.example.notes")
+check("and wrote what a build needs",
+      {"AndroidManifest.xml", "res/values/strings.xml", "src/MainActivity.kt"}
+      <= set(p["files"]), f"{p['files']}")
+
+# It never deletes. SampleProject.write starts with deleteRecursively, which is
+# right for a throwaway and catastrophic for somebody's work.
+check("it refuses to overwrite an existing project",
+      "already a project" in (new_project("Something Else").get("failed") or ""))
+check("and the first project is untouched",
+      call("GET", "/project")[1]["name"] == "Notes")
+
+for bad, expect in [("notes", "at least one dot"),
+                    ("com.example.class", "reserved word"),
+                    ("com.example.9lives", "cannot start with"),
+                    ("com..x", "empty part"),
+                    ("com.exa-mple.x", "letters, digits")]:
+    wipe_project()
+    check(f"refuses the package {bad!r}",
+          expect in (new_project("X", bad).get("failed") or ""),
+          new_project("X", bad).get("failed") or "")
+
+wipe_project()
+check("a name starting with a digit still makes a legal package",
+      "com.example.app3dpaint" in (new_project("3D Paint").get("summary") or ""))
+wipe_project()
+check("a name with no letters at all is refused",
+      "needs a name" in (new_project("   ").get("failed") or ""))
+
+wipe_project()
+new_project("Notes & Co")
+strings = on_device("cat", "files/project/res/values/strings.xml")
+check("the app name is escaped for XML", "Notes &amp; Co" in strings,
+      strings.splitlines()[-2].strip() if strings else "")
+
+# The only check that matters. Slow on purpose: it really compiles, on the
+# phone, with the real toolchain.
+s, built = call("POST", "/project/build", {}, timeout=600)
+check("the project it made actually compiles", built.get("ok") is True,
+      json.dumps(built)[:200])
+if built.get("ok"):
+    check("into a signed APK", built.get("signed") is True and built.get("bytes", 0) > 100_000,
+          f"{built.get('apk')} {built.get('bytes')} bytes in {built.get('ms')} ms")
+
+
+print("\n13. SETTINGS ROUND-TRIP")
 s, r = call("POST", "/settings", {"name": "ambient", "value": "false"})
 check("turning the atmosphere off reads back as off", r.get("value") == "false")
 s, r = call("POST", "/settings", {"name": "ambient", "value": "true"})
@@ -505,7 +575,7 @@ s, r = call("POST", "/settings", {"name": "nonsense", "value": "x"})
 check("an unknown setting is refused rather than silently ignored", s == 400)
 
 
-print("\n13. NAVIGATION")
+print("\n14. NAVIGATION")
 for dest in ("SETTINGS", "BUILD", "CHAT"):
     call("POST", "/nav", {"to": dest})
     s, st = call("GET", "/state")
