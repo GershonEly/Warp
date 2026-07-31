@@ -212,27 +212,45 @@ check("the card reports what happened, not 'ok'",
       any("created" in (c["result"] or "") for c in tool_cards()),
       f"{[c['result'] for c in tool_cards()]}")
 check("Allow once grants nothing standing",
-      call("GET", "/state")[1].get("alwaysAllowed") == "")
+      call("GET", "/permission")[1]["granted"] == [])
 
 call("POST", "/chat/new")
 call("POST", "/chat/send", {"text": "create a new file for me"})
 time.sleep(6)
 call("POST", "/permission", {"decision": "ALWAYS"})
 time.sleep(3)
+trusting = call("GET", "/state")[1]["conversationId"]
 check("Always is remembered",
-      call("GET", "/state")[1].get("alwaysAllowed") == "write_file")
+      call("GET", "/permission")[1]["granted"] == ["write_file"])
 
-call("POST", "/chat/new")
+# Same chat: it must not ask again.
 call("POST", "/chat/send", {"text": "create a new file for me"})
 time.sleep(7)
 st = call("GET", "/state")[1]
-check("and then it does not ask again",
+check("the same chat is not asked again",
       st.get("askingTool") is None and st["busy"] is False)
-check("the write still happened",
+check("and the write still happened",
       any(c["status"] == "DONE" for c in tool_cards()))
 
-s, r = call("POST", "/permission/revoke")
-check("revoke takes Always back", r.get("granted") == [])
+# A different chat: it must ask. This is the whole point of per-chat scope —
+# a decision made in one piece of work must not silently apply to another.
+call("POST", "/chat/new")
+call("POST", "/chat/send", {"text": "create a new file for me"})
+time.sleep(6)
+st = call("GET", "/state")[1]
+check("a DIFFERENT chat still asks", st.get("askingTool") == "write_file",
+      f"asking={st.get('askingTool')}")
+check("and it starts with nothing granted",
+      call("GET", "/permission")[1]["granted"] == [])
+call("POST", "/permission", {"decision": "DENY"})
+time.sleep(2)
+
+s, r = call("POST", "/permission/revoke", {"id": trusting})
+check("revoke takes an Always back, per chat", r.get("granted") == [],
+      json.dumps(r)[:80])
+
+s, r = call("GET", "/permission?id=" + trusting)
+check("and it stays taken back", r["granted"] == [])
 
 s, r = call("POST", "/tool", {"name": "edit_file", "args": {
     "path": "src/Counter.kt", "old": "var count = 0", "new": "var count = 100"}})

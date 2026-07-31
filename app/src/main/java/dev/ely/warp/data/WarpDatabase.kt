@@ -19,8 +19,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MessageEntity::class,
         FolderEntity::class,
         MessageFts::class,
+        ToolGrantEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class WarpDatabase : RoomDatabase() {
@@ -28,6 +29,7 @@ abstract class WarpDatabase : RoomDatabase() {
     abstract fun conversations(): ConversationDao
     abstract fun messages(): MessageDao
     abstract fun folders(): FolderDao
+    abstract fun grants(): ToolGrantDao
 
     companion object {
         @Volatile
@@ -52,6 +54,34 @@ abstract class WarpDatabase : RoomDatabase() {
          * entity declares; a mismatch here fails Room's identity check at open
          * time rather than silently.
          */
+        /**
+         * Standing tool permissions, per conversation.
+         *
+         * A new table rather than a column, because one conversation can trust
+         * several tools and a comma-joined string in a column is a list you
+         * cannot index, cannot cascade, and eventually cannot parse.
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS tool_grants (
+                        conversationId TEXT NOT NULL,
+                        toolName TEXT NOT NULL,
+                        grantedAt INTEGER NOT NULL,
+                        PRIMARY KEY(conversationId, toolName),
+                        FOREIGN KEY(conversationId) REFERENCES conversations(id)
+                            ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_tool_grants_conversationId " +
+                        "ON tool_grants(conversationId)"
+                )
+            }
+        }
+
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE messages ADD COLUMN errorKind TEXT")
@@ -74,7 +104,7 @@ abstract class WarpDatabase : RoomDatabase() {
                     WarpDatabase::class.java,
                     "warp.db",
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     // Deliberately no fallbackToDestructiveMigration. Losing
                     // someone's conversations because a column moved is not an
                     // acceptable failure mode; a missing migration should break

@@ -932,6 +932,10 @@ private fun ToolCard(
                     // Allow first and Always second, in that order on purpose.
                     // The safer answer is the one under your thumb; Always is a
                     // standing decision and should cost one extra moment.
+                    //
+                    // "in this chat" is on the button rather than in a footnote.
+                    // A button that overstates its scope is how somebody grants
+                    // more than they meant to and never finds out.
                     Button(
                         onClick = { onDecide(Decision.ONCE) },
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
@@ -940,7 +944,7 @@ private fun ToolCard(
                     TextButton(
                         onClick = { onDecide(Decision.ALWAYS) },
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                    ) { Text("Always", style = MaterialTheme.typography.labelLarge) }
+                    ) { Text("Always in this chat", style = MaterialTheme.typography.labelLarge) }
 
                     Spacer(Modifier.weight(1f))
 

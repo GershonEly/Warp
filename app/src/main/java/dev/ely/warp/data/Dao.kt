@@ -233,3 +233,37 @@ interface FolderDao {
     @Query("UPDATE folders SET sortKey = :sortKey WHERE id = :id")
     suspend fun setSortKey(id: String, sortKey: Long)
 }
+
+/**
+ * Standing tool permissions, per conversation.
+ *
+ * Deliberately tiny. There is no "grant to every conversation" query here and
+ * there should not be — the whole reason this table exists is that a permission
+ * has a scope, and a convenience method that ignores the scope would be the
+ * first step back to the global grant this replaced.
+ */
+@Dao
+interface ToolGrantDao {
+
+    /** Observed, so a sheet showing what is trusted updates as you change it. */
+    @Query("SELECT toolName FROM tool_grants WHERE conversationId = :conversationId")
+    fun observe(conversationId: String): Flow<List<String>>
+
+    @Query("SELECT toolName FROM tool_grants WHERE conversationId = :conversationId")
+    suspend fun forConversation(conversationId: String): List<String>
+
+    @Query(
+        "SELECT COUNT(*) FROM tool_grants " +
+            "WHERE conversationId = :conversationId AND toolName = :toolName"
+    )
+    suspend fun isGranted(conversationId: String, toolName: String): Int
+
+    @Upsert
+    suspend fun grant(grant: ToolGrantEntity)
+
+    @Query("DELETE FROM tool_grants WHERE conversationId = :conversationId AND toolName = :toolName")
+    suspend fun revoke(conversationId: String, toolName: String)
+
+    @Query("DELETE FROM tool_grants WHERE conversationId = :conversationId")
+    suspend fun revokeAll(conversationId: String)
+}

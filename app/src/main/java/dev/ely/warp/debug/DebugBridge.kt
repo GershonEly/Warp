@@ -53,6 +53,10 @@ object DebugBridge {
     @Volatile
     var permission: dev.ely.warp.tools.PermissionDesk? = null
 
+    /** Which conversation is open, so a permission route can default to it. */
+    @Volatile
+    var conversation: (() -> String?)? = null
+
     // ── the key ──────────────────────────────────────────────────────────
 
     private const val PREFS = "warp_debug"

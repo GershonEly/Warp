@@ -121,7 +121,7 @@ private fun WarpApp() {
     // The desk is held here, beside the engine, because the question it carries
     // has to outlive the card that asked it — a tool call must not be cancelled
     // by scrolling.
-    val permission = remember { PermissionDesk(context) }
+    val permission = remember { PermissionDesk(store = conversations) }
     val toolRunner = remember { ToolRunner(context, permission) }
     val engine = remember {
         ChatEngine(
@@ -140,6 +140,10 @@ private fun WarpApp() {
             },
         )
     }
+    // Told which chat it is in, now that there is one. Read at the moment of
+    // asking, so it follows you from conversation to conversation.
+    remember(engine) { permission.conversation = { engine.conversationId.value } }
+
     var choice by remember { mutableStateOf(registry.choice) }
 
     // The drawer's list, straight from the database. It updates itself: sending
@@ -191,7 +195,6 @@ private fun WarpApp() {
                 // answers a prompt has to be able to see there is one.
                 "askingTool" to permission.pending.value?.toolName,
                 "askingAbout" to permission.pending.value?.summary,
-                "alwaysAllowed" to permission.granted.sorted().joinToString(","),
             )
         }
         DebugBridge.send = { text ->
@@ -217,6 +220,7 @@ private fun WarpApp() {
             known
         }
         DebugBridge.permission = permission
+        DebugBridge.conversation = { engine.conversationId.value }
         DebugBridge.setting = { name, value ->
             val appearance = Appearance.get(context)
             when (name) {
@@ -240,6 +244,7 @@ private fun WarpApp() {
             DebugBridge.open = null
             DebugBridge.setting = null
             DebugBridge.permission = null
+            DebugBridge.conversation = null
         }
     }
 
@@ -364,6 +369,20 @@ private fun WarpApp() {
             },
             onReorderFolders = { ordered ->
                 scope.launch { conversations.reorderFolders(ordered) }
+            },
+            // Observed rather than read once, so a switch you flip in the sheet
+            // is reflected by the row you flipped it on. Keyed by id: the sheet
+            // outlives no conversation, but the flow behind it must be replaced
+            // when a different one is opened.
+            grantedTools = { id ->
+                remember(id) { conversations.observeGrants(id) }
+                    .collectAsState(initial = emptySet()).value
+            },
+            onSetToolGrant = { id, tool, always ->
+                scope.launch {
+                    if (always) conversations.grant(id, tool)
+                    else conversations.revoke(id, tool)
+                }
             },
         ) { screen ->
             when (screen) {

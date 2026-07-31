@@ -43,6 +43,10 @@ import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Delete
+import dev.ely.warp.tools.Risk
+import dev.ely.warp.tools.ALL_TOOLS
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material3.Switch
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Menu
@@ -197,6 +201,9 @@ fun WarpShell(
     onRenameFolder: (String, String) -> Unit = { _, _ -> },
     onDeleteFolder: (Folder) -> Unit = {},
     onReorderFolders: (List<Folder>) -> Unit = {},
+    /** What this conversation already trusts. Empty until something is granted. */
+    grantedTools: @Composable (String) -> Set<String> = { emptySet() },
+    onSetToolGrant: (String, String, Boolean) -> Unit = { _, _, _ -> },
     content: @Composable (WarpDestination) -> Unit,
 ) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -209,6 +216,7 @@ fun WarpShell(
     var menuFor by remember { mutableStateOf<Conversation?>(null) }
     var renaming by remember { mutableStateOf<Conversation?>(null) }
     var confirmingDelete by remember { mutableStateOf<Conversation?>(null) }
+    var permissionsFor by remember { mutableStateOf<Conversation?>(null) }
     var moving by remember { mutableStateOf<Conversation?>(null) }
     var managingFolders by remember { mutableStateOf(false) }
 
@@ -337,10 +345,23 @@ fun WarpShell(
                 menuFor = null
                 moving = conversation
             },
+            onPermissions = {
+                menuFor = null
+                permissionsFor = conversation
+            },
             onDelete = {
                 menuFor = null
                 confirmingDelete = conversation
             },
+        )
+    }
+
+    permissionsFor?.let { conversation ->
+        ToolPermissionsSheet(
+            conversation = conversation,
+            granted = grantedTools(conversation.id),
+            onDismiss = { permissionsFor = null },
+            onSet = { tool, always -> onSetToolGrant(conversation.id, tool, always) },
         )
     }
 
@@ -432,6 +453,7 @@ private fun ConversationMenu(
     onRename: () -> Unit,
     onTogglePin: () -> Unit,
     onMove: () -> Unit,
+    onPermissions: () -> Unit,
     onDelete: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -459,6 +481,7 @@ private fun ConversationMenu(
                 onClick = onTogglePin,
             )
             MenuRow(Icons.Outlined.FolderOpen, "Move to folder", onMove)
+            MenuRow(Icons.Outlined.Lock, "Tool permissions", onPermissions)
             // Delete is tinted, and it is the only tinted thing here. In a menu
             // where every row looks the same, the irreversible one is a thumb's
             // width from the reversible ones.
@@ -1596,5 +1619,81 @@ fun ComingSoonScreen(title: String, description: String, modifier: Modifier = Mo
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
+    }
+}
+
+/**
+ * What this conversation is allowed to do without asking.
+ *
+ * Per conversation, and the sheet says so twice — in the title and under it —
+ * because the single most likely misreading is that this is an app-wide switch.
+ *
+ * Reading tools are listed but not switchable. They never ask, and offering a
+ * control that does nothing would be worse than leaving them out: it would imply
+ * that reading could be stopped here, and it cannot.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ToolPermissionsSheet(
+    conversation: Conversation,
+    granted: Set<String>,
+    onDismiss: () -> Unit,
+    onSet: (String, Boolean) -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = WarpSpace.large),
+        ) {
+            Text(
+                "Tools in this chat",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = WarpSpace.screen),
+            )
+            Spacer(Modifier.size(4.dp))
+            Text(
+                "Only \"${conversation.title}\". Other chats ask you separately.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = WarpSpace.screen),
+            )
+            Spacer(Modifier.size(WarpSpace.medium))
+
+            ALL_TOOLS.values.forEach { tool ->
+                val free = tool.risk == Risk.FREE
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (free) Modifier
+                            else Modifier.clickable { onSet(tool.name, tool.name !in granted) }
+                        )
+                        .padding(horizontal = WarpSpace.screen, vertical = WarpSpace.medium),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(tool.name, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            when {
+                                free -> "Reads only — never asks"
+                                tool.name in granted -> "Runs without asking, in this chat"
+                                else -> "Asks you every time"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (!free) {
+                        Switch(
+                            checked = tool.name in granted,
+                            onCheckedChange = { onSet(tool.name, it) },
+                        )
+                    }
+                }
+            }
+        }
     }
 }

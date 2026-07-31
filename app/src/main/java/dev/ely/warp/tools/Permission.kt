@@ -1,6 +1,5 @@
 package dev.ely.warp.tools
 
-import android.content.Context
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -52,15 +51,45 @@ data class PermissionRequest(
 )
 
 /**
+ * Where standing permissions are kept.
+ *
+ * An interface so the desk does not learn what Room is, and so a desk with no
+ * store behind it still works — it simply never remembers, which is the safe
+ * way round.
+ */
+interface GrantStore {
+    suspend fun isGranted(conversationId: String, toolName: String): Boolean
+    suspend fun grant(conversationId: String, toolName: String)
+}
+
+/**
  * The desk between the model and you.
  *
  * Holds at most one question at a time. That is not a limitation to fix later —
  * a stack of permission prompts is how people learn to tap Allow without
  * reading, and this whole design exists so the expensive prompts stay visible.
+ *
+ * **Always is remembered per conversation**, never for the app. When you say
+ * Always you mean *in this piece of work*; a grant that outlives the chat it was
+ * given in would apply a decision made in a throwaway experiment to the work you
+ * care about, and nothing on screen would say it had.
+ *
  */
-class PermissionDesk(context: Context) : AsksPermission {
+class PermissionDesk(
+    private val store: GrantStore? = null,
+) : AsksPermission {
 
-    private val prefs = context.getSharedPreferences("warp_tool_grants", Context.MODE_PRIVATE)
+    /**
+     * Which chat is open. Asked freshly at every question.
+     *
+     * A property set afterwards rather than a constructor argument, because the
+     * desk has to exist before the engine does — the runner needs it — and the
+     * engine is what knows which conversation is open. Until it is set the
+     * answer is null, which means nothing is remembered rather than something
+     * being remembered against the wrong chat.
+     */
+    @Volatile
+    var conversation: () -> String? = { null }
 
     private val _pending = MutableStateFlow<PermissionRequest?>(null)
 
@@ -69,20 +98,21 @@ class PermissionDesk(context: Context) : AsksPermission {
 
     private var answer: CompletableDeferred<Decision>? = null
 
-    /** Tools you have said Always to. */
-    val granted: Set<String> get() = prefs.getStringSet(KEY, emptySet()).orEmpty()
-
     override suspend fun ask(call: PermissionRequest): Decision {
-        // Anything you have already blessed goes straight through — that is the
-        // entire point of Always, and asking again would teach you to stop
-        // reading the ones that matter.
-        if (call.toolName in granted) return Decision.ALWAYS
+        val chat = conversation()
+
+        // Anything this conversation has already blessed goes straight through —
+        // that is the entire point of Always, and asking again would teach you
+        // to stop reading the ones that matter.
+        if (chat != null && store?.isGranted(chat, call.toolName) == true) {
+            return Decision.ALWAYS
+        }
 
         val waiting = CompletableDeferred<Decision>()
         answer = waiting
         _pending.value = call
 
-        return try {
+        val decision = try {
             waiting.await()
         } finally {
             // Also on cancellation. Leaving a dead question on screen would give
@@ -90,24 +120,16 @@ class PermissionDesk(context: Context) : AsksPermission {
             _pending.value = null
             answer = null
         }
+
+        // Written after the answer, not inside the tap handler, because storing
+        // it is a suspending database write and a button press is not the place
+        // to start one that nothing waits for.
+        if (decision == Decision.ALWAYS && chat != null) store?.grant(chat, call.toolName)
+        return decision
     }
 
     /** Called by the screen when you tap. */
     fun answer(decision: Decision) {
-        val request = _pending.value ?: return
-        if (decision == Decision.ALWAYS) {
-            // A new set, not the same one mutated. SharedPreferences keeps the
-            // instance it was given, so editing it in place can write nothing
-            // at all — silently, which is this project's least favourite word.
-            prefs.edit().putStringSet(KEY, granted + request.toolName).apply()
-        }
         answer?.complete(decision)
-    }
-
-    /** Take back every Always. Shown in Settings. */
-    fun revokeAll() = prefs.edit().remove(KEY).apply()
-
-    private companion object {
-        const val KEY = "always"
     }
 }

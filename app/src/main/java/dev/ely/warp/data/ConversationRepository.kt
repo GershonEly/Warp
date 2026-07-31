@@ -21,12 +21,40 @@ import java.util.UUID
  * that tool calls happen to be stored as JSON, and the store should not know
  * that a message can be mid-stream.
  */
-class ConversationRepository(context: Context) : ChatEngine.ConversationStore {
+class ConversationRepository(context: Context) :
+    ChatEngine.ConversationStore, dev.ely.warp.tools.GrantStore {
 
     private val db = WarpDatabase.get(context)
     private val conversations = db.conversations()
     private val messages = db.messages()
     private val folders = db.folders()
+    private val grants = db.grants()
+
+    // ── standing tool permissions ─────────────────────────────────────────
+
+    /**
+     * Which tools this conversation trusts.
+     *
+     * Every one of these takes a conversation id and there is no overload that
+     * does not. A permission without a scope is the thing this replaced.
+     */
+    fun observeGrants(conversationId: String): Flow<Set<String>> =
+        grants.observe(conversationId).map { it.toSet() }
+
+    /** A one-off read, for anything that is not observing. */
+    suspend fun grantsFor(conversationId: String): List<String> =
+        grants.forConversation(conversationId)
+
+    override suspend fun isGranted(conversationId: String, toolName: String): Boolean =
+        grants.isGranted(conversationId, toolName) > 0
+
+    override suspend fun grant(conversationId: String, toolName: String) =
+        grants.grant(ToolGrantEntity(conversationId, toolName, System.currentTimeMillis()))
+
+    suspend fun revoke(conversationId: String, toolName: String) =
+        grants.revoke(conversationId, toolName)
+
+    suspend fun revokeAllGrants(conversationId: String) = grants.revokeAll(conversationId)
 
     // ── reading ──────────────────────────────────────────────────────────
 

@@ -323,10 +323,32 @@ object DebugServer {
                     .put("summary", request.summary)
             }
 
-            "POST /permission/revoke" -> {
-                val desk = DebugBridge.permission ?: return 503 to error("no permission desk")
-                desk.revokeAll()
-                200 to JSONObject().put("granted", JSONArray(desk.granted.toList()))
+            // Grants belong to a conversation now, so both of these take one.
+            // There is deliberately no "revoke everywhere" — a route that
+            // ignores the scope is the first step back to the global grant this
+            // replaced.
+            "GET /permission" -> runBlocking {
+                val desk = DebugBridge.permission ?: return@runBlocking 503 to error("no desk")
+                val id = query["id"] ?: DebugBridge.conversation?.invoke()
+                200 to JSONObject()
+                    .put("askingTool", desk.pending.value?.toolName ?: JSONObject.NULL)
+                    .put("askingAbout", desk.pending.value?.summary ?: JSONObject.NULL)
+                    .put("conversationId", id ?: JSONObject.NULL)
+                    .put(
+                        "granted",
+                        JSONArray(id?.let { store.grantsFor(it).sorted() } ?: emptyList<String>())
+                    )
+            }
+
+            "POST /permission/revoke" -> runBlocking {
+                val id = json.optString("id").takeIf { it.isNotBlank() }
+                    ?: DebugBridge.conversation?.invoke()
+                    ?: return@runBlocking 400 to error("no chat is open — pass an id")
+                val tool = json.optString("tool").takeIf { it.isNotBlank() }
+                if (tool != null) store.revoke(id, tool) else store.revokeAllGrants(id)
+                200 to JSONObject()
+                    .put("conversationId", id)
+                    .put("granted", JSONArray(store.grantsFor(id).sorted()))
             }
 
             "POST /tool" -> runBlocking {

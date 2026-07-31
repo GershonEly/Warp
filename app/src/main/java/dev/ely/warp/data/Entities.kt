@@ -58,6 +58,37 @@ data class ConversationEntity(
 )
 
 /**
+ * One standing permission, belonging to one conversation.
+ *
+ * Per conversation rather than per app, because that is the scope you meant. A
+ * global Always takes a decision made in a throwaway experiment and applies it
+ * to the work you care about, and nothing on screen would say it had.
+ *
+ * The foreign key **cascades**: a permission is part of a conversation, and a
+ * conversation that no longer exists must not still be granting anything. This
+ * is the one place cascading is right — the folder key deliberately does the
+ * opposite, because deleting a folder must not destroy the work inside it.
+ */
+@Entity(
+    tableName = "tool_grants",
+    primaryKeys = ["conversationId", "toolName"],
+    foreignKeys = [
+        ForeignKey(
+            entity = ConversationEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["conversationId"],
+            onDelete = ForeignKey.CASCADE,
+        )
+    ],
+    indices = [Index("conversationId")],
+)
+data class ToolGrantEntity(
+    val conversationId: String,
+    val toolName: String,
+    val grantedAt: Long,
+)
+
+/**
  * One message.
  *
  * Tool calls are stored as JSON rather than as their own table. They are only
