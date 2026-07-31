@@ -52,6 +52,7 @@ import dev.ely.warp.data.Appearance
 import dev.ely.warp.data.Identity
 import dev.ely.warp.debug.DebugBridge
 import dev.ely.warp.data.DrawerPrefs
+import dev.ely.warp.data.Rules
 import dev.ely.warp.tools.PermissionDesk
 import dev.ely.warp.tools.ToolRunner
 import dev.ely.warp.data.DrawerState
@@ -122,6 +123,7 @@ private fun WarpApp() {
     // has to outlive the card that asked it — a tool call must not be cancelled
     // by scrolling.
     val permission = remember { PermissionDesk(store = conversations) }
+    val rules = remember { Rules.get(context) }
     val toolRunner = remember { ToolRunner(context, permission) }
     val engine = remember {
         ChatEngine(
@@ -129,10 +131,18 @@ private fun WarpApp() {
             registry.selected,
             store = conversations,
             titler = titler,
+            // Composed every turn, so a rule added mid-conversation applies to
+            // the very next message rather than the next launch.
+            systemPrompt = {
+                listOfNotNull(ChatEngine.DEFAULT_SYSTEM_PROMPT, rules.asPrompt())
+                    .joinToString(separator = System.lineSeparator() + System.lineSeparator())
+            },
             // The engine still knows nothing about files — it is handed something
             // that can execute a call and hands back the outcome.
             tools = object : ChatEngine.ToolExecutor {
-                override val specs = dev.ely.warp.tools.ALL_TOOL_SPECS
+                override fun specs(readOnly: Boolean) =
+                    if (readOnly) dev.ely.warp.tools.READ_TOOL_SPECS
+                    else dev.ely.warp.tools.ALL_TOOL_SPECS
                 override suspend fun execute(
                     call: dev.ely.warp.ai.ToolCall,
                     report: suspend (dev.ely.warp.ai.ToolCall) -> Unit,
@@ -219,6 +229,12 @@ private fun WarpApp() {
             }
             known
         }
+        // The same function the send button calls, so a test cannot pass
+        // against a code path the app does not use.
+        DebugBridge.command = { text ->
+            dev.ely.warp.ui.runComposed(text, engine, rules, onShowRules = {})
+                ?: "sent"
+        }
         DebugBridge.permission = permission
         DebugBridge.conversation = { engine.conversationId.value }
         DebugBridge.setting = { name, value ->
@@ -244,6 +260,7 @@ private fun WarpApp() {
             DebugBridge.open = null
             DebugBridge.setting = null
             DebugBridge.permission = null
+            DebugBridge.command = null
             DebugBridge.conversation = null
         }
     }

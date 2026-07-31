@@ -35,6 +35,9 @@ def check(name, ok, detail=""):
 # on it for ever. Clear it before anything else, or every later check inherits
 # the last run's mess.
 call("POST", "/permission", {"decision": "DENY"})
+# Rules are global and outlive a run. A rule left behind changes what the mock
+# replies with, and unrelated sections start failing for a reason nothing names.
+call("POST", "/chat/command", {"text": "/rules clear"})
 
 print("\n1. THE SURFACE ITSELF")
 req = urllib.request.Request(BASE + "/state")
@@ -267,7 +270,60 @@ s, r = call("POST", "/tool", {"name": "write_file", "args": {
 check("a write outside the project is refused", "outside" in (r.get("failed") or ""))
 
 
-print("\n9. SETTINGS ROUND-TRIP")
+print("\n9. COMMANDS")
+# /chat/command runs the same function the send button runs. A second code path
+# for testing would eventually disagree with the one people actually use.
+
+
+def command(text):
+    return call("POST", "/chat/command", {"text": text})[1].get("note")
+
+
+command("/rules clear")
+check("a rule is added, and says which number it got",
+      command("/rules add never touch the manifest") == "Rule 1 added.")
+check("the same rule twice is refused, not silently dropped",
+      "already there" in (command("/rules add never touch the manifest") or ""))
+command("/rules add always run the tests")
+check("both are stored", call("GET", "/rules")[1]["rules"] ==
+      ["never touch the manifest", "always run the tests"])
+
+# The rule has to reach the model. A rule that is stored and never sent is the
+# first failure §5d names, and it looks exactly like one that works.
+call("POST", "/chat/new")
+command("what were you told")
+time.sleep(6)
+cid = call("GET", "/state")[1]["conversationId"]
+reply = call("GET", "/messages?id=" + cid)[1]["messages"][-1]["text"]
+check("the rules reach the model", "never touch the manifest" in reply,
+      repr(reply[:70]))
+
+call("POST", "/chat/new")
+command("/plan build me a todo app")
+time.sleep(6)
+msgs = call("GET", "/messages?id=" + call("GET", "/state")[1]["conversationId"])[1]["messages"]
+check("what you typed is what the transcript shows",
+      msgs[0]["text"] == "/plan build me a todo app")
+check("/plan reaches the model as a plan turn",
+      "Planning only" in msgs[-1]["text"], repr(msgs[-1]["text"][:60]))
+# The load-bearing one. Telling a model not to write is a request; not giving it
+# a write tool is a boundary.
+check("and the writing tools are not offered at all",
+      "write_file" not in msgs[-1]["text"] and "read_file" in msgs[-1]["text"],
+      repr(msgs[-1]["text"][-70:]))
+
+check("a slash inside a sentence is not a command",
+      command("what does src/main mean") == "sent")
+check("an unbuilt command says so rather than doing nothing",
+      command("/goal ship it") == "/goal is not built yet.")
+check("removing by number reports what went",
+      command("/rules remove 1") == "Removed: never touch the manifest")
+check("and the list really shrank",
+      call("GET", "/rules")[1]["rules"] == ["always run the tests"])
+command("/rules clear")
+
+
+print("\n10. SETTINGS ROUND-TRIP")
 s, r = call("POST", "/settings", {"name": "ambient", "value": "false"})
 check("turning the atmosphere off reads back as off", r.get("value") == "false")
 s, r = call("POST", "/settings", {"name": "ambient", "value": "true"})
@@ -277,7 +333,7 @@ s, r = call("POST", "/settings", {"name": "nonsense", "value": "x"})
 check("an unknown setting is refused rather than silently ignored", s == 400)
 
 
-print("\n9. NAVIGATION")
+print("\n11. NAVIGATION")
 for dest in ("SETTINGS", "BUILD", "CHAT"):
     call("POST", "/nav", {"to": dest})
     s, st = call("GET", "/state")

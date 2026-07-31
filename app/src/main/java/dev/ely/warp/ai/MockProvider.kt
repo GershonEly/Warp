@@ -87,6 +87,36 @@ class MockProvider(
             return@flow
         }
 
+        // Answers from what it was actually given, not from the prompt text.
+        // It is the only way to prove /plan reached the provider at all — and
+        // it names the tools it can see, which is how "the write tools were
+        // taken away" becomes something a test can read rather than believe.
+        if (request.systemPrompt?.contains("PLAN only") == true) {
+            emitWords("Planning only. I have not been given anything that writes.")
+            emit(AiEvent.TextDelta(
+                BREAK + "Tools I can use: " + request.tools.joinToString(", ") { it.name }
+            ))
+            emit(AiEvent.Completed())
+            return@flow
+        }
+
+        // Same idea for rules, but **only when asked** — a deliberate probe, like
+        // "pretend bad key" above.
+        //
+        // It used to fire whenever any rule existed, which quietly replaced every
+        // other scripted answer: the moment a rule was added, the tool scripts
+        // stopped running and seventeen unrelated checks failed. A mock that
+        // changes behaviour as a side effect of unrelated state is a mock that
+        // tests the wrong thing.
+        if ("what were you told" in prompt.lowercase()) {
+            RULE_MARK.find(request.systemPrompt.orEmpty())?.let {
+                emitWords("I have been told:")
+                emit(AiEvent.TextDelta(BREAK + it.value))
+                emit(AiEvent.Completed())
+                return@flow
+            }
+        }
+
         val script = scriptFor(prompt)
 
         for ((index, segment) in script.segments.withIndex()) {
@@ -350,6 +380,12 @@ class MockProvider(
                 println("Tapped ${'$'}count times")
             }
         """.trimIndent()
+
+        /** Whatever the rules block turned into, so a test can read it back. */
+        val RULE_MARK = Regex("""\d+\. .+""")
+
+        /** A blank line, written once rather than escaped at each use. */
+        val BREAK = System.lineSeparator() + System.lineSeparator()
 
         const val FALLBACK =
             "I'm the mock AI, so my answers are scripted rather than thought " +

@@ -351,6 +351,21 @@ object DebugServer {
                     .put("granted", JSONArray(store.grantsFor(id).sorted()))
             }
 
+            // Types into the composer and presses send, command or not.
+            "POST /chat/command" -> {
+                val text = json.optString("text").takeIf { it.isNotBlank() }
+                    ?: return 400 to error("expected a text field")
+                val run = DebugBridge.command ?: return 503 to error("no chat on screen")
+                200 to JSONObject().put("note", run(text))
+            }
+
+            "GET /rules" -> {
+                val rules = dev.ely.warp.data.Rules.get(context).rules.value
+                200 to JSONObject()
+                    .put("rules", JSONArray(rules))
+                    .put("prompt", dev.ely.warp.data.Rules.get(context).asPrompt() ?: JSONObject.NULL)
+            }
+
             "POST /tool" -> runBlocking {
                 val name = json.optString("name")
                 val tool = dev.ely.warp.tools.ALL_TOOLS[name]

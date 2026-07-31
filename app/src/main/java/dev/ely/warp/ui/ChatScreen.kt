@@ -122,6 +122,10 @@ import dev.ely.warp.data.Identity
 import dev.ely.warp.ai.Effort
 import dev.ely.warp.ai.AiError
 import dev.ely.warp.ai.ChatEngine
+import dev.ely.warp.ai.SlashCommand
+import dev.ely.warp.ai.matchingCommands
+import dev.ely.warp.ai.parseSlashCommand
+import dev.ely.warp.data.Rules
 import dev.ely.warp.tools.PermissionRequest
 import dev.ely.warp.tools.PermissionDesk
 import dev.ely.warp.tools.Decision
@@ -232,6 +236,11 @@ fun ChatScreen(
 ) {
     val messages by engine.messages.collectAsState()
     val busy by engine.busy.collectAsState()
+    val rules = LocalContext.current.let { remember(it) { Rules.get(it) } }
+    var showRules by remember { mutableStateOf(false) }
+
+    /** A one-line answer to a command, shown until the next thing you type. */
+    var ruleFeedback by remember { mutableStateOf<String?>(null) }
     val asking by (permission?.pending ?: remember { MutableStateFlow(null) }).collectAsState()
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -326,7 +335,10 @@ fun ChatScreen(
 
             Composer(
                 value = input,
-                onValueChange = { input = it },
+                onValueChange = {
+                    input = it
+                    if (ruleFeedback != null) ruleFeedback = null
+                },
                 busy = busy,
                 modelLabel = modelLabel,
                 onPickModel = onPickModel,
@@ -335,13 +347,66 @@ fun ChatScreen(
                     // never for navigation — a phone that buzzes at everything
                     // stops meaning anything.
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    engine.send(input)
+                    val sent = input
                     input = ""
+                    ruleFeedback = runComposed(sent, engine, rules) { showRules = true }
                 },
                 onStop = { engine.stop() },
                 voice = voice,
+                note = ruleFeedback,
+                onNoteShown = { ruleFeedback = null },
+                matches = matchingCommands(input),
+                // A trailing space, so the argument is typed rather than
+                // rubbing up against the command name.
+                onPickCommand = { input = it.typed + " " },
             )
+
+            if (showRules) {
+                RulesSheet(rules = rules, onDismiss = { showRules = false })
+            }
         }
+    }
+}
+
+/**
+ * What pressing send does, command or not.
+ *
+ * Pulled out of the button so the debug surface can press exactly the same
+ * thing. Two copies — one for the screen, one for a test — would eventually
+ * disagree, and the one under test would be the one nobody uses.
+ *
+ * @return a line to show, or null when the message simply went to the model.
+ */
+internal fun runComposed(
+    sent: String,
+    engine: ChatEngine,
+    rules: Rules,
+    onShowRules: () -> Unit,
+): String? {
+    val parsed = parseSlashCommand(sent) ?: run {
+        engine.send(sent)
+        return null
+    }
+
+    return when (parsed.command.name) {
+        // Sent as an ordinary message with the mode set, so the transcript shows
+        // what you actually typed. Hiding the command would leave a plan-only
+        // reply with nothing on screen explaining why it planned.
+        "plan" -> {
+            engine.send(sent, ChatEngine.Mode.PLAN)
+            null
+        }
+
+        "rules" -> if (parsed.argument.isBlank()) {
+            onShowRules()
+            "Showing your rules."
+        } else {
+            applyRuleCommand(rules, parsed.argument)
+        }
+
+        // In the menu, greyed out, and refused here as well. A command that
+        // silently did nothing would be worse than one that says so.
+        else -> "${parsed.command.typed} is not built yet."
     }
 }
 
@@ -1008,6 +1073,12 @@ private fun Composer(
     onSend: () -> Unit,
     onStop: () -> Unit,
     voice: VoiceInput?,
+    /** A short answer to a command, shown above the field and then gone. */
+    note: String? = null,
+    onNoteShown: () -> Unit = {},
+    /** Commands matching what is typed, or null when this is not a command. */
+    matches: List<SlashCommand>? = null,
+    onPickCommand: (SlashCommand) -> Unit = {},
 ) {
     var focused by remember { mutableStateOf(false) }
 
@@ -1099,6 +1170,35 @@ private fun Composer(
     )
 
     Column {
+        // The command menu, and the answer to the last command, both above the
+        // card. They belong to what is being typed, so they grow out of the
+        // composer rather than covering the conversation.
+        matches?.let {
+            CommandMenu(
+                matches = it,
+                onPick = onPickCommand,
+                modifier = Modifier.padding(
+                    horizontal = WarpSpace.medium,
+                    vertical = WarpSpace.small,
+                ),
+            )
+        }
+
+        note?.let { line ->
+            // Cleared when the field next changes rather than on a timer. A
+            // message about what just happened should not vanish while you are
+            // still reading it.
+            Text(
+                line,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(
+                    horizontal = WarpSpace.medium + WarpSpace.small,
+                    vertical = WarpSpace.small,
+                ),
+            )
+        }
+
         // Above the card, and only while recording. Delayed rather than instant:
         // help for someone who paused, not clutter for someone who did not.
         AnimatedVisibility(

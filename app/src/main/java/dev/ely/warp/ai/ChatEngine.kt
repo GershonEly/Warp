@@ -22,7 +22,15 @@ import java.util.UUID
 class ChatEngine(
     private val scope: CoroutineScope,
     @Volatile var provider: AiProvider,
-    private val systemPrompt: String? = DEFAULT_SYSTEM_PROMPT,
+    /**
+     * What to tell the model about itself, asked freshly every turn.
+     *
+     * A supplier rather than a string, because the rules in §5b Layer 0 are
+     * always in context and can change between turns. A prompt captured once
+     * would carry the rules as they were when the app started, which is exactly
+     * how "it forgot my rule" happens.
+     */
+    private val systemPrompt: () -> String? = { DEFAULT_SYSTEM_PROMPT },
     /** Where messages are kept. Null keeps the engine purely in memory. */
     private val store: ConversationStore? = null,
     /** Who gives a conversation its name. Null leaves them unnamed. */
@@ -83,10 +91,22 @@ class ChatEngine(
     @Volatile
     var effort: Effort = Effort.LOW
 
+    /**
+     * How this turn is allowed to behave.
+     *
+     * A property of the turn rather than of the engine, so it cannot leak into
+     * the next message. `/plan` means *this* one plans; the one after it is a
+     * normal turn again unless you say otherwise.
+     */
+    enum class Mode { NORMAL, PLAN }
+
+    private var mode = Mode.NORMAL
+
     /** Send a user message and stream the reply. */
-    fun send(text: String) {
+    fun send(text: String, mode: Mode = Mode.NORMAL) {
         val trimmed = text.trim()
         if (trimmed.isEmpty() || _busy.value) return
+        this.mode = mode
 
         val userMessage = ChatMessage(
             id = UUID.randomUUID().toString(),
@@ -208,12 +228,21 @@ class ChatEngine(
             // The placeholder reply is excluded: sending an empty assistant
             // turn back to a provider is meaningless and some reject it.
             messages = _messages.value.filter { it.id != replyId },
-            systemPrompt = systemPrompt,
+            systemPrompt = listOfNotNull(
+                systemPrompt(),
+                PLAN_DIRECTIVE.trim().takeIf { mode == Mode.PLAN },
+            ).joinToString(separator = System.lineSeparator() + System.lineSeparator())
+                .ifBlank { null },
             effort = effort,
             // Offered every turn. A model that is not told a tool exists will
             // describe reading the file instead of reading it, and be perfectly
             // convincing about it.
-            tools = tools?.specs.orEmpty(),
+            //
+            // In PLAN the writing tools are **not offered at all**. Telling a
+            // model not to write and then handing it a write tool is a request;
+            // taking the tool away is a boundary. A model asked to focus on
+            // planning will still helpfully write the file.
+            tools = tools?.specs(readOnly = mode == Mode.PLAN).orEmpty(),
         )
 
         provider.stream(request).collect { event ->
@@ -403,8 +432,14 @@ class ChatEngine(
      * chat still works with tools absent, which is what it did until today.
      */
     interface ToolExecutor {
-        /** What to offer the model. Empty means it is told about nothing. */
-        val specs: List<ToolSpec>
+        /**
+         * What to offer the model. Empty means it is told about nothing.
+         *
+         * @param readOnly leave out anything that can change something. The
+         *   engine does not know which those are and should not; it knows only
+         *   that this turn is not allowed to act.
+         */
+        fun specs(readOnly: Boolean): List<ToolSpec>
 
         /**
          * Do it, and return the call with its outcome filled in.

@@ -345,6 +345,12 @@ val READ_TOOLS: Map<String, Tool> =
 val ALL_TOOLS: Map<String, Tool> =
     (READ_TOOLS.values + listOf(WriteFile, EditFile)).associateBy { it.name }
 
+/** Just the reading tools, for a turn that is not allowed to act. */
+val READ_TOOL_SPECS: List<dev.ely.warp.ai.ToolSpec> =
+    READ_TOOLS.values.map {
+        dev.ely.warp.ai.ToolSpec(it.name, it.description, it.schemaJson)
+    }
+
 /** The same tools, in the shape a provider hands to a model. */
 val ALL_TOOL_SPECS: List<dev.ely.warp.ai.ToolSpec> =
     ALL_TOOLS.values.map {

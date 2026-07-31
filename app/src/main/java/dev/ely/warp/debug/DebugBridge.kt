@@ -53,6 +53,17 @@ object DebugBridge {
     @Volatile
     var permission: dev.ely.warp.tools.PermissionDesk? = null
 
+    /**
+     * Send exactly what the composer would send, slash command and all.
+     *
+     * Separate from [send] on purpose: [send] is "say this to the model", and a
+     * command is not that — it can open a sheet or change a list and never reach
+     * a model at all. One entry point for both would make a test that passes for
+     * a command that quietly did nothing.
+     */
+    @Volatile
+    var command: ((String) -> String)? = null
+
     /** Which conversation is open, so a permission route can default to it. */
     @Volatile
     var conversation: (() -> String?)? = null
