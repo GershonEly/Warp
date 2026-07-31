@@ -9,7 +9,13 @@ import sys
 import time
 import urllib.request
 
-BASE = "http://localhost:8099"
+# 127.0.0.1, never "localhost".
+#
+# On Windows "localhost" resolves to ::1 first, and `adb forward` binds IPv4
+# only — so every request waited about two seconds for the IPv6 attempt to fail
+# before falling back. 2076 ms against 13 ms, on a route that returns {"ok":true}.
+# It made the whole suite four minutes long and looked like a slow app.
+BASE = "http://127.0.0.1:8099"
 KEY = "test123"
 passed, failed = [], []
 
@@ -26,14 +32,30 @@ def call(method, path, body=None):
         return e.code, json.loads(e.read().decode())
 
 
+def settle(limit=25.0):
+    """Wait until the turn is actually over, rather than guessing at it.
+
+    Fixed sleeps were both slow and wrong: too long for the mock on a good run,
+    too short whenever anything was slower than expected, and silent either way.
+    A pending permission prompt counts as settled — the turn stays busy on
+    purpose while it waits for a person.
+    """
+    deadline = time.time() + limit
+    while time.time() < deadline:
+        s, st = call("GET", "/state")
+        if s == 200 and (st.get("busy") is False or st.get("askingTool")):
+            # One short beat so the last write lands before anything reads it.
+            time.sleep(0.25)
+            return True
+        time.sleep(0.15)
+    return False
+
+
 def check(name, ok, detail=""):
     (passed if ok else failed).append(name)
     print(f"  {'PASS' if ok else 'FAIL'}  {name}{'  — ' + detail if detail else ''}")
 
 
-# A run that was interrupted can leave a question on screen and a turn waiting
-# on it for ever. Clear it before anything else, or every later check inherits
-# the last run's mess.
 # Wait for the screen to register itself before doing anything.
 #
 # The server answers as soon as the process is up, but the chat bridge is set
@@ -49,6 +71,8 @@ else:
     print("  the app never became ready")
     sys.exit(1)
 
+# An interrupted run can leave a question on screen and a turn waiting on it for
+# ever. Clear it before anything else, or every later check inherits the mess.
 call("POST", "/permission", {"decision": "DENY"})
 # Rules are global and outlive a run. A rule left behind changes what the mock
 # replies with, and unrelated sections start failing for a reason nothing names.
@@ -78,7 +102,7 @@ check("a new chat has no conversation yet", st["conversationId"] is None,
 
 s, sent = call("POST", "/chat/send", {"text": "end to end check please"})
 check("sending returns the stored message id", s == 200 and "messageId" in sent)
-time.sleep(6)
+settle()
 
 s, st = call("GET", "/state")
 cid = st["conversationId"]
@@ -149,7 +173,7 @@ print("\n7. TOOLS REALLY RUN")
 # request. Every earlier version of the tool cards passed by looking right.
 call("POST", "/chat/new")
 call("POST", "/chat/send", {"text": "look at the project files"})
-time.sleep(10)
+settle()
 s, st = call("GET", "/state")
 s, m = call("GET", "/messages?id=" + st["conversationId"])
 msgs = m["messages"]
@@ -201,7 +225,7 @@ on_device("rm", "-f", "files/project/src/Counter.kt")
 
 call("POST", "/chat/new")
 call("POST", "/chat/send", {"text": "create a new file for me"})
-time.sleep(6)
+settle()
 s, st = call("GET", "/state")
 check("a write stops and asks", st.get("askingTool") == "write_file",
       f"asking={st.get('askingTool')}")
@@ -219,9 +243,9 @@ check("and the card says so",
 
 call("POST", "/chat/new")
 call("POST", "/chat/send", {"text": "create a new file for me"})
-time.sleep(6)
+settle()
 call("POST", "/permission", {"decision": "ONCE"})
-time.sleep(4)
+settle()
 check("Allow writes the file for real",
       "Counter.kt" in on_device("ls", "files/project/src"))
 check("the file holds what was asked for",
@@ -234,7 +258,7 @@ check("Allow once grants nothing standing",
 
 call("POST", "/chat/new")
 call("POST", "/chat/send", {"text": "create a new file for me"})
-time.sleep(6)
+settle()
 call("POST", "/permission", {"decision": "ALWAYS"})
 time.sleep(3)
 trusting = call("GET", "/state")[1]["conversationId"]
@@ -243,7 +267,7 @@ check("Always is remembered",
 
 # Same chat: it must not ask again.
 call("POST", "/chat/send", {"text": "create a new file for me"})
-time.sleep(7)
+settle()
 st = call("GET", "/state")[1]
 check("the same chat is not asked again",
       st.get("askingTool") is None and st["busy"] is False)
@@ -254,7 +278,7 @@ check("and the write still happened",
 # a decision made in one piece of work must not silently apply to another.
 call("POST", "/chat/new")
 call("POST", "/chat/send", {"text": "create a new file for me"})
-time.sleep(6)
+settle()
 st = call("GET", "/state")[1]
 check("a DIFFERENT chat still asks", st.get("askingTool") == "write_file",
       f"asking={st.get('askingTool')}")
@@ -307,7 +331,7 @@ check("both are stored", call("GET", "/rules")[1]["rules"] ==
 # first failure §5d names, and it looks exactly like one that works.
 call("POST", "/chat/new")
 command("what were you told")
-time.sleep(6)
+settle()
 cid = call("GET", "/state")[1]["conversationId"]
 reply = call("GET", "/messages?id=" + cid)[1]["messages"][-1]["text"]
 check("the rules reach the model", "never touch the manifest" in reply,
@@ -315,7 +339,7 @@ check("the rules reach the model", "never touch the manifest" in reply,
 
 call("POST", "/chat/new")
 command("/plan build me a todo app")
-time.sleep(6)
+settle()
 msgs = call("GET", "/messages?id=" + call("GET", "/state")[1]["conversationId"])[1]["messages"]
 check("what you typed is what the transcript shows",
       msgs[0]["text"] == "/plan build me a todo app")
