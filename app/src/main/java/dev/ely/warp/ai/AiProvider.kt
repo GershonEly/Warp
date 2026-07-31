@@ -195,7 +195,24 @@ data class ToolCall(
      */
     val body: String? = null,
 ) {
-    enum class Status { PENDING, RUNNING, DONE, FAILED, DENIED }
+    enum class Status {
+        PENDING,
+
+        /**
+         * Waiting for a person to say yes.
+         *
+         * Its own state rather than RUNNING, because those need opposite things
+         * from you: one is a spinner you ignore, the other is a question that
+         * stops until you answer it. Showing "running" while nothing runs is
+         * the same class of lie as the card that showed a call nobody made.
+         */
+        ASKING,
+
+        RUNNING,
+        DONE,
+        FAILED,
+        DENIED,
+    }
 }
 
 // ── what comes out ───────────────────────────────────────────────────────

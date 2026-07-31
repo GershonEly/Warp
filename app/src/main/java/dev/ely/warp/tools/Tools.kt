@@ -195,6 +195,115 @@ object Grep : Tool {
     }
 }
 
+// ── changing things ──────────────────────────────────────────────────────
+
+object WriteFile : Tool {
+    override val name = "write_file"
+    override val risk = Risk.WRITES
+    override val description =
+        "Create a file inside the project, or replace one completely. " +
+            "Prefer edit_file when only part of a file changes."
+    override val schemaJson = """
+        {"type":"object","properties":{
+          "path":{"type":"string","description":"Path relative to the project root."},
+          "content":{"type":"string","description":"The whole file."}},
+         "required":["path","content"]}
+    """.trimIndent()
+
+    // Says whether it is new, and how big. "src/Main.kt" alone does not tell
+    // you whether you are about to lose four hundred lines of work.
+    override fun describe(args: JSONObject): String {
+        val path = args.optString("path")
+        val size = args.optString("content").length
+        return "$path · $size chars"
+    }
+
+    override suspend fun run(project: File, args: JSONObject): ToolResult {
+        val path = args.optString("path").ifBlank { return ToolResult.Failed("no path given") }
+        val file = resolve(project, path) ?: return ToolResult.Failed("outside the project")
+        if (file.isDirectory) return ToolResult.Failed("that is a folder")
+
+        val content = args.optString("content")
+        val existed = file.isFile
+        val before = if (existed) file.length() else 0L
+
+        file.parentFile?.mkdirs()
+        runCatching { file.writeText(content) }
+            .getOrElse { return ToolResult.Failed(it.message ?: "could not write") }
+
+        // Reads the file back rather than reporting what it meant to write. A
+        // write that half-succeeds is exactly the case worth catching, and the
+        // length it *intended* would report success either way.
+        val written = runCatching { file.readText() }.getOrNull()
+            ?: return ToolResult.Failed("wrote, but could not read it back")
+        if (written != content) {
+            return ToolResult.Failed("wrote ${written.length} chars, expected ${content.length}")
+        }
+
+        val lines = content.count { it == '\n' } + 1
+        val what = if (existed) "replaced ($before → ${file.length()} bytes)" else "created"
+        return ToolResult.Ok("$what · $lines lines", content)
+    }
+}
+
+object EditFile : Tool {
+    override val name = "edit_file"
+    override val risk = Risk.WRITES
+    override val description =
+        "Replace an exact piece of text in a file. The old text must appear " +
+            "exactly once, so include enough context to make it unique."
+    override val schemaJson = """
+        {"type":"object","properties":{
+          "path":{"type":"string","description":"Path relative to the project root."},
+          "old":{"type":"string","description":"Exact text to replace. Must be unique in the file."},
+          "new":{"type":"string","description":"What to put there instead."}},
+         "required":["path","old","new"]}
+    """.trimIndent()
+
+    override fun describe(args: JSONObject): String {
+        val old = args.optString("old").lines().firstOrNull().orEmpty().trim()
+        return "${args.optString("path")} · ${old.take(48)}"
+    }
+
+    override suspend fun run(project: File, args: JSONObject): ToolResult {
+        val path = args.optString("path").ifBlank { return ToolResult.Failed("no path given") }
+        val file = resolve(project, path) ?: return ToolResult.Failed("outside the project")
+        if (!file.isFile) return ToolResult.Failed("no such file")
+
+        val old = args.optString("old")
+        if (old.isEmpty()) return ToolResult.Failed("no text to replace — use write_file to create")
+        val new = args.optString("new")
+
+        val text = runCatching { file.readText() }
+            .getOrElse { return ToolResult.Failed(it.message ?: "could not read") }
+
+        // Refuses rather than guessing. Replacing the first of several matches
+        // silently edits the wrong line and hands back a success, and a wrong
+        // edit reported as done is far worse than an edit that did not happen.
+        val hits = text.split(old).size - 1
+        when (hits) {
+            0 -> return ToolResult.Failed("that text is not in the file")
+            1 -> Unit
+            else -> return ToolResult.Failed("that text appears $hits times — add more context")
+        }
+
+        runCatching { file.writeText(text.replace(old, new)) }
+            .getOrElse { return ToolResult.Failed(it.message ?: "could not write") }
+
+        val removed = old.count { it == '\n' } + 1
+        val added = new.count { it == '\n' } + 1
+        return ToolResult.Ok(
+            "-$removed +$added lines",
+            // A diff rather than the whole file. It is what you look at before
+            // saying yes, and what the model needs to see it landed.
+            buildString {
+                old.lines().forEach { appendLine("- $it") }
+                new.lines().forEach { appendLine("+ $it") }
+            }.trimEnd(),
+        )
+    }
+}
+
 // A shell glob, as a regex.
 //
 // A double star crosses directories and a single one does not, which is the
@@ -228,12 +337,16 @@ internal fun globToRegex(glob: String): Regex {
 /** Enough to be useful, few enough to fit in a context window. */
 private const val LIMIT = 200
 
-/** Every tool the model can be offered, by name. */
+/** The tools that only look. Kept named because "never asks" is a promise. */
 val READ_TOOLS: Map<String, Tool> =
     listOf(ReadFile, ListDir, Glob, Grep).associateBy { it.name }
 
+/** Everything the model can be offered, by name. */
+val ALL_TOOLS: Map<String, Tool> =
+    (READ_TOOLS.values + listOf(WriteFile, EditFile)).associateBy { it.name }
+
 /** The same tools, in the shape a provider hands to a model. */
-val READ_TOOL_SPECS: List<dev.ely.warp.ai.ToolSpec> =
-    READ_TOOLS.values.map {
+val ALL_TOOL_SPECS: List<dev.ely.warp.ai.ToolSpec> =
+    ALL_TOOLS.values.map {
         dev.ely.warp.ai.ToolSpec(it.name, it.description, it.schemaJson)
     }

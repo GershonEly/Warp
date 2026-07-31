@@ -31,6 +31,11 @@ def check(name, ok, detail=""):
     print(f"  {'PASS' if ok else 'FAIL'}  {name}{'  — ' + detail if detail else ''}")
 
 
+# A run that was interrupted can leave a question on screen and a turn waiting
+# on it for ever. Clear it before anything else, or every later check inherits
+# the last run's mess.
+call("POST", "/permission", {"decision": "DENY"})
+
 print("\n1. THE SURFACE ITSELF")
 req = urllib.request.Request(BASE + "/state")
 try:
@@ -53,9 +58,9 @@ s, st = call("GET", "/state")
 check("a new chat has no conversation yet", st["conversationId"] is None,
       "created by the first message, not by the button")
 
-s, sent = call("POST", "/chat/send", {"text": "end to end weather app"})
+s, sent = call("POST", "/chat/send", {"text": "end to end check please"})
 check("sending returns the stored message id", s == 200 and "messageId" in sent)
-time.sleep(4)
+time.sleep(6)
 
 s, st = call("GET", "/state")
 cid = st["conversationId"]
@@ -68,7 +73,7 @@ print("\n3. WHAT WAS STORED IS WHAT WAS SENT")
 s, msgs = call("GET", f"/messages?id={cid}")
 texts = [(m["role"], m["text"]) for m in msgs["messages"]]
 check("the user message is stored verbatim",
-      any(r == "USER" and t == "end to end weather app" for r, t in texts))
+      any(r == "USER" and t == "end to end check please" for r, t in texts))
 check("the assistant reply is stored",
       any(r == "ASSISTANT" and t for r, t in texts))
 check("the question is stored before the answer",
@@ -154,7 +159,97 @@ check("a path outside the project is refused",
       "outside" in json.dumps(out), json.dumps(out)[:90])
 
 
-print("\n8. SETTINGS ROUND-TRIP")
+print("\n8. NOTHING IS WRITTEN WITHOUT YOU")
+# The one path in Warp that can destroy work. Every check here reads the disk
+# through run-as, not the card — a card saying DENIED while the file changed is
+# precisely the failure worth catching.
+import subprocess
+ADB = r"C:\Users\ely\Android\Sdk\platform-tools\adb.exe"
+
+
+def on_device(*args):
+    return subprocess.run([ADB, "shell", "run-as", "dev.ely.warp"] + list(args),
+                          capture_output=True, text=True).stdout.strip()
+
+
+def tool_cards():
+    cid = call("GET", "/state")[1]["conversationId"]
+    return [c for msg in call("GET", "/messages?id=" + cid)[1]["messages"]
+            for c in msg.get("toolCalls", [])]
+
+
+call("POST", "/permission/revoke")
+on_device("rm", "-f", "files/project/src/Counter.kt")
+
+call("POST", "/chat/new")
+call("POST", "/chat/send", {"text": "create a new file for me"})
+time.sleep(6)
+s, st = call("GET", "/state")
+check("a write stops and asks", st.get("askingTool") == "write_file",
+      f"asking={st.get('askingTool')}")
+check("it names the file, not the tool", "Counter.kt" in (st.get("askingAbout") or ""),
+      f"{st.get('askingAbout')!r}")
+check("the turn is still open while it waits", st["busy"] is True)
+
+call("POST", "/permission", {"decision": "DENY"})
+time.sleep(3)
+check("no really means no — nothing on disk",
+      "Counter.kt" not in on_device("ls", "files/project/src"),
+      on_device("ls", "files/project/src").replace("\n", " "))
+check("and the card says so",
+      any(c["status"] == "DENIED" for c in tool_cards()))
+
+call("POST", "/chat/new")
+call("POST", "/chat/send", {"text": "create a new file for me"})
+time.sleep(6)
+call("POST", "/permission", {"decision": "ONCE"})
+time.sleep(4)
+check("Allow writes the file for real",
+      "Counter.kt" in on_device("ls", "files/project/src"))
+check("the file holds what was asked for",
+      "fun main()" in on_device("cat", "files/project/src/Counter.kt"))
+check("the card reports what happened, not 'ok'",
+      any("created" in (c["result"] or "") for c in tool_cards()),
+      f"{[c['result'] for c in tool_cards()]}")
+check("Allow once grants nothing standing",
+      call("GET", "/state")[1].get("alwaysAllowed") == "")
+
+call("POST", "/chat/new")
+call("POST", "/chat/send", {"text": "create a new file for me"})
+time.sleep(6)
+call("POST", "/permission", {"decision": "ALWAYS"})
+time.sleep(3)
+check("Always is remembered",
+      call("GET", "/state")[1].get("alwaysAllowed") == "write_file")
+
+call("POST", "/chat/new")
+call("POST", "/chat/send", {"text": "create a new file for me"})
+time.sleep(7)
+st = call("GET", "/state")[1]
+check("and then it does not ask again",
+      st.get("askingTool") is None and st["busy"] is False)
+check("the write still happened",
+      any(c["status"] == "DONE" for c in tool_cards()))
+
+s, r = call("POST", "/permission/revoke")
+check("revoke takes Always back", r.get("granted") == [])
+
+s, r = call("POST", "/tool", {"name": "edit_file", "args": {
+    "path": "src/Counter.kt", "old": "var count = 0", "new": "var count = 100"}})
+check("edit_file replaces a unique piece of text", "+ var count = 100" in json.dumps(r),
+      json.dumps(r)[:70])
+
+s, r = call("POST", "/tool", {"name": "edit_file", "args": {
+    "path": "src/Counter.kt", "old": "count", "new": "tally"}})
+check("an ambiguous edit is refused rather than guessed",
+      "appears" in (r.get("failed") or ""), json.dumps(r)[:70])
+
+s, r = call("POST", "/tool", {"name": "write_file", "args": {
+    "path": "../escaped.txt", "content": "no"}})
+check("a write outside the project is refused", "outside" in (r.get("failed") or ""))
+
+
+print("\n9. SETTINGS ROUND-TRIP")
 s, r = call("POST", "/settings", {"name": "ambient", "value": "false"})
 check("turning the atmosphere off reads back as off", r.get("value") == "false")
 s, r = call("POST", "/settings", {"name": "ambient", "value": "true"})

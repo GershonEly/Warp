@@ -3,6 +3,7 @@ package dev.ely.warp.ai
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import org.json.JSONObject
 import java.util.UUID
 import kotlin.random.Random
 
@@ -288,16 +289,25 @@ class MockProvider(
                     )
                 )
 
-            // No fake write_file here any more.
+            // Asks for a real write, and really has to ask you first.
             //
-            // It used to call one and report "wrote 34 lines" while no file was
-            // ever touched. Now that tool calls really execute, that card gets
-            // refused by the runner — correctly, because no write tool exists —
-            // and a scripted success would have papered straight over it. A mock
-            // that can make a missing tool look like a working one is worse than
-            // no mock, so this branch says what is true instead.
+            // This branch used to report "wrote 34 lines" while no file was
+            // touched. It carries no result now — it cannot — so what the card
+            // says is whatever actually happened on disk, including you saying
+            // no to it.
             "app" in p || "create" in p || "make" in p || "write" in p ->
-                Script(listOf(Segment.Text(CREATE_ANSWER)))
+                Script(
+                    listOf(
+                        Segment.Text(CREATE_INTRO),
+                        Segment.Tool(
+                            name = "write_file",
+                            argumentsJson = JSONObject()
+                                .put("path", "src/Counter.kt")
+                                .put("content", COUNTER_SOURCE)
+                                .toString(),
+                        ),
+                    )
+                )
 
             "who are you" in p || "what are you" in p ->
                 Script(listOf(Segment.Text(IDENTITY)))
@@ -325,11 +335,21 @@ class MockProvider(
                 "Note 13 Pro+ a small app takes about 18 seconds once the " +
                 "Kotlin runtime is cached."
 
-        const val CREATE_ANSWER =
-            "I can read the project already — ask me to look at the files and " +
-                "I really will. Writing them is the next piece: the write tools " +
-                "and their Allow / Always prompt are not built yet, and I would " +
-                "rather say so than show you a card claiming a file was saved."
+        const val CREATE_INTRO =
+            "I'll write a small counter — one screen, a number, and a button " +
+                "that increases it. It is your project, so I have to ask before " +
+                "I touch it."
+
+        /** Real Kotlin, because a real file gets written and then read back. */
+        val COUNTER_SOURCE = """
+            package app
+
+            fun main() {
+                var count = 0
+                repeat(3) { count++ }
+                println("Tapped ${'$'}count times")
+            }
+        """.trimIndent()
 
         const val FALLBACK =
             "I'm the mock AI, so my answers are scripted rather than thought " +

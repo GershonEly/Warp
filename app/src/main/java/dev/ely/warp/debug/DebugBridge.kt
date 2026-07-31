@@ -43,6 +43,16 @@ object DebugBridge {
     @Volatile
     var setting: ((String, String) -> String?)? = null
 
+    /**
+     * The desk a tool asks permission at.
+     *
+     * Exposed so the Allow / Always path can be driven from a machine. It is the
+     * one path in Warp that can destroy your work, so it is the last one that
+     * should be testable only by a person holding the phone.
+     */
+    @Volatile
+    var permission: dev.ely.warp.tools.PermissionDesk? = null
+
     // ── the key ──────────────────────────────────────────────────────────
 
     private const val PREFS = "warp_debug"

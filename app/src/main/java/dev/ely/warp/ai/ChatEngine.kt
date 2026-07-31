@@ -228,24 +228,16 @@ class ChatEngine(
                     // mock has been emitting cards nothing ever executed, and
                     // that gap is what made the tool cards a picture.
                     tools?.let { executor ->
-                        update(replyId) { message ->
-                            message.copy(
-                                toolCalls = message.toolCalls.map {
-                                    if (it.id == event.call.id) {
-                                        it.copy(status = ToolCall.Status.RUNNING)
-                                    } else it
-                                },
-                            )
+                        val put: suspend (ToolCall) -> Unit = { changed ->
+                            update(replyId) { message ->
+                                message.copy(
+                                    toolCalls = message.toolCalls.map {
+                                        if (it.id == changed.id) changed else it
+                                    },
+                                )
+                            }
                         }
-
-                        val finished = executor.execute(event.call)
-                        update(replyId) { message ->
-                            message.copy(
-                                toolCalls = message.toolCalls.map {
-                                    if (it.id == finished.id) finished else it
-                                },
-                            )
-                        }
+                        put(executor.execute(event.call, put))
                         ranTools = true
                     }
                 }
@@ -414,8 +406,14 @@ class ChatEngine(
         /** What to offer the model. Empty means it is told about nothing. */
         val specs: List<ToolSpec>
 
-        /** Do it, and return the call with its outcome filled in. */
-        suspend fun execute(call: ToolCall): ToolCall
+        /**
+         * Do it, and return the call with its outcome filled in.
+         *
+         * @param report progress, so a call that stops to ask a person can say
+         *   so. The engine passes a lambda that updates the message; it still
+         *   does not learn what a tool is, only that one changed state.
+         */
+        suspend fun execute(call: ToolCall, report: suspend (ToolCall) -> Unit): ToolCall
     }
 
     interface Titler {

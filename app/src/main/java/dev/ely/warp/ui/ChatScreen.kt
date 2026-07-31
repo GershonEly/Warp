@@ -50,6 +50,8 @@ import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -120,6 +122,9 @@ import dev.ely.warp.data.Identity
 import dev.ely.warp.ai.Effort
 import dev.ely.warp.ai.AiError
 import dev.ely.warp.ai.ChatEngine
+import dev.ely.warp.tools.PermissionRequest
+import dev.ely.warp.tools.PermissionDesk
+import dev.ely.warp.tools.Decision
 import dev.ely.warp.ai.ChatMessage
 import dev.ely.warp.ai.Role
 import dev.ely.warp.ai.ToolCall
@@ -221,10 +226,13 @@ fun ChatScreen(
     modelLabel: String,
     onPickModel: () -> Unit,
     effort: Effort?,
+    /** Where a tool goes to ask you. Null leaves the cards read-only. */
+    permission: PermissionDesk? = null,
     modifier: Modifier = Modifier,
 ) {
     val messages by engine.messages.collectAsState()
     val busy by engine.busy.collectAsState()
+    val asking by (permission?.pending ?: remember { MutableStateFlow(null) }).collectAsState()
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val haptics = LocalHapticFeedback.current
@@ -307,6 +315,8 @@ fun ChatScreen(
                                     // Only the first reply inherits the travelling
                                     // mark — later ones simply appear.
                                     markModifier = if (index == 1) markModifier else Modifier,
+                                    asking = asking,
+                                    onDecide = { permission?.answer(it) },
                                 )
                             }
                         }
@@ -701,11 +711,16 @@ private fun MessageMark(thinking: Boolean, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun MessageItem(message: ChatMessage, markModifier: Modifier = Modifier) {
+private fun MessageItem(
+    message: ChatMessage,
+    markModifier: Modifier = Modifier,
+    asking: PermissionRequest? = null,
+    onDecide: (Decision) -> Unit = {},
+) {
     if (message.role == Role.USER) {
         UserMessage(message)
     } else {
-        AssistantMessage(message, markModifier)
+        AssistantMessage(message, markModifier, asking, onDecide)
     }
 }
 
@@ -731,7 +746,12 @@ private fun UserMessage(message: ChatMessage) {
 }
 
 @Composable
-private fun AssistantMessage(message: ChatMessage, markModifier: Modifier = Modifier) {
+private fun AssistantMessage(
+    message: ChatMessage,
+    markModifier: Modifier = Modifier,
+    asking: PermissionRequest? = null,
+    onDecide: (Decision) -> Unit = {},
+) {
     val working = message.streaming && message.text.isEmpty() && message.toolCalls.isEmpty()
 
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
@@ -752,7 +772,14 @@ private fun AssistantMessage(message: ChatMessage, markModifier: Modifier = Modi
 
             message.toolCalls.forEach { call ->
                 Spacer(Modifier.size(10.dp))
-                ToolCard(call)
+                ToolCard(
+                    call,
+                    // Only the card being asked about grows buttons. Every card
+                    // showing them would be a screen full of Allow, which is
+                    // how Allow stops meaning anything.
+                    asking = asking?.takeIf { it.callId == call.id },
+                    onDecide = onDecide,
+                )
             }
 
             message.error?.let { error ->
@@ -775,7 +802,11 @@ private fun ThinkingLine() {
 }
 
 @Composable
-private fun ToolCard(call: ToolCall) {
+private fun ToolCard(
+    call: ToolCall,
+    asking: PermissionRequest? = null,
+    onDecide: (Decision) -> Unit = {},
+) {
     // Collapsed by default, and only openable when there is something inside.
     // The summary line is the point of the card — four hundred lines of a file
     // in the middle of a conversation is not reading, it is scrolling.
@@ -813,15 +844,19 @@ private fun ToolCard(call: ToolCall) {
                 Text(
                     when (call.status) {
                         ToolCall.Status.PENDING -> "waiting"
+                        ToolCall.Status.ASKING -> "needs your OK"
                         ToolCall.Status.RUNNING -> "running"
                         ToolCall.Status.DONE -> "done"
                         ToolCall.Status.FAILED -> "failed"
-                        ToolCall.Status.DENIED -> "denied"
+                        ToolCall.Status.DENIED -> "you said no"
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = when (call.status) {
                         ToolCall.Status.DONE -> WarpSuccess
                         ToolCall.Status.FAILED -> MaterialTheme.colorScheme.error
+                        // Not an error colour. Refusing is a normal answer, and
+                        // painting it red would make saying no feel like a fault.
+                        ToolCall.Status.ASKING -> MaterialTheme.colorScheme.primary
                         else -> MaterialTheme.colorScheme.onSurfaceVariant
                     },
                 )
@@ -882,8 +917,45 @@ private fun ToolCard(call: ToolCall) {
                 }
             }
 
-            // Allow / Always belong here, and arrive with the write tools — a
-            // decision only means something once something can be changed.
+            asking?.let { request ->
+                Spacer(Modifier.size(10.dp))
+                Text(
+                    // Names the file, not the tool. "write_file wants to run" is
+                    // a sentence about software; "this will change src/Main.kt"
+                    // is a sentence about your work.
+                    "This will change ${request.summary}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(Modifier.size(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Allow first and Always second, in that order on purpose.
+                    // The safer answer is the one under your thumb; Always is a
+                    // standing decision and should cost one extra moment.
+                    Button(
+                        onClick = { onDecide(Decision.ONCE) },
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                    ) { Text("Allow", style = MaterialTheme.typography.labelLarge) }
+
+                    TextButton(
+                        onClick = { onDecide(Decision.ALWAYS) },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    ) { Text("Always", style = MaterialTheme.typography.labelLarge) }
+
+                    Spacer(Modifier.weight(1f))
+
+                    TextButton(
+                        onClick = { onDecide(Decision.DENY) },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        Text(
+                            "No",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
         }
     }
 }

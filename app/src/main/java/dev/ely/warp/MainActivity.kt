@@ -52,6 +52,7 @@ import dev.ely.warp.data.Appearance
 import dev.ely.warp.data.Identity
 import dev.ely.warp.debug.DebugBridge
 import dev.ely.warp.data.DrawerPrefs
+import dev.ely.warp.tools.PermissionDesk
 import dev.ely.warp.tools.ToolRunner
 import dev.ely.warp.data.DrawerState
 import dev.ely.warp.diag.DeviceProbe
@@ -117,7 +118,11 @@ private fun WarpApp() {
         (context.applicationContext as WarpApplication).conversations
     }
     val titler = remember { ConversationTitler(conversations, registry) }
-    val toolRunner = remember { ToolRunner(context) }
+    // The desk is held here, beside the engine, because the question it carries
+    // has to outlive the card that asked it — a tool call must not be cancelled
+    // by scrolling.
+    val permission = remember { PermissionDesk(context) }
+    val toolRunner = remember { ToolRunner(context, permission) }
     val engine = remember {
         ChatEngine(
             scope,
@@ -127,9 +132,11 @@ private fun WarpApp() {
             // The engine still knows nothing about files — it is handed something
             // that can execute a call and hands back the outcome.
             tools = object : ChatEngine.ToolExecutor {
-                override val specs = dev.ely.warp.tools.READ_TOOL_SPECS
-                override suspend fun execute(call: dev.ely.warp.ai.ToolCall) =
-                    toolRunner.run(call)
+                override val specs = dev.ely.warp.tools.ALL_TOOL_SPECS
+                override suspend fun execute(
+                    call: dev.ely.warp.ai.ToolCall,
+                    report: suspend (dev.ely.warp.ai.ToolCall) -> Unit,
+                ) = toolRunner.run(call, report)
             },
         )
     }
@@ -180,6 +187,11 @@ private fun WarpApp() {
                 "model" to choice.label,
                 "provider" to choice.providerId,
                 "searchQuery" to searchQuery,
+                // What is being asked of you right now, or null. A test that
+                // answers a prompt has to be able to see there is one.
+                "askingTool" to permission.pending.value?.toolName,
+                "askingAbout" to permission.pending.value?.summary,
+                "alwaysAllowed" to permission.granted.sorted().joinToString(","),
             )
         }
         DebugBridge.send = { text ->
@@ -204,6 +216,7 @@ private fun WarpApp() {
             }
             known
         }
+        DebugBridge.permission = permission
         DebugBridge.setting = { name, value ->
             val appearance = Appearance.get(context)
             when (name) {
@@ -226,6 +239,7 @@ private fun WarpApp() {
             DebugBridge.newChat = null
             DebugBridge.open = null
             DebugBridge.setting = null
+            DebugBridge.permission = null
         }
     }
 
@@ -361,6 +375,7 @@ private fun WarpApp() {
                     modelLabel = choice.label,
                     onPickModel = { showPicker = true },
                     effort = choice.effort,
+                    permission = permission,
                 )
                 WarpDestination.BUILD -> BuildScreen()
                 WarpDestination.SETTINGS -> SettingsScreen()

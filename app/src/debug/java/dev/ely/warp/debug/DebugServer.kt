@@ -300,12 +300,45 @@ object DebugServer {
             // involved. That separation is the point: it answers "does the tool
             // work" without also asking "did the model choose to call it", which
             // are two failures that look identical from the chat.
+            // Answer a permission prompt from the machine.
+            //
+            // Without it the Allow / Always path could only ever be checked by a
+            // person holding the phone, which is the exact situation the debug
+            // surface exists to end — and it guards the one thing here that can
+            // destroy your work.
+            "POST /permission" -> {
+                val desk = DebugBridge.permission
+                    ?: return 503 to error("no permission desk")
+                val request = desk.pending.value
+                    ?: return 409 to error("nothing is being asked")
+
+                val decision = runCatching {
+                    dev.ely.warp.tools.Decision.valueOf(json.optString("decision").uppercase())
+                }.getOrElse { return 400 to error("expected ONCE, ALWAYS or DENY") }
+
+                desk.answer(decision)
+                200 to JSONObject()
+                    .put("answered", decision.name)
+                    .put("tool", request.toolName)
+                    .put("summary", request.summary)
+            }
+
+            "POST /permission/revoke" -> {
+                val desk = DebugBridge.permission ?: return 503 to error("no permission desk")
+                desk.revokeAll()
+                200 to JSONObject().put("granted", JSONArray(desk.granted.toList()))
+            }
+
             "POST /tool" -> runBlocking {
                 val name = json.optString("name")
-                val tool = dev.ely.warp.tools.READ_TOOLS[name]
+                val tool = dev.ely.warp.tools.ALL_TOOLS[name]
                     ?: return@runBlocking 400 to error("no tool called $name")
 
                 val args = json.optJSONObject("args") ?: JSONObject()
+                // Reaches straight past the desk on purpose: this route is for
+                // testing a tool's own behaviour, and it is only ever reachable
+                // in a debug build. The chat path is the one that must ask.
+
                 val project = java.io.File(context.filesDir, "project").apply { mkdirs() }
 
                 when (val r = tool.run(project, args)) {
