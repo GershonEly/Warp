@@ -40,6 +40,15 @@ enum class Risk {
 
     /** Runs something, or leaves the device. Always asks. */
     RUNS,
+
+    /**
+     * Changes nothing, but cannot finish without you.
+     *
+     * Its own risk rather than FREE, because FREE means "runs without stopping"
+     * and this always stops. It is also never grantable: there is no Always for
+     * a question, since answering it *is* the tool.
+     */
+    ASKS,
 }
 
 interface Tool {
@@ -304,6 +313,43 @@ object EditFile : Tool {
     }
 }
 
+// ── asking you ───────────────────────────────────────────────────────────
+
+/**
+ * Put one question to the person, and wait.
+ *
+ * The engine that carries this is `/grill-me`. Structured rather than left as
+ * prose because the options are meant to be tappable — a question you can answer
+ * with a thumb gets answered, and one that needs a paragraph typed back gets put
+ * off. The schema is the difference between an interrogation and a wall of text.
+ */
+object AskUser : Tool {
+    override val name = "ask"
+    override val risk = Risk.ASKS
+    override val description =
+        "Ask the user exactly one question and wait for the answer. Give 2-4 " +
+            "concrete options and say which you recommend. Use this to resolve " +
+            "a decision you cannot make for them — never to check in."
+    override val schemaJson = """
+        {"type":"object","properties":{
+          "question":{"type":"string","description":"One question. Not a list."},
+          "options":{"type":"array","items":{"type":"string"},
+                     "description":"2-4 concrete answers, each a few words."},
+          "recommended":{"type":"integer",
+                     "description":"Index of the option you would pick, from 0."},
+          "because":{"type":"string","description":"One line on why you recommend it."}},
+         "required":["question","options"]}
+    """.trimIndent()
+
+    override fun describe(args: JSONObject) = args.optString("question")
+
+    // Never reached. The runner sends this to the question desk instead, because
+    // the answer comes from a person and a File cannot supply one. It is here
+    // because Tool requires it, and throwing would be worse than saying so.
+    override suspend fun run(project: File, args: JSONObject): ToolResult =
+        ToolResult.Failed("ask is answered by you, not by the project")
+}
+
 // A shell glob, as a regex.
 //
 // A double star crosses directories and a single one does not, which is the
@@ -343,7 +389,13 @@ val READ_TOOLS: Map<String, Tool> =
 
 /** Everything the model can be offered, by name. */
 val ALL_TOOLS: Map<String, Tool> =
-    (READ_TOOLS.values + listOf(WriteFile, EditFile)).associateBy { it.name }
+    (READ_TOOLS.values + listOf(WriteFile, EditFile, AskUser)).associateBy { it.name }
+
+/** Reading, plus the one tool that asks you. What `/grill-me` is given. */
+val GRILL_TOOL_SPECS: List<dev.ely.warp.ai.ToolSpec> =
+    (READ_TOOLS.values + AskUser).map {
+        dev.ely.warp.ai.ToolSpec(it.name, it.description, it.schemaJson)
+    }
 
 /** Just the reading tools, for a turn that is not allowed to act. */
 val READ_TOOL_SPECS: List<dev.ely.warp.ai.ToolSpec> =
@@ -353,6 +405,10 @@ val READ_TOOL_SPECS: List<dev.ely.warp.ai.ToolSpec> =
 
 /** The same tools, in the shape a provider hands to a model. */
 val ALL_TOOL_SPECS: List<dev.ely.warp.ai.ToolSpec> =
-    ALL_TOOLS.values.map {
+    // Without `ask`. An ordinary turn should get on with it; a model holding a
+    // question tool will use it to check in, which is exactly what its own
+    // description forbids and exactly what it would do anyway. Asking is what
+    // `/grill-me` is for, and it can be opened up later if that proves wrong.
+    ALL_TOOLS.values.filter { it.risk != Risk.ASKS }.map {
         dev.ely.warp.ai.ToolSpec(it.name, it.description, it.schemaJson)
     }

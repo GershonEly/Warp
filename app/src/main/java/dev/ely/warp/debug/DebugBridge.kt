@@ -64,6 +64,10 @@ object DebugBridge {
     @Volatile
     var command: ((String) -> String)? = null
 
+    /** Where `/grill-me` puts its questions, so a test can answer them. */
+    @Volatile
+    var questions: dev.ely.warp.tools.QuestionDesk? = null
+
     /** Which conversation is open, so a permission route can default to it. */
     @Volatile
     var conversation: (() -> String?)? = null

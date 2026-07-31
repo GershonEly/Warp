@@ -43,7 +43,8 @@ def settle(limit=25.0):
     deadline = time.time() + limit
     while time.time() < deadline:
         s, st = call("GET", "/state")
-        if s == 200 and (st.get("busy") is False or st.get("askingTool")):
+        asking_question = call("GET", "/question")[1].get("asking") is True
+        if s == 200 and (st.get("busy") is False or st.get("askingTool") or asking_question):
             # One short beat so the last write lands before anything reads it.
             time.sleep(0.25)
             return True
@@ -74,6 +75,7 @@ else:
 # An interrupted run can leave a question on screen and a turn waiting on it for
 # ever. Clear it before anything else, or every later check inherits the mess.
 call("POST", "/permission", {"decision": "DENY"})
+call("POST", "/question/answer", {"text": "left over from an interrupted run"})
 # Rules are global and outlive a run. A rule left behind changes what the mock
 # replies with, and unrelated sections start failing for a reason nothing names.
 call("POST", "/chat/command", {"text": "/rules clear"})
@@ -164,7 +166,8 @@ check("the two orderings are honoured",
       a["order"] == "ALPHABETICAL" and b["order"] == "RECENT")
 if len(a["results"]) > 1:
     titles = [c["title"].lower() for c in a["results"]]
-    check("A–Z really is sorted", titles == sorted(titles), f"{titles}")
+    check("A–Z really is sorted", titles == sorted(titles),
+          f"{len(titles)} titles, {titles[0]!r} first")
 
 
 print("\n7. TOOLS REALLY RUN")
@@ -353,6 +356,7 @@ check("and the writing tools are not offered at all",
 
 check("a slash inside a sentence is not a command",
       command("what does src/main mean") == "sent")
+settle()
 check("an unbuilt command says so rather than doing nothing",
       command("/goal ship it") == "/goal is not built yet.")
 check("removing by number reports what went",
@@ -362,7 +366,58 @@ check("and the list really shrank",
 command("/rules clear")
 
 
-print("\n10. SETTINGS ROUND-TRIP")
+print("\n10. /GRILL-ME ASKS, ONE AT A TIME")
+# The value of a grilling is the *second* question — the one shaped by your last
+# answer. A single question proves the tool works and proves nothing about the
+# loop, which is exactly the state this shipped in for ten minutes.
+call("POST", "/chat/new")
+call("POST", "/chat/command", {"text": "/grill-me the todo app"})
+settle()
+
+q = call("GET", "/question")[1]
+check("it asks a question and waits", q.get("asking") is True)
+check("with concrete options", 2 <= len(q.get("options") or []) <= 4, f"{q.get('options')}")
+check("and says which it recommends", q.get("recommended") is not None)
+check("and why", bool(q.get("because")))
+check("only one question is open at a time",
+      isinstance(q.get("question"), str) and "?" in q["question"],
+      repr(q.get("question")))
+
+first = q["options"][q["recommended"]]
+call("POST", "/question/answer", {"option": q["recommended"]})
+settle()
+
+q2 = call("GET", "/question")[1]
+check("a second question follows", q2.get("asking") is True, repr(q2.get("question")))
+check("it is a different question", q2.get("question") != q.get("question"))
+check("and it was shaped by the first answer",
+      "chose" in (q2.get("because") or "").lower(), repr(q2.get("because")))
+
+# The path every real answer eventually takes.
+call("POST", "/question/answer", {"text": "export to a file every night"})
+settle()
+
+grilled = call("GET", "/state")[1]["conversationId"]
+msgs = call("GET", "/messages?id=" + grilled)[1]["messages"]
+answers = [c["result"] for m in msgs for c in m.get("toolCalls", []) if c["name"] == "ask"]
+check("both answers are recorded verbatim",
+      answers == [first, "export to a file every night"], f"{answers}")
+check("a written answer is taken as written",
+      "export to a file every night" in msgs[-1]["text"], repr(msgs[-1]["text"][:80]))
+check("nothing is still being asked at the end",
+      call("GET", "/question")[1].get("asking") is False)
+
+# Resumable, in the only sense that matters: the questions and answers are in
+# the transcript, so reopening the chat finds them rather than starting over.
+call("POST", "/chat/new")
+call("POST", "/chat/open", {"id": grilled})
+time.sleep(1)
+reopened = call("GET", "/messages?id=" + grilled)[1]["messages"]
+kept = [c["result"] for m in reopened for c in m.get("toolCalls", []) if c["name"] == "ask"]
+check("the answers survive reopening the chat", kept == answers, f"{kept}")
+
+
+print("\n11. SETTINGS ROUND-TRIP")
 s, r = call("POST", "/settings", {"name": "ambient", "value": "false"})
 check("turning the atmosphere off reads back as off", r.get("value") == "false")
 s, r = call("POST", "/settings", {"name": "ambient", "value": "true"})

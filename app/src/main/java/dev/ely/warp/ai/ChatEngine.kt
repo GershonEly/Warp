@@ -72,6 +72,20 @@ class ChatEngine(
     private var activeReplyId: String? = null
 
     /**
+     * Which turn is the current one.
+     *
+     * A cancelled coroutine does not stop where it was cancelled — it stops at
+     * its next suspension point, and its `finally` runs after that. So a new
+     * turn started immediately after a cancel would have its own `busy` cleared
+     * a few milliseconds later by the corpse of the old one, leaving the
+     * composer offering Send in the middle of a reply.
+     *
+     * Every turn takes a number and only tidies up if it is still the one
+     * holding it.
+     */
+    private var turnToken = 0L
+
+    /**
      * Point the engine at a conversation and load it.
      *
      * The messages are replaced wholesale rather than merged: a conversation is
@@ -98,7 +112,7 @@ class ChatEngine(
      * the next message. `/plan` means *this* one plans; the one after it is a
      * normal turn again unless you say otherwise.
      */
-    enum class Mode { NORMAL, PLAN }
+    enum class Mode { NORMAL, PLAN, GRILL }
 
     private var mode = Mode.NORMAL
 
@@ -123,6 +137,7 @@ class ChatEngine(
         _messages.value = _messages.value + userMessage + reply
         _busy.value = true
         activeReplyId = replyId
+        val token = ++turnToken
 
         turn = scope.launch {
             try {
@@ -158,8 +173,11 @@ class ChatEngine(
                 }
                 persistNow(open)
             } finally {
-                _busy.value = false
-                activeReplyId = null
+                // Only if nothing has started since. See [turnToken].
+                if (token == turnToken) {
+                    _busy.value = false
+                    activeReplyId = null
+                }
             }
         }
     }
@@ -230,7 +248,11 @@ class ChatEngine(
             messages = _messages.value.filter { it.id != replyId },
             systemPrompt = listOfNotNull(
                 systemPrompt(),
-                PLAN_DIRECTIVE.trim().takeIf { mode == Mode.PLAN },
+                when (mode) {
+                    Mode.PLAN -> PLAN_DIRECTIVE.trim()
+                    Mode.GRILL -> GRILL_DIRECTIVE.trim()
+                    Mode.NORMAL -> null
+                },
             ).joinToString(separator = System.lineSeparator() + System.lineSeparator())
                 .ifBlank { null },
             effort = effort,
@@ -242,7 +264,7 @@ class ChatEngine(
             // model not to write and then handing it a write tool is a request;
             // taking the tool away is a boundary. A model asked to focus on
             // planning will still helpfully write the file.
-            tools = tools?.specs(readOnly = mode == Mode.PLAN).orEmpty(),
+            tools = tools?.specs(mode).orEmpty(),
         )
 
         provider.stream(request).collect { event ->
@@ -433,13 +455,14 @@ class ChatEngine(
      */
     interface ToolExecutor {
         /**
-         * What to offer the model. Empty means it is told about nothing.
+         * What to offer the model, for the mode this turn is running in.
          *
-         * @param readOnly leave out anything that can change something. The
-         *   engine does not know which those are and should not; it knows only
-         *   that this turn is not allowed to act.
+         * The mode goes across rather than a list of flags, because which tools
+         * a mode implies is a product decision and belongs with the tools. The
+         * engine knows a turn is a plan or a grilling; it does not know, and
+         * must not learn, that planning means no `write_file`.
          */
-        fun specs(readOnly: Boolean): List<ToolSpec>
+        fun specs(mode: Mode): List<ToolSpec>
 
         /**
          * Do it, and return the call with its outcome filled in.

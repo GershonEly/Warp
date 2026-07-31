@@ -74,7 +74,53 @@ class MockProvider(
         // never shows its "thinking" state, so it never gets tested.
         delay(if (request.effort == Effort.LOW) 350 else 900)
 
+        // A grilling, scripted: ask, hear the answer, ask a sharper one, then
+        // summarise. Two questions rather than one, because the bug worth
+        // catching is the second question never arriving — a single question
+        // proves the tool works and proves nothing about the loop.
+        if (request.systemPrompt?.contains("INTERROGATE THE PLAN") == true) {
+            val answered = request.messages
+                .flatMap { it.toolCalls }
+                .filter { it.name == "ask" && it.result != null }
+
+            when (answered.size) {
+                0 -> {
+                    emitWords("Before anything gets built, one thing at a time.")
+                    askAbout(
+                        question = "Where should the app keep its data?",
+                        options = listOf("On the phone only", "Sync to a server", "Both, later"),
+                        recommended = 0,
+                        because = "Nothing here needs an account yet, and on-device is reversible.",
+                    )
+                }
+
+                1 -> {
+                    emitWords("Good. That settles the next one.")
+                    askAbout(
+                        question = "What happens to data if the app is uninstalled?",
+                        options = listOf("It goes with it", "Export first, always"),
+                        recommended = 1,
+                        because = "You chose on-device, so uninstalling is the only way to lose it.",
+                    )
+                }
+
+                else -> {
+                    emitWords("Decided:")
+                    emit(AiEvent.TextDelta(BREAK + answered.joinToString(BREAK) {
+                        "- " + it.result
+                    }))
+                    emit(AiEvent.Completed())
+                }
+            }
+            return@flow
+        }
+
         // A tool has just run: say what it found and stop.
+        //
+        // **After the grilling branch**, and that ordering is load-bearing: this
+        // fires on any finished tool call, so above it, it swallowed every answer
+        // and the second question never came. The grilling looked like it worked
+        // and stopped after one question.
         //
         // Not politeness — this is the only way to prove the result got back to
         // the provider at all. Without it the mock re-runs its script every
@@ -151,6 +197,29 @@ class MockProvider(
         }
 
         emit(AiEvent.Completed())
+    }
+
+    /** Put one question, and leave it open. The desk answers it, not the mock. */
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<AiEvent>.askAbout(
+        question: String,
+        options: List<String>,
+        recommended: Int,
+        because: String,
+    ) {
+        emit(
+            AiEvent.ToolCallRequested(
+                ToolCall(
+                    id = UUID.randomUUID().toString(),
+                    name = "ask",
+                    argumentsJson = JSONObject()
+                        .put("question", question)
+                        .put("options", org.json.JSONArray(options))
+                        .put("recommended", recommended)
+                        .put("because", because)
+                        .toString(),
+                )
+            )
+        )
     }
 
     /** Emit text a word at a time, with pauses that feel like typing. */

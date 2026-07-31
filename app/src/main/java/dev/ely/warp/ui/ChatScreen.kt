@@ -128,6 +128,8 @@ import dev.ely.warp.ai.parseSlashCommand
 import dev.ely.warp.data.Rules
 import dev.ely.warp.tools.PermissionRequest
 import dev.ely.warp.tools.PermissionDesk
+import dev.ely.warp.tools.QuestionDesk
+import dev.ely.warp.tools.Question
 import dev.ely.warp.tools.Decision
 import dev.ely.warp.ai.ChatMessage
 import dev.ely.warp.ai.Role
@@ -232,6 +234,8 @@ fun ChatScreen(
     effort: Effort?,
     /** Where a tool goes to ask you. Null leaves the cards read-only. */
     permission: PermissionDesk? = null,
+    /** Where `/grill-me` puts its questions. Null renders them as plain cards. */
+    questions: QuestionDesk? = null,
     modifier: Modifier = Modifier,
 ) {
     val messages by engine.messages.collectAsState()
@@ -241,7 +245,10 @@ fun ChatScreen(
 
     /** A one-line answer to a command, shown until the next thing you type. */
     var ruleFeedback by remember { mutableStateOf<String?>(null) }
-    val asking by (permission?.pending ?: remember { MutableStateFlow(null) }).collectAsState()
+    val pendingPermission by (permission?.pending ?: remember { MutableStateFlow(null) })
+        .collectAsState()
+    val pendingQuestion by (questions?.pending ?: remember { MutableStateFlow(null) })
+        .collectAsState()
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val haptics = LocalHapticFeedback.current
@@ -324,8 +331,10 @@ fun ChatScreen(
                                     // Only the first reply inherits the travelling
                                     // mark — later ones simply appear.
                                     markModifier = if (index == 1) markModifier else Modifier,
-                                    asking = asking,
+                                    permission = pendingPermission,
                                     onDecide = { permission?.answer(it) },
+                                    asking = pendingQuestion,
+                                    onAnswerQuestion = { questions?.answer(it) },
                                 )
                             }
                         }
@@ -394,6 +403,11 @@ internal fun runComposed(
         // reply with nothing on screen explaining why it planned.
         "plan" -> {
             engine.send(sent, ChatEngine.Mode.PLAN)
+            null
+        }
+
+        "grill-me" -> {
+            engine.send(sent, ChatEngine.Mode.GRILL)
             null
         }
 
@@ -785,13 +799,15 @@ private fun MessageMark(thinking: Boolean, modifier: Modifier = Modifier) {
 private fun MessageItem(
     message: ChatMessage,
     markModifier: Modifier = Modifier,
-    asking: PermissionRequest? = null,
+    permission: PermissionRequest? = null,
     onDecide: (Decision) -> Unit = {},
+    asking: Question? = null,
+    onAnswerQuestion: (String) -> Unit = {},
 ) {
     if (message.role == Role.USER) {
         UserMessage(message)
     } else {
-        AssistantMessage(message, markModifier, asking, onDecide)
+        AssistantMessage(message, markModifier, permission, onDecide, asking, onAnswerQuestion)
     }
 }
 
@@ -820,8 +836,10 @@ private fun UserMessage(message: ChatMessage) {
 private fun AssistantMessage(
     message: ChatMessage,
     markModifier: Modifier = Modifier,
-    asking: PermissionRequest? = null,
+    permission: PermissionRequest? = null,
     onDecide: (Decision) -> Unit = {},
+    asking: Question? = null,
+    onAnswerQuestion: (String) -> Unit = {},
 ) {
     val working = message.streaming && message.text.isEmpty() && message.toolCalls.isEmpty()
 
@@ -843,12 +861,27 @@ private fun AssistantMessage(
 
             message.toolCalls.forEach { call ->
                 Spacer(Modifier.size(10.dp))
+
+                // A question gets its own card, not a tool card. It is the one
+                // thing in a transcript that is waiting on you rather than
+                // reporting what already happened, and dressing it as machinery
+                // is how it gets scrolled past.
+                val question = asking?.takeIf { it.callId == call.id }
+                if (question != null) {
+                    QuestionCard(question, onAnswer = onAnswerQuestion)
+                    return@forEach
+                }
+                if (call.name == "ask") {
+                    AnsweredQuestion(call)
+                    return@forEach
+                }
+
                 ToolCard(
                     call,
                     // Only the card being asked about grows buttons. Every card
                     // showing them would be a screen full of Allow, which is
                     // how Allow stops meaning anything.
-                    asking = asking?.takeIf { it.callId == call.id },
+                    asking = permission?.takeIf { it.callId == call.id },
                     onDecide = onDecide,
                 )
             }

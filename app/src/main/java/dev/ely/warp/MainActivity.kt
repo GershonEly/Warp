@@ -54,6 +54,7 @@ import dev.ely.warp.debug.DebugBridge
 import dev.ely.warp.data.DrawerPrefs
 import dev.ely.warp.data.Rules
 import dev.ely.warp.tools.PermissionDesk
+import dev.ely.warp.tools.QuestionDesk
 import dev.ely.warp.tools.ToolRunner
 import dev.ely.warp.data.DrawerState
 import dev.ely.warp.diag.DeviceProbe
@@ -124,7 +125,8 @@ private fun WarpApp() {
     // by scrolling.
     val permission = remember { PermissionDesk(store = conversations) }
     val rules = remember { Rules.get(context) }
-    val toolRunner = remember { ToolRunner(context, permission) }
+    val questions = remember { QuestionDesk() }
+    val toolRunner = remember { ToolRunner(context, permission, questions) }
     val engine = remember {
         ChatEngine(
             scope,
@@ -140,9 +142,11 @@ private fun WarpApp() {
             // The engine still knows nothing about files — it is handed something
             // that can execute a call and hands back the outcome.
             tools = object : ChatEngine.ToolExecutor {
-                override fun specs(readOnly: Boolean) =
-                    if (readOnly) dev.ely.warp.tools.READ_TOOL_SPECS
-                    else dev.ely.warp.tools.ALL_TOOL_SPECS
+                override fun specs(mode: ChatEngine.Mode) = when (mode) {
+                    ChatEngine.Mode.NORMAL -> dev.ely.warp.tools.ALL_TOOL_SPECS
+                    ChatEngine.Mode.PLAN -> dev.ely.warp.tools.READ_TOOL_SPECS
+                    ChatEngine.Mode.GRILL -> dev.ely.warp.tools.GRILL_TOOL_SPECS
+                }
                 override suspend fun execute(
                     call: dev.ely.warp.ai.ToolCall,
                     report: suspend (dev.ely.warp.ai.ToolCall) -> Unit,
@@ -236,6 +240,7 @@ private fun WarpApp() {
                 ?: "sent"
         }
         DebugBridge.permission = permission
+        DebugBridge.questions = questions
         DebugBridge.conversation = { engine.conversationId.value }
         DebugBridge.setting = { name, value ->
             val appearance = Appearance.get(context)
@@ -260,6 +265,7 @@ private fun WarpApp() {
             DebugBridge.open = null
             DebugBridge.setting = null
             DebugBridge.permission = null
+            DebugBridge.questions = null
             DebugBridge.command = null
             DebugBridge.conversation = null
         }
@@ -412,6 +418,7 @@ private fun WarpApp() {
                     onPickModel = { showPicker = true },
                     effort = choice.effort,
                     permission = permission,
+                    questions = questions,
                 )
                 WarpDestination.BUILD -> BuildScreen()
                 WarpDestination.SETTINGS -> SettingsScreen()

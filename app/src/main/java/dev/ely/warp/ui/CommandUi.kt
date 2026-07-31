@@ -28,6 +28,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.ely.warp.ai.SlashCommand
 import dev.ely.warp.data.Rules
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Button
+import dev.ely.warp.tools.Question
 import dev.ely.warp.ui.theme.WarpMono
 import dev.ely.warp.ui.theme.WarpSpace
 
@@ -194,6 +200,149 @@ fun CommandMenu(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * A question Warp is asking you, mid-turn.
+ *
+ * Deliberately **not** a tool card. It has no wrench, no monospace, no JSON —
+ * because it is not a report of machinery, it is somebody asking you something,
+ * and it is the one card in the transcript that is waiting on you rather than
+ * telling you what already happened.
+ *
+ * The recommended option is marked and sits first among equals, but it is not
+ * pre-selected and there is no default. A recommendation that answers for you is
+ * not a recommendation.
+ */
+@Composable
+fun QuestionCard(
+    question: Question,
+    onAnswer: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var typed by remember(question.callId) { mutableStateOf("") }
+    var typing by remember(question.callId) { mutableStateOf(false) }
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(question.text, style = MaterialTheme.typography.bodyLarge)
+
+            question.because?.let {
+                Spacer(Modifier.size(4.dp))
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            Spacer(Modifier.size(12.dp))
+
+            question.options.forEachIndexed { index, option ->
+                val recommended = index == question.recommended
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (recommended) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surface,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 3.dp)
+                        .clickable { onAnswer(option) },
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            option,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                            color = if (recommended)
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            else MaterialTheme.colorScheme.onSurface,
+                        )
+                        if (recommended) {
+                            // Says the word. A coloured background alone is a
+                            // convention you have to already know.
+                            Text(
+                                "recommended",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.size(8.dp))
+
+            // Always reachable. Every real answer to a question worth asking is
+            // eventually "none of those", and a card that can only be answered
+            // with its own options is a card that collects wrong answers.
+            if (typing) {
+                OutlinedTextField(
+                    value = typed,
+                    onValueChange = { typed = it },
+                    placeholder = { Text("Your answer") },
+                    singleLine = false,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.size(6.dp))
+                Button(
+                    onClick = { typed.trim().takeIf { it.isNotEmpty() }?.let(onAnswer) },
+                    enabled = typed.isNotBlank(),
+                ) { Text("Answer") }
+            } else {
+                Text(
+                    "Something else…",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable { typing = true },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * A question that has already been answered.
+ *
+ * Kept in the transcript rather than collapsed away, because the answers *are*
+ * the outcome of a grilling — a summary that says "we decided X" with no record
+ * of what was asked is exactly the thing you cannot check later.
+ *
+ * Quiet on purpose. It is history, not something to act on.
+ */
+@Composable
+fun AnsweredQuestion(call: dev.ely.warp.ai.ToolCall, modifier: Modifier = Modifier) {
+    val asked = runCatching {
+        org.json.JSONObject(call.argumentsJson).optString("question")
+    }.getOrNull().orEmpty().ifBlank { "Question" }
+
+    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Text(
+            "✓",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.widthIn(min = 18.dp),
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                asked,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                call.result.orEmpty().ifBlank { "—" },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }

@@ -51,7 +51,6 @@ val SLASH_COMMANDS = listOf(
     SlashCommand(
         name = "grill-me",
         hint = "question the plan, one at a time",
-        ready = false,
     ),
     SlashCommand(
         name = "build",
@@ -102,6 +101,36 @@ fun matchingCommands(text: String): List<SlashCommand>? {
     val typed = trimmed.drop(1)
     return SLASH_COMMANDS.filter { it.name.startsWith(typed, ignoreCase = true) }
 }
+
+/**
+ * What `/grill-me` adds, for one turn.
+ *
+ * The instruction that carries the most weight is *one question at a time*. A
+ * model asked to "clarify the requirements" produces a numbered list of eight,
+ * which gets skimmed and half-answered — and half-answered is worse than
+ * unanswered, because it looks resolved.
+ *
+ * Second is the recommendation. Most questions are asked of somebody who has no
+ * opinion yet; a question with a recommended answer can be settled with a thumb,
+ * and one without it becomes homework.
+ */
+const val GRILL_DIRECTIVE = """
+The user has asked you to INTERROGATE THE PLAN.
+
+Ask ONE question at a time, using the `ask` tool. Never ask two at once, and
+never write a numbered list of questions.
+
+Each question must:
+- be about a decision only they can make — not something you could look up
+- offer 2 to 4 concrete options, each a few words
+- name which option you recommend, and say why in one line
+
+Read the project first if it would make the question sharper. Do not write or
+change anything.
+
+Stop when the remaining choices no longer change what gets built. Then give a
+short summary of what was decided, and nothing else.
+"""
 
 /**
  * What `/plan` adds to the system prompt, for one turn only.

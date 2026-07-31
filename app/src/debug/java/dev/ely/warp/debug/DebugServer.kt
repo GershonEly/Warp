@@ -359,6 +359,34 @@ object DebugServer {
                 200 to JSONObject().put("note", run(text))
             }
 
+            "GET /question" -> {
+                val desk = DebugBridge.questions ?: return 503 to error("no question desk")
+                val q = desk.pending.value
+                200 to JSONObject()
+                    .put("asking", q != null)
+                    .put("question", q?.text ?: JSONObject.NULL)
+                    .put("options", JSONArray(q?.options ?: emptyList<String>()))
+                    .put("recommended", q?.recommended ?: JSONObject.NULL)
+                    .put("because", q?.because ?: JSONObject.NULL)
+            }
+
+            "POST /question/answer" -> {
+                val desk = DebugBridge.questions ?: return 503 to error("no question desk")
+                val q = desk.pending.value ?: return 409 to error("nothing is being asked")
+
+                // Either tap an option by index or write your own, the same two
+                // ways the card offers. A route that only accepted an index
+                // would leave the "something else" path untested, and that is
+                // the one every real answer eventually takes.
+                val text = json.optString("text").takeIf { it.isNotBlank() }
+                    ?: json.optInt("option", -1).takeIf { it in q.options.indices }
+                        ?.let { q.options[it] }
+                    ?: return 400 to error("pass text, or option as an index")
+
+                desk.answer(text)
+                200 to JSONObject().put("answered", text)
+            }
+
             "GET /rules" -> {
                 val rules = dev.ely.warp.data.Rules.get(context).rules.value
                 200 to JSONObject()

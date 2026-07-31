@@ -20,6 +20,7 @@ import java.io.File
 class ToolRunner(
     context: Context,
     private val permission: AsksPermission? = null,
+    private val questions: AsksQuestions? = null,
 ) {
 
     /**
@@ -56,6 +57,47 @@ class ToolRunner(
                     result = "could not read the arguments: ${it.message}",
                 )
             }
+
+        // A question is not run, it is put to somebody. Handled before the
+        // permission gate because there is nothing here to permit: it changes
+        // nothing, and the answer *is* the result.
+        if (tool.risk == Risk.ASKS) {
+            val asker = questions
+                ?: return call.copy(
+                    status = ToolCall.Status.FAILED,
+                    result = "nobody here to answer",
+                )
+
+            val options = args.optJSONArray("options")
+            val question = Question(
+                callId = call.id,
+                text = args.optString("question").ifBlank {
+                    return call.copy(
+                        status = ToolCall.Status.FAILED,
+                        result = "asked nothing",
+                    )
+                },
+                options = (0 until (options?.length() ?: 0))
+                    .mapNotNull { options?.optString(it)?.takeIf(String::isNotBlank) },
+                // Out-of-range is treated as no recommendation rather than
+                // clamped. Highlighting the wrong option would be worse than
+                // highlighting none, and quietly picking option 0 is how a
+                // recommendation becomes a lie.
+                recommended = args.optInt("recommended", -1)
+                    .takeIf { it >= 0 && it < (options?.length() ?: 0) },
+                because = args.optString("because").takeIf { it.isNotBlank() },
+            )
+
+            report(call.copy(status = ToolCall.Status.ASKING))
+            val answer = asker.ask(question)
+            return call.copy(
+                status = ToolCall.Status.DONE,
+                // Your words, not "answered". The card is a record of what you
+                // decided, and it has to still say so a week later.
+                result = answer,
+                body = answer,
+            )
+        }
 
         if (tool.risk != Risk.FREE) {
             val asker = permission
