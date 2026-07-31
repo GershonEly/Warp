@@ -34,6 +34,21 @@ def check(name, ok, detail=""):
 # A run that was interrupted can leave a question on screen and a turn waiting
 # on it for ever. Clear it before anything else, or every later check inherits
 # the last run's mess.
+# Wait for the screen to register itself before doing anything.
+#
+# The server answers as soon as the process is up, but the chat bridge is set
+# from a composable — so for a moment after launch every route is live and the
+# ones that need a screen return 503. A fixed sleep made this suite flaky: one
+# run failed "the user message is stored verbatim" and the next passed, which is
+# the worst kind of test, since it teaches you to re-run instead of to look.
+for _ in range(40):
+    if call("GET", "/state")[0] == 200:
+        break
+    time.sleep(0.5)
+else:
+    print("  the app never became ready")
+    sys.exit(1)
+
 call("POST", "/permission", {"decision": "DENY"})
 # Rules are global and outlive a run. A rule left behind changes what the mock
 # replies with, and unrelated sections start failing for a reason nothing names.

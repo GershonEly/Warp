@@ -397,9 +397,12 @@ internal fun runComposed(
             null
         }
 
+        // No note for the bare form. The sheet that just opened *is* the
+        // answer, and a line underneath saying "showing your rules" while your
+        // rules are on screen is the app narrating itself.
         "rules" -> if (parsed.argument.isBlank()) {
             onShowRules()
-            "Showing your rules."
+            null
         } else {
             applyRuleCommand(rules, parsed.argument)
         }
@@ -409,6 +412,9 @@ internal fun runComposed(
         else -> "${parsed.command.typed} is not built yet."
     }
 }
+
+/** How long a command's answer stays under the composer. */
+private const val NOTE_LINGER_MS = 6_000L
 
 /** Ties the empty state's mark to the first reply's mark. */
 private const val MARK_KEY = "warp-mark"
@@ -1185,9 +1191,16 @@ private fun Composer(
         }
 
         note?.let { line ->
-            // Cleared when the field next changes rather than on a timer. A
-            // message about what just happened should not vanish while you are
-            // still reading it.
+            // Goes on its own, and that is the fix for a real bug: it used to
+            // clear only when the field next changed, so a confirmation sat
+            // under the composer for ever if you did not type again.
+            //
+            // Long enough to read one short line twice. Typing still clears it
+            // sooner — someone who has moved on has already read it.
+            LaunchedEffect(line) {
+                delay(NOTE_LINGER_MS)
+                onNoteShown()
+            }
             Text(
                 line,
                 style = MaterialTheme.typography.bodySmall,
