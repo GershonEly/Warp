@@ -34,10 +34,6 @@ private fun engineFor(context: android.content.Context): BuildEngine {
     return BuildEngine(toolchain, workRoot, signer)
 }
 
-/** Where a finished APK ends up, by application id. */
-internal fun apkFor(context: android.content.Context, applicationId: String): File =
-    File(File(context.filesDir, "work"), "$applicationId.apk")
-
 object BuildProject : Tool {
     override val name = "build"
     override val risk = Risk.RUNS
@@ -64,15 +60,18 @@ object BuildProject : Tool {
         }.getOrElse { return ToolResult.Failed(it.message ?: "the build could not start") }
 
         return when (outcome) {
-            is BuildEngine.Outcome.Success -> ToolResult.Ok(
+            is BuildEngine.Outcome.Success -> {
+                NewProject.recordBuild(env.project, outcome.apk)
+                ToolResult.Ok(
                 // Size and time, because they are what changes between builds
                 // and what tells you the cache is working.
                 "built ${outcome.apk.name} · ${outcome.apk.length() / 1024} KB · " +
                     "${outcome.totalMs / 1000}s" + if (outcome.signed) "" else " · UNSIGNED",
-                outcome.stages.joinToString("\n") {
-                    "${if (it.ok) "ok  " else "FAIL"} ${it.stage.label} (${it.durationMs} ms)"
-                },
-            )
+                    outcome.stages.joinToString("\n") {
+                        "${if (it.ok) "ok  " else "FAIL"} ${it.stage.label} (${it.durationMs} ms)"
+                    },
+                )
+            }
 
             is BuildEngine.Outcome.Failure -> ToolResult.Failed(
                 "${outcome.stage.label} failed: ${outcome.message}\n\n" +
@@ -99,8 +98,8 @@ object InstallProject : Tool {
     override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult {
         val meta = NewProject.meta(env.project)
             ?: return ToolResult.Failed("there is no project here yet")
-        val apk = apkFor(env.context, meta.applicationId)
-        if (!apk.isFile) return ToolResult.Failed("nothing built yet — call build first")
+        val apk = NewProject.lastApk(env.project)
+            ?: return ToolResult.Failed("nothing built yet — call build first")
 
         // A FileProvider, because Warp targets API 28 and since API 24 handing
         // a file:// URI to another app throws FileUriExposedException.
@@ -149,7 +148,14 @@ object LaunchProject : Tool {
             env.context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }.getOrElse { return ToolResult.Failed(it.message ?: "could not start it") }
 
-        return ToolResult.Ok("started ${meta.applicationId}", null)
+        // "Asked", not "started". `startActivity` returns as soon as the
+        // request is accepted; the app can still fail to launch, and this one
+        // did — it crashed on instantiation and the tool cheerfully said
+        // "started". Pointing at logcat is the useful half of the answer.
+        return ToolResult.Ok(
+            "asked Android to open ${meta.applicationId}",
+            "Starting is not the same as running. Call logcat to see what it did.",
+        )
     }
 }
 
@@ -172,8 +178,17 @@ object ReadLogcat : Tool {
             ?: return ToolResult.Failed("there is no project here yet")
         val depth = args.optInt("lines", 400).coerceIn(50, 2000)
 
+        // **`-b crash` is the load-bearing flag.** Android writes uncaught
+        // exceptions to a separate buffer, and without naming it a freshly
+        // crashed app produced no output at all: the tool reported "nothing from
+        // com.example.timer", which is the exact wrong answer to "why did my app
+        // die". Found by reading the crash buffer by hand from the PC after the
+        // tool insisted there was nothing there.
         val raw = runCatching {
-            ProcessBuilder("logcat", "-d", "-t", depth.toString(), "-v", "brief")
+            ProcessBuilder(
+                "logcat", "-d", "-b", "main,system,crash",
+                "-t", depth.toString(), "-v", "brief",
+            )
                 .redirectErrorStream(true)
                 .start()
                 .inputStream.bufferedReader().use { it.readText() }
@@ -201,14 +216,31 @@ object ReadLogcat : Tool {
         }
 
         if (mine.isEmpty()) {
-            // Empty is not the same as clean, and the difference matters more
-            // here than anywhere: "no errors" is what a person reads into a
-            // blank result, and this phone may simply be hiding other apps'
-            // logs. Say which it is.
+            // Empty is not the same as clean, and this is the one place that
+            // distinction can cost you an evening: "no errors" is what anybody
+            // reads into a blank result.
+            //
+            // It says what was actually observed rather than deciding which
+            // explanation is true, because it cannot tell. Counting other
+            // visible processes looked like a test and is not one — Warp
+            // could see two system processes on a phone that was still hiding
+            // the app's crash, so the count proved nothing and the confident
+            // wording built on it was wrong.
+            //
+            // Android limits an app to its own log unless READ_LOGS is granted,
+            // and on Xiaomi that is a one-time prompt: it can work in the
+            // morning and not the afternoon on the same phone.
+            val self = android.os.Process.myPid().toString()
+            val others = lines.mapNotNull { PID.find(it)?.groupValues?.get(1) }
+                .filter { it != self }.distinct().size
+
             return ToolResult.Ok(
-                "nothing from $id in the last ${lines.size} lines",
-                "This means either the app has not run, or this phone only lets " +
-                    "Warp see its own log. It does NOT mean the app ran cleanly.",
+                "nothing from $id in ${lines.size} lines — cannot say it ran cleanly",
+                "Read ${lines.size} lines, $others other processes visible, none " +
+                    "mentioning $id.\n\nEither it has not run since, or this phone " +
+                    "will not let Warp read another app's log. Reading a crash " +
+                    "reliably needs Developer options > USB debugging (Security " +
+                    "settings), and on Xiaomi that grant is one-time.",
             )
         }
 

@@ -44,6 +44,34 @@ object NewProject {
     }
 
     /**
+     * Remember where the last build landed.
+     *
+     * Recorded rather than recomputed. `install` guessed the path from the work
+     * root and the application id, and guessed wrong — the engine puts it in a
+     * `build/` subfolder — so install answered "nothing built yet" seconds
+     * after a build succeeded. Two places knowing the same path is one place too
+     * many, and the one that is wrong is always the one nobody ran.
+     */
+    fun recordBuild(dir: File, apk: File) {
+        val json = runCatching { JSONObject(File(dir, META_FILE).readText()) }
+            .getOrDefault(JSONObject())
+        File(dir, META_FILE).writeText(json.put("lastApk", apk.absolutePath).toString())
+    }
+
+    /**
+     * The APK from the last successful build, or null if there has not been one.
+     *
+     * Null when the file has since been deleted, too — a remembered path to
+     * something that is gone is worse than no memory at all.
+     */
+    fun lastApk(dir: File): File? {
+        val json = runCatching { JSONObject(File(dir, META_FILE).readText()) }.getOrNull()
+            ?: return null
+        val path = json.optString("lastApk").takeIf { it.isNotBlank() } ?: return null
+        return File(path).takeIf { it.isFile }
+    }
+
+    /**
      * Create a project, or explain why not.
      *
      * @param applicationId blank to derive one from [name].

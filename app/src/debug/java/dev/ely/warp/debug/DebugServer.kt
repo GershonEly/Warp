@@ -75,7 +75,16 @@ object DebugServer {
 
             while (!Thread.currentThread().isInterrupted) {
                 val client = runCatching { socket?.accept() }.getOrNull() ?: break
-                scope.launch { runCatching { serve(app, client) } }
+                scope.launch {
+                    // Logged, not swallowed. A route that threw used to close the
+                    // socket with no response and no trace: the caller saw
+                    // "remote end closed connection" and the phone said nothing
+                    // at all, which is the least debuggable failure there is.
+                    runCatching { serve(app, client) }.onFailure {
+                        Log.w(TAG, "request failed", it)
+                        runCatching { respond(client, 500, error("${it.javaClass.simpleName}: ${it.message}")) }
+                    }
+                }
             }
         }
     }
