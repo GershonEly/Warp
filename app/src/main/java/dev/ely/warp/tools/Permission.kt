@@ -104,7 +104,16 @@ class PermissionDesk(
         // Anything this conversation has already blessed goes straight through —
         // that is the entire point of Always, and asking again would teach you
         // to stop reading the ones that matter.
-        if (chat != null && store?.isGranted(chat, call.toolName) == true) {
+        //
+        // **Except RUNS, which is asked every single time.** Building,
+        // installing and launching are one `/goal` away from happening in a
+        // loop while nobody is watching, and a standing yes to that is not a
+        // permission, it is a handover. Checked here rather than only in the
+        // sheet, because a screen can be wrong and this is the path every
+        // decision actually takes.
+        if (call.risk != Risk.RUNS && chat != null &&
+            store?.isGranted(chat, call.toolName) == true
+        ) {
             return Decision.ALWAYS
         }
 
@@ -124,7 +133,11 @@ class PermissionDesk(
         // Written after the answer, not inside the tap handler, because storing
         // it is a suspending database write and a button press is not the place
         // to start one that nothing waits for.
-        if (decision == Decision.ALWAYS && chat != null) store?.grant(chat, call.toolName)
+        // Never remembered for RUNS either, so a tap on a stale button cannot
+        // leave a grant behind that the check above then has to defend against.
+        if (decision == Decision.ALWAYS && chat != null && call.risk != Risk.RUNS) {
+            store?.grant(chat, call.toolName)
+        }
         return decision
     }
 

@@ -1,5 +1,6 @@
 package dev.ely.warp.tools
 
+import android.content.Context
 import org.json.JSONObject
 import java.io.File
 
@@ -51,6 +52,18 @@ enum class Risk {
     ASKS,
 }
 
+/**
+ * What a tool is allowed to touch.
+ *
+ * The folder was enough while every tool read and wrote files. Building,
+ * installing and launching need the phone itself — a toolchain, a package
+ * manager, an intent — so the environment is passed rather than the path.
+ *
+ * A single object rather than two parameters so the next thing a tool needs can
+ * be added here instead of in every signature.
+ */
+data class ToolEnv(val project: File, val context: Context)
+
 interface Tool {
     val name: String
     val risk: Risk
@@ -70,7 +83,7 @@ interface Tool {
     /** One line for the card, from the arguments alone, before it runs. */
     fun describe(args: JSONObject): String
 
-    suspend fun run(project: File, args: JSONObject): ToolResult
+    suspend fun run(env: ToolEnv, args: JSONObject): ToolResult
 }
 
 // ── reading ──────────────────────────────────────────────────────────────
@@ -100,9 +113,9 @@ object ReadFile : Tool {
     override val risk = Risk.FREE
     override fun describe(args: JSONObject) = args.optString("path")
 
-    override suspend fun run(project: File, args: JSONObject): ToolResult {
+    override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult {
         val path = args.optString("path").ifBlank { return ToolResult.Failed("no path given") }
-        val file = resolve(project, path) ?: return ToolResult.Failed("outside the project")
+        val file = resolve(env.project, path) ?: return ToolResult.Failed("outside the project")
         if (!file.isFile) return ToolResult.Failed("no such file")
 
         val text = runCatching { file.readText() }
@@ -122,8 +135,8 @@ object ListDir : Tool {
     override val risk = Risk.FREE
     override fun describe(args: JSONObject) = args.optString("path").ifBlank { "." }
 
-    override suspend fun run(project: File, args: JSONObject): ToolResult {
-        val dir = resolve(project, args.optString("path").ifBlank { "." })
+    override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult {
+        val dir = resolve(env.project, args.optString("path").ifBlank { "." })
             ?: return ToolResult.Failed("outside the project")
         if (!dir.isDirectory) return ToolResult.Failed("not a directory")
 
@@ -146,14 +159,14 @@ object Glob : Tool {
     override val risk = Risk.FREE
     override fun describe(args: JSONObject) = args.optString("pattern")
 
-    override suspend fun run(project: File, args: JSONObject): ToolResult {
+    override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult {
         val pattern = args.optString("pattern")
             .ifBlank { return ToolResult.Failed("no pattern given") }
         val regex = globToRegex(pattern)
 
-        val hits = project.walkTopDown()
+        val hits = env.project.walkTopDown()
             .filter { it.isFile }
-            .map { it.relativeTo(project).path.replace(File.separatorChar, '/') }
+            .map { it.relativeTo(env.project).path.replace(File.separatorChar, '/') }
             .filter { regex.matches(it) }
             .take(LIMIT)
             .toList()
@@ -172,7 +185,7 @@ object Grep : Tool {
     override val risk = Risk.FREE
     override fun describe(args: JSONObject) = args.optString("pattern")
 
-    override suspend fun run(project: File, args: JSONObject): ToolResult {
+    override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult {
         val pattern = args.optString("pattern")
             .ifBlank { return ToolResult.Failed("no pattern given") }
         val regex = runCatching { Regex(pattern) }
@@ -182,8 +195,8 @@ object Grep : Tool {
         val out = StringBuilder()
         var count = 0
 
-        project.walkTopDown().filter { it.isFile }.forEach { file ->
-            val rel = file.relativeTo(project).path.replace(File.separatorChar, '/')
+        env.project.walkTopDown().filter { it.isFile }.forEach { file ->
+            val rel = file.relativeTo(env.project).path.replace(File.separatorChar, '/')
             if (within != null && !within.matches(rel)) return@forEach
             if (count >= LIMIT) return@forEach
 
@@ -227,9 +240,9 @@ object WriteFile : Tool {
         return "$path · $size chars"
     }
 
-    override suspend fun run(project: File, args: JSONObject): ToolResult {
+    override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult {
         val path = args.optString("path").ifBlank { return ToolResult.Failed("no path given") }
-        val file = resolve(project, path) ?: return ToolResult.Failed("outside the project")
+        val file = resolve(env.project, path) ?: return ToolResult.Failed("outside the project")
         if (file.isDirectory) return ToolResult.Failed("that is a folder")
 
         val content = args.optString("content")
@@ -274,9 +287,9 @@ object EditFile : Tool {
         return "${args.optString("path")} · ${old.take(48)}"
     }
 
-    override suspend fun run(project: File, args: JSONObject): ToolResult {
+    override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult {
         val path = args.optString("path").ifBlank { return ToolResult.Failed("no path given") }
-        val file = resolve(project, path) ?: return ToolResult.Failed("outside the project")
+        val file = resolve(env.project, path) ?: return ToolResult.Failed("outside the project")
         if (!file.isFile) return ToolResult.Failed("no such file")
 
         val old = args.optString("old")
@@ -346,7 +359,7 @@ object AskUser : Tool {
     // Never reached. The runner sends this to the question desk instead, because
     // the answer comes from a person and a File cannot supply one. It is here
     // because Tool requires it, and throwing would be worse than saying so.
-    override suspend fun run(project: File, args: JSONObject): ToolResult =
+    override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult =
         ToolResult.Failed("ask is answered by you, not by the project")
 }
 
@@ -381,16 +394,16 @@ object NewProjectTool : Tool {
         return "$name ($id)"
     }
 
-    override suspend fun run(project: File, args: JSONObject): ToolResult {
+    override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult {
         val name = args.optString("name")
         val failure = dev.ely.warp.build.NewProject.create(
-            dir = project,
+            dir = env.project,
             name = name,
             applicationId = args.optString("package"),
         )
         if (failure != null) return ToolResult.Failed(failure)
 
-        val meta = dev.ely.warp.build.NewProject.meta(project)
+        val meta = dev.ely.warp.build.NewProject.meta(env.project)
         // Lists what it made. "Project created" gives you nothing to check, and
         // the file names are exactly what the next tool call will refer to.
         return ToolResult.Ok(
@@ -430,7 +443,7 @@ object GoalDone : Tool {
 
     override fun describe(args: JSONObject) = args.optString("how_you_know")
 
-    override suspend fun run(project: File, args: JSONObject): ToolResult =
+    override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult =
         ToolResult.Ok("goal reached", args.optString("how_you_know"))
 }
 
@@ -473,8 +486,8 @@ val READ_TOOLS: Map<String, Tool> =
 
 /** Everything the model can be offered, by name. */
 val ALL_TOOLS: Map<String, Tool> =
-    (READ_TOOLS.values + listOf(NewProjectTool, WriteFile, EditFile, AskUser, GoalDone))
-        .associateBy { it.name }
+    (READ_TOOLS.values + listOf(NewProjectTool, WriteFile, EditFile, AskUser, GoalDone) +
+        DEVICE_TOOLS).associateBy { it.name }
 
 /** Everything, plus the way out. What a `/goal` turn is given. */
 val GOAL_TOOL_SPECS: List<dev.ely.warp.ai.ToolSpec> =

@@ -478,7 +478,7 @@ object DebugServer {
 
                 val project = java.io.File(context.filesDir, "project").apply { mkdirs() }
 
-                when (val r = tool.run(project, args)) {
+                when (val r = tool.run(dev.ely.warp.tools.ToolEnv(project, context), args)) {
                     is dev.ely.warp.tools.ToolResult.Ok -> 200 to JSONObject()
                         .put("summary", r.summary)
                         .put("body", r.body ?: JSONObject.NULL)

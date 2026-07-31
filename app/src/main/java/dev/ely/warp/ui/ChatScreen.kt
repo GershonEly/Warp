@@ -131,6 +131,7 @@ import dev.ely.warp.tools.PermissionDesk
 import dev.ely.warp.tools.QuestionDesk
 import dev.ely.warp.tools.Question
 import dev.ely.warp.tools.Decision
+import dev.ely.warp.tools.Risk
 import dev.ely.warp.ai.ChatMessage
 import dev.ely.warp.ai.Role
 import dev.ely.warp.ai.ToolCall
@@ -1068,10 +1069,19 @@ private fun ToolCard(
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                     ) { Text("Allow", style = MaterialTheme.typography.labelLarge) }
 
-                    TextButton(
-                        onClick = { onDecide(Decision.ALWAYS) },
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                    ) { Text("Always in this chat", style = MaterialTheme.typography.labelLarge) }
+                    // Absent for RUNS rather than shown and ignored. A button
+                    // that does not do what it says is worse than no button.
+                    if (request.risk != Risk.RUNS) {
+                        TextButton(
+                            onClick = { onDecide(Decision.ALWAYS) },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        ) {
+                            Text(
+                                "Always in this chat",
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                        }
+                    }
 
                     Spacer(Modifier.weight(1f))
 

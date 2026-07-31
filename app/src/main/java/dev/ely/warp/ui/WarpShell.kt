@@ -1663,7 +1663,9 @@ private fun ToolPermissionsSheet(
             Spacer(Modifier.size(WarpSpace.medium))
 
             ALL_TOOLS.values.forEach { tool ->
-                val free = tool.risk == Risk.FREE
+                // Only WRITES can be granted standing permission. FREE never
+                // asks, ASKS *is* the asking, and RUNS asks every single time.
+                val free = tool.risk != Risk.WRITES
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1678,7 +1680,9 @@ private fun ToolPermissionsSheet(
                         Text(tool.name, style = MaterialTheme.typography.bodyLarge)
                         Text(
                             when {
-                                free -> "Reads only — never asks"
+                                tool.risk == Risk.FREE -> "Reads only — never asks"
+                            tool.risk == Risk.ASKS -> "Puts a question to you"
+                            tool.risk == Risk.RUNS -> "Runs something — always asks"
                                 tool.name in granted -> "Runs without asking, in this chat"
                                 else -> "Asks you every time"
                             },

@@ -18,7 +18,7 @@ import java.io.File
  * eventually does, and the day it did, nothing on screen would look different.
  */
 class ToolRunner(
-    context: Context,
+    private val context: Context,
     private val permission: AsksPermission? = null,
     private val questions: AsksQuestions? = null,
 ) {
@@ -129,7 +129,7 @@ class ToolRunner(
 
         report(call.copy(status = ToolCall.Status.RUNNING))
 
-        return when (val result = runCatching { tool.run(project, args) }.getOrElse {
+        return when (val result = runCatching { tool.run(ToolEnv(project, context), args) }.getOrElse {
             Log.w(TAG, "${call.name} threw", it)
             ToolResult.Failed(it.message ?: it.javaClass.simpleName)
         }) {
