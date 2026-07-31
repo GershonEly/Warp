@@ -112,15 +112,72 @@ class ChatEngine(
      * the next message. `/plan` means *this* one plans; the one after it is a
      * normal turn again unless you say otherwise.
      */
-    enum class Mode { NORMAL, PLAN, GRILL }
+    enum class Mode { NORMAL, PLAN, GRILL, GOAL }
+
+    /**
+     * A standing instruction to keep working until something is true.
+     *
+     * Held in memory and **deliberately not persisted**. A goal that survived
+     * the app being killed would start working again on its own the next time
+     * you opened Warp, without you asking — which is exactly the failure
+     * §5d describes. Setting a goal is something you do on purpose, each time.
+     *
+     * @param turn which turn it is on, from 1. @param limit where it stops.
+     */
+    data class Goal(val condition: String, val turn: Int, val limit: Int) {
+        val label: String get() = "turn $turn of $limit"
+    }
+
+    private val _goal = MutableStateFlow<Goal?>(null)
+
+    /**
+     * The goal, if one is running.
+     *
+     * Public and observed so the screen can keep it in front of you the whole
+     * time. §5d's third failure is *frozen while claiming to work*, and
+     * `/goal` is the feature that causes it — it removes the turn boundary,
+     * which is the moment you would otherwise have noticed.
+     */
+    val goal: StateFlow<Goal?> = _goal.asStateFlow()
 
     private var mode = Mode.NORMAL
 
+    /**
+     * Stop working toward the goal, and leave nothing running.
+     *
+     * §5f is emphatic that this is absolute — the request, the process
+     * and the loop. Cancelling the job without clearing the goal would end this
+     * turn and start the next one; clearing the goal without cancelling would
+     * leave a turn running with nothing on screen saying so. Both, in that
+     * order, or it is not a stop.
+     */
+    fun clearGoal() {
+        _goal.value = null
+        stop()
+    }
+
     /** Send a user message and stream the reply. */
-    fun send(text: String, mode: Mode = Mode.NORMAL) {
+    /**
+     * @param condition the goal itself, when [mode] is GOAL.
+     *
+     * Separate from [text] because they are different things that happen to
+     * arrive together: the message is what you typed, slash command and all, and
+     * belongs in the transcript verbatim. The condition is what Warp is working
+     * toward, and it goes on screen and into every prompt — with "/goal " on
+     * the front of it, the status bar read "Working toward: /goal the file
+     * exists", which is not a condition, it is a keystroke log.
+     */
+    fun send(text: String, mode: Mode = Mode.NORMAL, condition: String? = null) {
         val trimmed = text.trim()
         if (trimmed.isEmpty() || _busy.value) return
         this.mode = mode
+        if (mode == Mode.GOAL) {
+            _goal.value = Goal(
+                condition = condition?.trim()?.ifBlank { null } ?: trimmed,
+                turn = 1,
+                limit = MAX_GOAL_TURNS,
+            )
+        }
 
         val userMessage = ChatMessage(
             id = UUID.randomUUID().toString(),
@@ -149,7 +206,7 @@ class ChatEngine(
                 ensureConversation(trimmed)
                 persistNow(userMessage.id)
 
-                runTurn(replyId)
+                runGoal(replyId)
                 refineTitle(replyId)
             } catch (e: CancellationException) {
                 // Stopped by the user: keep whatever text already arrived
@@ -183,6 +240,62 @@ class ChatEngine(
     }
 
     /**
+     * One exchange, or many while a goal is running.
+     *
+     * The turn boundary is where you would normally look at what happened and
+     * decide whether to carry on. A goal removes it on purpose, so everything
+     * that boundary used to do has to be done explicitly instead: a hard limit,
+     * a visible count, and a stated reason whichever way it ends.
+     */
+    private suspend fun runGoal(firstReplyId: String) {
+        var replyId = firstReplyId
+
+        while (true) {
+            // The id it *ended* on, which is not the one it started on once a
+            // turn has spent rounds looking things up. Checking the first
+            // message for goal_done found nothing every time, so the loop ran on
+            // after the goal was already met.
+            val last = runTurn(replyId)
+
+            val current = _goal.value ?: return
+
+            // Finished, and it had to say how it knows. A goal that ends because
+            // the model felt done is a goal that ends whenever the model gets
+            // bored; `goal_done` demands the evidence.
+            if (goalDoneIn(last)) {
+                _goal.value = null
+                return
+            }
+            replyId = last
+
+            if (current.turn >= current.limit) {
+                update(replyId) {
+                    it.copy(
+                        streaming = false,
+                        error = AiError.Unknown(
+                            "Stopped after ${current.limit} turns without reaching: " +
+                                current.condition
+                        ),
+                    )
+                }
+                _goal.value = null
+                persistNow(replyId)
+                return
+            }
+
+            _goal.value = current.copy(turn = current.turn + 1)
+            replyId = UUID.randomUUID().toString()
+            activeReplyId = replyId
+            _messages.value = _messages.value + ChatMessage(
+                id = replyId,
+                role = Role.ASSISTANT,
+                text = "",
+                streaming = true,
+            )
+        }
+    }
+
+    /**
      * Keep going until the model has nothing left to ask for.
      *
      * A model that calls a tool has not finished its answer — it has paused
@@ -195,13 +308,19 @@ class ChatEngine(
      * turn is *look, then say* and squashing several of those into one bubble
      * loses which answer followed which lookup.
      */
-    private suspend fun runTurn(firstReplyId: String) {
+    private suspend fun runTurn(firstReplyId: String): String {
         var replyId = firstReplyId
         var round = 0
 
         while (true) {
             val ranTools = streamInto(replyId)
-            if (!ranTools) return
+            if (!ranTools) return replyId
+
+            // `goal_done` ends the turn, not just the round. Without this the
+            // round loop treated it as any other tool and kept going to its cap,
+            // calling goal_done again on every one of them: nine extra turns
+            // after the goal was already reached, each one paid for.
+            if (goalDoneIn(replyId)) return replyId
 
             if (round >= MAX_TOOL_ROUNDS) {
                 // Said out loud rather than stopping quietly. A budget that ends
@@ -217,7 +336,7 @@ class ChatEngine(
                     )
                 }
                 persistNow(replyId)
-                return
+                return replyId
             }
 
             round++
@@ -231,6 +350,12 @@ class ChatEngine(
             )
         }
     }
+
+    /** Did this message end with the goal declared reached? */
+    private fun goalDoneIn(messageId: String): Boolean =
+        _messages.value.firstOrNull { it.id == messageId }
+            ?.toolCalls
+            ?.any { it.name == "goal_done" && it.status == ToolCall.Status.DONE } == true
 
     /**
      * One request, streamed into one message.
@@ -251,6 +376,12 @@ class ChatEngine(
                 when (mode) {
                     Mode.PLAN -> PLAN_DIRECTIVE.trim()
                     Mode.GRILL -> GRILL_DIRECTIVE.trim()
+                    // Restated every turn, with the count. A model six turns in
+                    // has the goal a long way up its context, and drifting off
+                    // it is the ordinary way this fails.
+                    Mode.GOAL -> _goal.value?.let {
+                        goalDirective(it.condition, it.turn, it.limit)
+                    }
                     Mode.NORMAL -> null
                 },
             ).joinToString(separator = System.lineSeparator() + System.lineSeparator())
@@ -498,6 +629,15 @@ class ChatEngine(
          * a loop that spends your money at full speed.
          */
         private const val MAX_TOOL_ROUNDS = 8
+
+        /**
+         * How many turns a goal gets before it must stop and say so.
+         *
+         * The point is not the number, it is that there is one. An agent that
+         * decides for itself when to stop is an agent that spends until it is
+         * satisfied — and Warp is BYOK, so that is your money.
+         */
+        private const val MAX_GOAL_TURNS = 10
 
         val DEFAULT_SYSTEM_PROMPT = """
             You are Warp, an AI coding assistant that runs entirely on an Android phone.

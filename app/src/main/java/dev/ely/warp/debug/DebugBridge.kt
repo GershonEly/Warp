@@ -68,6 +68,16 @@ object DebugBridge {
     @Volatile
     var questions: dev.ely.warp.tools.QuestionDesk? = null
 
+    /**
+     * The running goal as (condition, turn, limit), or null.
+     *
+     * A plain triple rather than the engine's type, so the debug layer does not
+     * depend on the chat layer's shape — the same reason every other hook
+     * here is a lambda.
+     */
+    @Volatile
+    var goal: (() -> Triple<String, Int, Int>?)? = null
+
     /** Which conversation is open, so a permission route can default to it. */
     @Volatile
     var conversation: (() -> String?)? = null

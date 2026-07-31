@@ -76,6 +76,7 @@ else:
 # ever. Clear it before anything else, or every later check inherits the mess.
 call("POST", "/permission", {"decision": "DENY"})
 call("POST", "/question/answer", {"text": "left over from an interrupted run"})
+call("POST", "/chat/command", {"text": "/goal clear"})
 # Rules are global and outlive a run. A rule left behind changes what the mock
 # replies with, and unrelated sections start failing for a reason nothing names.
 call("POST", "/chat/command", {"text": "/rules clear"})
@@ -358,7 +359,7 @@ check("a slash inside a sentence is not a command",
       command("what does src/main mean") == "sent")
 settle()
 check("an unbuilt command says so rather than doing nothing",
-      command("/goal ship it") == "/goal is not built yet.")
+      command("/build") == "/build is not built yet.")
 check("removing by number reports what went",
       command("/rules remove 1") == "Removed: never touch the manifest")
 check("and the list really shrank",
@@ -417,7 +418,84 @@ kept = [c["result"] for m in reopened for c in m.get("toolCalls", []) if c["name
 check("the answers survive reopening the chat", kept == answers, f"{kept}")
 
 
-print("\n11. SETTINGS ROUND-TRIP")
+print("\n11. /GOAL WORKS ACROSS TURNS, AND STOPS")
+# The dangerous command. §5d's third failure is "frozen while claiming to work",
+# and /goal is the feature that causes it, because it removes the turn boundary
+# where you would otherwise notice. So all three exits are checked: reaching the
+# goal, running out of budget, and being stopped by hand.
+
+
+def goal_state():
+    return call("GET", "/goal")[1]
+
+
+def idle(limit=90.0):
+    deadline = time.time() + limit
+    while time.time() < deadline:
+        if not call("GET", "/state")[1]["busy"] and not goal_state()["running"]:
+            time.sleep(0.3)
+            return True
+        time.sleep(0.2)
+    return False
+
+
+check("/goal with nothing running says so",
+      command("/goal") == "No goal is running.")
+
+call("POST", "/chat/new")
+command("/goal the counter file exists")
+turns = set()
+for _ in range(40):
+    time.sleep(0.4)
+    g = goal_state()
+    if not g["running"]:
+        break
+    turns.add(g["turn"])
+
+check("it ran more than one turn", len(turns) > 1, f"turns seen: {sorted(turns)}")
+check("the count climbs rather than sitting still", turns == set(range(1, max(turns) + 1)),
+      f"{sorted(turns)}")
+
+cid = call("GET", "/state")[1]["conversationId"]
+msgs = call("GET", "/messages?id=" + cid)[1]["messages"]
+done = [c for m in msgs for c in m.get("toolCalls", []) if c["name"] == "goal_done"]
+check("it ended by declaring the goal reached", len(done) == 1, f"{len(done)} goal_done calls")
+check("and had to say how it knows", bool(done and done[0]["body"]),
+      repr(done[0]["body"]) if done else "")
+# The bug this section exists for: goal_done was not terminal inside a turn, so
+# the round loop kept calling it and paid for nine more turns after finishing.
+check("it stopped the moment it was done, not later",
+      len(msgs) == 2 + max(turns) - 1, f"{len(msgs)} messages for {max(turns)} turns")
+check("nothing is left running", goal_state()["running"] is False)
+
+call("POST", "/chat/new")
+command("/goal it never finishes")
+check("the condition is the goal, not the keystrokes",
+      goal_state()["condition"] == "it never finishes", repr(goal_state()["condition"]))
+idle()
+msgs = call("GET", "/messages?id=" + call("GET", "/state")[1]["conversationId"])[1]["messages"]
+check("the budget stops it", "Stopped after 10 turns" in (msgs[-1]["error"] or ""),
+      repr(msgs[-1]["error"]))
+check("and the budget says what it failed to reach",
+      "it never finishes" in (msgs[-1]["error"] or ""))
+
+call("POST", "/chat/new")
+command("/goal it never finishes")
+time.sleep(2)
+check("stopping names what was stopped",
+      command("/goal clear") == "Stopped: it never finishes")
+time.sleep(1)
+check("nothing is running after a stop", goal_state()["running"] is False)
+check("and the turn really ended", call("GET", "/state")[1]["busy"] is False)
+# No corpse: §5f asks for the request, the process and the loop, all three.
+before = call("GET", "/state")[1]["messageCount"]
+time.sleep(4)
+check("no messages arrive after stopping",
+      call("GET", "/state")[1]["messageCount"] == before,
+      f"{before} then {call('GET', '/state')[1]['messageCount']}")
+
+
+print("\n12. SETTINGS ROUND-TRIP")
 s, r = call("POST", "/settings", {"name": "ambient", "value": "false"})
 check("turning the atmosphere off reads back as off", r.get("value") == "false")
 s, r = call("POST", "/settings", {"name": "ambient", "value": "true"})
@@ -427,7 +505,7 @@ s, r = call("POST", "/settings", {"name": "nonsense", "value": "x"})
 check("an unknown setting is refused rather than silently ignored", s == 400)
 
 
-print("\n11. NAVIGATION")
+print("\n13. NAVIGATION")
 for dest in ("SETTINGS", "BUILD", "CHAT"):
     call("POST", "/nav", {"to": dest})
     s, st = call("GET", "/state")

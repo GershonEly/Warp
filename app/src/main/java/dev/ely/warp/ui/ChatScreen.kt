@@ -249,6 +249,7 @@ fun ChatScreen(
         .collectAsState()
     val pendingQuestion by (questions?.pending ?: remember { MutableStateFlow(null) })
         .collectAsState()
+    val goal by engine.goal.collectAsState()
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val haptics = LocalHapticFeedback.current
@@ -364,6 +365,8 @@ fun ChatScreen(
                 voice = voice,
                 note = ruleFeedback,
                 onNoteShown = { ruleFeedback = null },
+                goal = goal,
+                onStopGoal = { engine.clearGoal() },
                 matches = matchingCommands(input),
                 // A trailing space, so the argument is typed rather than
                 // rubbing up against the command name.
@@ -409,6 +412,26 @@ internal fun runComposed(
         "grill-me" -> {
             engine.send(sent, ChatEngine.Mode.GRILL)
             null
+        }
+
+        "goal" -> when (parsed.argument.trim().lowercase()) {
+            // Bare /goal is a status question, and it has to answer even when
+            // there is nothing running — "no goal" is the answer you most
+            // need when you suspect something is still going.
+            "" -> engine.goal.value
+                ?.let { "Working toward: ${it.condition} (${it.label})" }
+                ?: "No goal is running."
+
+            "clear", "stop" -> {
+                val had = engine.goal.value
+                engine.clearGoal()
+                had?.let { "Stopped: ${it.condition}" } ?: "There was no goal to stop."
+            }
+
+            else -> {
+                engine.send(sent, ChatEngine.Mode.GOAL, condition = parsed.argument)
+                null
+            }
         }
 
         // No note for the bare form. The sheet that just opened *is* the
@@ -1115,6 +1138,9 @@ private fun Composer(
     /** A short answer to a command, shown above the field and then gone. */
     note: String? = null,
     onNoteShown: () -> Unit = {},
+    /** The running goal, shown above the field until it is done or stopped. */
+    goal: ChatEngine.Goal? = null,
+    onStopGoal: () -> Unit = {},
     /** Commands matching what is typed, or null when this is not a command. */
     matches: List<SlashCommand>? = null,
     onPickCommand: (SlashCommand) -> Unit = {},
@@ -1216,6 +1242,17 @@ private fun Composer(
             CommandMenu(
                 matches = it,
                 onPick = onPickCommand,
+                modifier = Modifier.padding(
+                    horizontal = WarpSpace.medium,
+                    vertical = WarpSpace.small,
+                ),
+            )
+        }
+
+        goal?.let {
+            GoalBar(
+                goal = it,
+                onStop = onStopGoal,
                 modifier = Modifier.padding(
                     horizontal = WarpSpace.medium,
                     vertical = WarpSpace.small,

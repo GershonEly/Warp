@@ -387,6 +387,15 @@ object DebugServer {
                 200 to JSONObject().put("answered", text)
             }
 
+            "GET /goal" -> {
+                val state = DebugBridge.goal?.invoke()
+                200 to JSONObject()
+                    .put("running", state != null)
+                    .put("condition", state?.first ?: JSONObject.NULL)
+                    .put("turn", state?.second ?: JSONObject.NULL)
+                    .put("limit", state?.third ?: JSONObject.NULL)
+            }
+
             "GET /rules" -> {
                 val rules = dev.ely.warp.data.Rules.get(context).rules.value
                 200 to JSONObject()

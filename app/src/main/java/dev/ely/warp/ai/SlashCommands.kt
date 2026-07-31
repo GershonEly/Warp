@@ -46,7 +46,6 @@ val SLASH_COMMANDS = listOf(
         name = "goal",
         hint = "work until this is true",
         argumentHint = "when is it finished?",
-        ready = false,
     ),
     SlashCommand(
         name = "grill-me",
@@ -131,6 +130,30 @@ change anything.
 Stop when the remaining choices no longer change what gets built. Then give a
 short summary of what was decided, and nothing else.
 """
+
+/**
+ * What a `/goal` turn is told, restated on every single turn.
+ *
+ * Every line here exists because of §5d. The condition is repeated because
+ * a model six turns in has it a long way up its context. The count is given
+ * because an agent that does not know it is on a clock behaves like one with
+ * infinite time. And it is told to stop and say so rather than to guess, because
+ * a loop that cannot admit it is stuck keeps going.
+ */
+fun goalDirective(condition: String, turn: Int, limit: Int): String = """
+You are working toward a goal the user set. Keep going until it is true.
+
+THE GOAL: $condition
+
+This is turn $turn of at most $limit. When the goal is true, call `goal_done`
+and say how you know — what you checked and what it said. Do not call it
+because the work feels finished; call it because you verified the goal.
+
+Each turn, do the next concrete thing that moves toward the goal, then say in
+one line what you did and what is left. If you are stuck, or the goal turns out
+to be impossible or ambiguous, say so plainly and stop — do not keep trying
+the same thing.
+""".trimIndent()
 
 /**
  * What `/plan` adds to the system prompt, for one turn only.

@@ -350,6 +350,36 @@ object AskUser : Tool {
         ToolResult.Failed("ask is answered by you, not by the project")
 }
 
+/**
+ * Say the goal is reached.
+ *
+ * A tool rather than a phrase, because "I think that's everything!" is
+ * something a model says at the end of every turn whether or not it is true.
+ * Calling this is a deliberate act with a shape, and the engine can act on it
+ * without reading tea leaves.
+ *
+ * It changes nothing, which is why it is FREE — the *engine* stops the loop
+ * when it sees the call, not the tool.
+ */
+object GoalDone : Tool {
+    override val name = "goal_done"
+    override val risk = Risk.FREE
+    override val description =
+        "Call this the moment the stated goal is true, and not before. Say how " +
+            "you know. If it is not true yet, do not call this — keep working."
+    override val schemaJson = """
+        {"type":"object","properties":{
+          "how_you_know":{"type":"string",
+            "description":"The evidence. What you checked, and what it said."}},
+         "required":["how_you_know"]}
+    """.trimIndent()
+
+    override fun describe(args: JSONObject) = args.optString("how_you_know")
+
+    override suspend fun run(project: File, args: JSONObject): ToolResult =
+        ToolResult.Ok("goal reached", args.optString("how_you_know"))
+}
+
 // A shell glob, as a regex.
 //
 // A double star crosses directories and a single one does not, which is the
@@ -389,7 +419,14 @@ val READ_TOOLS: Map<String, Tool> =
 
 /** Everything the model can be offered, by name. */
 val ALL_TOOLS: Map<String, Tool> =
-    (READ_TOOLS.values + listOf(WriteFile, EditFile, AskUser)).associateBy { it.name }
+    (READ_TOOLS.values + listOf(WriteFile, EditFile, AskUser, GoalDone))
+        .associateBy { it.name }
+
+/** Everything, plus the way out. What a `/goal` turn is given. */
+val GOAL_TOOL_SPECS: List<dev.ely.warp.ai.ToolSpec> =
+    (ALL_TOOLS.values.filter { it.risk != Risk.ASKS }).map {
+        dev.ely.warp.ai.ToolSpec(it.name, it.description, it.schemaJson)
+    }
 
 /** Reading, plus the one tool that asks you. What `/grill-me` is given. */
 val GRILL_TOOL_SPECS: List<dev.ely.warp.ai.ToolSpec> =
@@ -405,10 +442,10 @@ val READ_TOOL_SPECS: List<dev.ely.warp.ai.ToolSpec> =
 
 /** The same tools, in the shape a provider hands to a model. */
 val ALL_TOOL_SPECS: List<dev.ely.warp.ai.ToolSpec> =
-    // Without `ask`. An ordinary turn should get on with it; a model holding a
-    // question tool will use it to check in, which is exactly what its own
-    // description forbids and exactly what it would do anyway. Asking is what
-    // `/grill-me` is for, and it can be opened up later if that proves wrong.
-    ALL_TOOLS.values.filter { it.risk != Risk.ASKS }.map {
+    // Without `ask`, and without `goal_done`. A model holding a question tool
+    // uses it to check in, which its own description forbids; a model holding
+    // goal_done with no goal set has nothing true to say with it. Both belong
+    // to the mode that needs them.
+    ALL_TOOLS.values.filter { it.risk != Risk.ASKS && it.name != "goal_done" }.map {
         dev.ely.warp.ai.ToolSpec(it.name, it.description, it.schemaJson)
     }

@@ -74,6 +74,40 @@ class MockProvider(
         // never shows its "thinking" state, so it never gets tested.
         delay(if (request.effort == Effort.LOW) 350 else 900)
 
+        // A goal, scripted to take three turns.
+        //
+        // Three rather than one because the bug worth catching is the loop, not
+        // the first turn: whether turn two starts, whether the count climbs, and
+        // whether `goal_done` actually ends it. A one-turn goal proves none of
+        // those and looks identical to a working one.
+        //
+        // "never finishes" is a deliberate escape hatch, like "pretend offline"
+        // is the only way to reach the turn budget on purpose.
+        Regex("""This is turn (\d+) of""").find(request.systemPrompt.orEmpty())?.let { m ->
+            val turn = m.groupValues[1].toIntOrNull() ?: 1
+            val endless = request.messages.any { "never finishes" in it.text.lowercase() }
+
+            if (turn >= 3 && !endless) {
+                emitWords("Checked, and it holds.")
+                emit(
+                    AiEvent.ToolCallRequested(
+                        ToolCall(
+                            id = UUID.randomUUID().toString(),
+                            name = "goal_done",
+                            argumentsJson = JSONObject()
+                                .put("how_you_know", "Read it back after writing; it matched.")
+                                .toString(),
+                        )
+                    )
+                )
+                delay(200)
+            } else {
+                emitWords("Turn $turn: did the next piece. More to do.")
+                emit(AiEvent.Completed())
+            }
+            return@flow
+        }
+
         // A grilling, scripted: ask, hear the answer, ask a sharper one, then
         // summarise. Two questions rather than one, because the bug worth
         // catching is the second question never arriving — a single question

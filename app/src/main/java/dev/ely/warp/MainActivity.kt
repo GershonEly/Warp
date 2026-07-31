@@ -146,6 +146,7 @@ private fun WarpApp() {
                     ChatEngine.Mode.NORMAL -> dev.ely.warp.tools.ALL_TOOL_SPECS
                     ChatEngine.Mode.PLAN -> dev.ely.warp.tools.READ_TOOL_SPECS
                     ChatEngine.Mode.GRILL -> dev.ely.warp.tools.GRILL_TOOL_SPECS
+                    ChatEngine.Mode.GOAL -> dev.ely.warp.tools.GOAL_TOOL_SPECS
                 }
                 override suspend fun execute(
                     call: dev.ely.warp.ai.ToolCall,
@@ -241,6 +242,9 @@ private fun WarpApp() {
         }
         DebugBridge.permission = permission
         DebugBridge.questions = questions
+        DebugBridge.goal = {
+            engine.goal.value?.let { Triple(it.condition, it.turn, it.limit) }
+        }
         DebugBridge.conversation = { engine.conversationId.value }
         DebugBridge.setting = { name, value ->
             val appearance = Appearance.get(context)
@@ -266,6 +270,7 @@ private fun WarpApp() {
             DebugBridge.setting = null
             DebugBridge.permission = null
             DebugBridge.questions = null
+            DebugBridge.goal = null
             DebugBridge.command = null
             DebugBridge.conversation = null
         }

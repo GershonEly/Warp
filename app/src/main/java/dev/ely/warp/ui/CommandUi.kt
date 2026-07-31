@@ -26,6 +26,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.ely.warp.ai.ChatEngine
+import androidx.compose.material3.TextButton
 import dev.ely.warp.ai.SlashCommand
 import dev.ely.warp.data.Rules
 import androidx.compose.runtime.setValue
@@ -343,6 +345,57 @@ fun AnsweredQuestion(call: dev.ely.warp.ai.ToolCall, modifier: Modifier = Modifi
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
+        }
+    }
+}
+
+/**
+ * The goal, kept in front of you the whole time it is running.
+ *
+ * This bar is the answer to §5d's third failure — *frozen while claiming
+ * to work*. `/goal` removes the turn boundary, which is the moment you would
+ * otherwise glance at what happened and decide whether to carry on. So the two
+ * things that boundary gave you are put on screen permanently instead: what it
+ * is trying to do, and how much rope it has left.
+ *
+ * Stop is a word, not an icon. This is the control someone reaches for when
+ * they have decided it is going wrong, and that is the wrong moment to make
+ * them work out what a square means.
+ */
+@Composable
+fun GoalBar(
+    goal: ChatEngine.Goal,
+    onStop: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    goal.condition,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    // The count is not decoration. A number that climbs is how
+                    // you tell working from stuck without reading every reply.
+                    "Working · ${goal.label}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+            TextButton(onClick = onStop) {
+                Text("Stop", style = MaterialTheme.typography.labelLarge)
+            }
         }
     }
 }
