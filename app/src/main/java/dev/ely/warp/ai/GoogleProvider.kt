@@ -126,15 +126,14 @@ class GoogleProvider(private val context: Context) : AiProvider {
 
                     val candidate = event.optJSONArray("candidates")?.optJSONObject(0) ?: continue
 
-                    candidate.optString("finishReason")
-                        .takeIf { it.isNotEmpty() && it != "null" }
+                    candidate.textOrNull("finishReason")
                         ?.let { stopReason = it }
 
                     val parts = candidate.optJSONObject("content")?.optJSONArray("parts") ?: continue
                     for (i in 0 until parts.length()) {
                         val part = parts.getJSONObject(i)
 
-                        part.optString("text").takeIf { it.isNotEmpty() }
+                        part.textOrNull("text")
                             ?.let { emit(AiEvent.TextDelta(it)) }
 
                         part.optJSONObject("functionCall")?.let { call ->
@@ -142,7 +141,7 @@ class GoogleProvider(private val context: Context) : AiProvider {
                                 AiEvent.ToolCallRequested(
                                     ToolCall(
                                         id = java.util.UUID.randomUUID().toString(),
-                                        name = call.optString("name"),
+                                        name = call.textOrNull("name").orEmpty(),
                                         argumentsJson = call.optJSONObject("args")?.toString() ?: "{}",
                                     )
                                 )

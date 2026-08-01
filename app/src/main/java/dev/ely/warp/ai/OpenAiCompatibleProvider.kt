@@ -125,25 +125,25 @@ abstract class OpenAiCompatibleProvider(
                     val choice = event.optJSONArray("choices")?.optJSONObject(0) ?: continue
                     val delta = choice.optJSONObject("delta")
 
-                    delta?.optString("content")
-                        ?.takeIf { it.isNotEmpty() }
+                    // textOrNull, not optString: a tool-call chunk sends
+                    // "content": null, and optString turns that into the word
+                    // "null" glued onto the reply.
+                    delta?.textOrNull("content")
                         ?.let { emit(AiEvent.TextDelta(it)) }
 
                     delta?.optJSONArray("tool_calls")?.let { calls ->
                         for (i in 0 until calls.length()) {
                             val call = calls.getJSONObject(i)
                             val index = call.optInt("index", i)
-                            call.optString("id").takeIf { it.isNotEmpty() }
-                                ?.let { toolIds[index] = it }
+                            call.textOrNull("id")?.let { toolIds[index] = it }
                             val fn = call.optJSONObject("function")
-                            fn?.optString("name")?.takeIf { it.isNotEmpty() }
-                                ?.let { toolNames[index] = it }
-                            fn?.optString("arguments")?.takeIf { it.isNotEmpty() }
+                            fn?.textOrNull("name")?.let { toolNames[index] = it }
+                            fn?.textOrNull("arguments")
                                 ?.let { toolArgs.getOrPut(index) { StringBuilder() }.append(it) }
                         }
                     }
 
-                    choice.optString("finish_reason").takeIf { it.isNotEmpty() && it != "null" }
+                    choice.textOrNull("finish_reason")
                         ?.let { reason ->
                             stopReason = reason
                             // Tool calls are only complete once the turn ends.

@@ -139,8 +139,8 @@ class AnthropicProvider(
                         "content_block_start" -> {
                             val block = event.optJSONObject("content_block")
                             if (block?.optString("type") == "tool_use") {
-                                toolId = block.optString("id")
-                                toolName = block.optString("name")
+                                toolId = block.textOrNull("id").orEmpty()
+                                toolName = block.textOrNull("name").orEmpty()
                                 toolArgs.setLength(0)
                             }
                         }
@@ -149,9 +149,10 @@ class AnthropicProvider(
                             val delta = event.optJSONObject("delta") ?: continue
                             when (delta.optString("type")) {
                                 "text_delta" ->
-                                    emit(AiEvent.TextDelta(delta.optString("text")))
+                                    delta.textOrNull("text")
+                                        ?.let { emit(AiEvent.TextDelta(it)) }
                                 "input_json_delta" ->
-                                    toolArgs.append(delta.optString("partial_json"))
+                                    delta.textOrNull("partial_json")?.let { toolArgs.append(it) }
                             }
                         }
 

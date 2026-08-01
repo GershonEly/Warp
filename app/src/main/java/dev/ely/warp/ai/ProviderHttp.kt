@@ -102,3 +102,20 @@ internal object ProviderHttp {
         else -> AiError.Unknown("${e.javaClass.simpleName}: ${e.message}")
     }
 }
+
+/**
+ * A string field, or null — never the four characters `"null"`.
+ *
+ * `JSONObject.optString` returns the **literal string "null"** when the value is
+ * JSON null, because it stringifies the null sentinel. Every OpenAI-style
+ * streaming chunk that carries a tool call sends `"content": null`, so Warp
+ * appended "null" to the reply text once per tool call. A conversation where the
+ * model used four tools read: `nullnullnullnull`.
+ *
+ * It was found by the user looking at their own screen, not by any test — and
+ * the code already guarded exactly one field (`finish_reason`) with
+ * `it != "null"`, which means this was hit before, patched where it hurt, and
+ * never recognised as general.
+ */
+internal fun org.json.JSONObject.textOrNull(key: String): String? =
+    if (isNull(key)) null else optString(key).takeIf { it.isNotEmpty() }
