@@ -60,6 +60,8 @@ import dev.ely.warp.data.DrawerState
 import dev.ely.warp.diag.DeviceProbe
 import dev.ely.warp.ui.AppsScreen
 import dev.ely.warp.ui.BuildScreen
+import dev.ely.warp.ui.EditorScreen
+import dev.ely.warp.ui.FilesScreen
 import dev.ely.warp.ui.ChatScreen
 import dev.ely.warp.ui.ambientWash
 import dev.ely.warp.ui.DemoChip
@@ -164,6 +166,16 @@ private fun WarpApp() {
         // the chat that granted permission to write are always the same chat.
         toolRunner.conversation = { engine.conversationId.value }
     }
+
+    /**
+     * The file open in the editor, or null.
+     *
+     * Held here rather than inside a screen because §9d makes the editor
+     * something that opens **over** whatever you were doing — it is not a
+     * destination, so it cannot live inside one. Back closes it and leaves you
+     * where you were.
+     */
+    var editing by remember { mutableStateOf<java.io.File?>(null) }
 
     var choice by remember { mutableStateOf(registry.choice) }
 
@@ -472,18 +484,34 @@ private fun WarpApp() {
                     },
                 )
 
-                WarpDestination.FILES -> ComingSoonScreen(
-                    "Files",
-                    "A file tree for your projects, with git status beside each " +
-                        "file. Tapping a file opens it in the editor. Arrives " +
-                        "with project storage.",
-                )
+                WarpDestination.FILES -> {
+                    // Recomputed whenever the open chat changes, because files
+                    // belong to a conversation now. A screen that showed "the
+                    // project" would be showing whichever one happened to be
+                    // first.
+                    val dir = openConversationId?.let {
+                        dev.ely.warp.build.Projects.forConversation(context, it)
+                    }
+                    FilesScreen(
+                        project = dir?.takeIf { dev.ely.warp.build.NewProject.exists(it) },
+                        appName = dir?.let { dev.ely.warp.build.NewProject.meta(it)?.name },
+                        onOpen = { editing = it },
+                    )
+                }
                 WarpDestination.ASSETS -> ComingSoonScreen(
                     "Assets",
                     "Icon and image generation, resized for every density " +
                         "Android needs.",
                 )
             }
+        }
+
+        // Over everything, including the shell. The editor is not a place you
+        // navigate to, so it does not sit inside the shell's content slot — it
+        // covers it, and Back puts you back exactly where you were.
+        editing?.let { file ->
+            androidx.activity.compose.BackHandler { editing = null }
+            EditorScreen(file = file, onClose = { editing = null })
         }
       }
     }
