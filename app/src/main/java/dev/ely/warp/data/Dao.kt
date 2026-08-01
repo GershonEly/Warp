@@ -108,6 +108,10 @@ interface ConversationDao {
      * your process — so anything still soft-deleted from a previous session is
      * swept the next time Warp opens.
      */
+    /** Every id, including soft-deleted ones. Used to find orphaned folders. */
+    @Query("SELECT id FROM conversations")
+    suspend fun allIds(): List<String>
+
     @Query("DELETE FROM conversations WHERE deletedAt IS NOT NULL AND deletedAt < :before")
     suspend fun purgeDeletedBefore(before: Long)
 }

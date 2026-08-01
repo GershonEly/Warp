@@ -40,6 +40,16 @@ class WarpApplication : Application() {
         scope.launch {
             runCatching { conversations.purgeOldDeletes(System.currentTimeMillis()) }
                 .onFailure { Log.w(TAG, "could not sweep deleted conversations", it) }
+
+            // And the files. Tool grants cascade in SQL when a conversation is
+            // really deleted; a folder full of Kotlin cannot, so it is swept
+            // here. Without this, deleting a chat left its app on the phone for
+            // ever — invisible, unreachable, and still taking space.
+            runCatching {
+                val alive = conversations.allConversationIds()
+                val orphans = dev.ely.warp.build.Projects.removeOrphans(this@WarpApplication, alive)
+                if (orphans > 0) Log.i(TAG, "removed $orphans orphaned project(s)")
+            }.onFailure { Log.w(TAG, "could not sweep project folders", it) }
         }
 
         // The debug surface follows the key rather than the launch. Typing a key

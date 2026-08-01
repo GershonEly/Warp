@@ -58,6 +58,7 @@ import dev.ely.warp.tools.QuestionDesk
 import dev.ely.warp.tools.ToolRunner
 import dev.ely.warp.data.DrawerState
 import dev.ely.warp.diag.DeviceProbe
+import dev.ely.warp.ui.AppsScreen
 import dev.ely.warp.ui.BuildScreen
 import dev.ely.warp.ui.ChatScreen
 import dev.ely.warp.ui.ambientWash
@@ -157,7 +158,12 @@ private fun WarpApp() {
     }
     // Told which chat it is in, now that there is one. Read at the moment of
     // asking, so it follows you from conversation to conversation.
-    remember(engine) { permission.conversation = { engine.conversationId.value } }
+    remember(engine) {
+        permission.conversation = { engine.conversationId.value }
+        // The same supplier for the runner, so the folder a tool writes into and
+        // the chat that granted permission to write are always the same chat.
+        toolRunner.conversation = { engine.conversationId.value }
+    }
 
     var choice by remember { mutableStateOf(registry.choice) }
 
@@ -242,6 +248,23 @@ private fun WarpApp() {
         }
         DebugBridge.permission = permission
         DebugBridge.questions = questions
+        DebugBridge.chooseModel = { providerId, modelId ->
+            // Applied to the engine as well as the registry. Setting only the
+            // registry would leave the engine sending the previous model id,
+            // and the run would report a model it never used.
+            val picked = dev.ely.warp.ai.ModelChoice(
+                providerId = providerId,
+                modelId = modelId,
+                modelName = modelId.substringAfterLast('/'),
+                effort = null,
+                badge = null,
+            )
+            registry.choice = picked
+            choice = picked
+            engine.provider = registry.selected
+            engine.model = modelId
+            "$providerId | $modelId"
+        }
         DebugBridge.goal = {
             engine.goal.value?.let { Triple(it.condition, it.turn, it.limit) }
         }
@@ -270,6 +293,7 @@ private fun WarpApp() {
             DebugBridge.setting = null
             DebugBridge.permission = null
             DebugBridge.questions = null
+            DebugBridge.chooseModel = null
             DebugBridge.goal = null
             DebugBridge.command = null
             DebugBridge.conversation = null
@@ -402,6 +426,11 @@ private fun WarpApp() {
             // is reflected by the row you flipped it on. Keyed by id: the sheet
             // outlives no conversation, but the flow behind it must be replaced
             // when a different one is opened.
+            // Read straight from disk rather than held in state: it is only
+            // needed at the moment a dialog opens, and a cached copy would be
+            // one more thing that can disagree with the filesystem.
+            appFor = { id -> dev.ely.warp.build.Projects.all(context)
+                .firstOrNull { it.conversationId == id } },
             grantedTools = { id ->
                 remember(id) { conversations.observeGrants(id) }
                     .collectAsState(initial = emptySet()).value
@@ -427,6 +456,21 @@ private fun WarpApp() {
                 )
                 WarpDestination.BUILD -> BuildScreen()
                 WarpDestination.SETTINGS -> SettingsScreen()
+
+                WarpDestination.APPS -> AppsScreen(
+                    // Read fresh each time the screen is shown. The shelf is
+                    // derived from what is on disk, and a cached list is one
+                    // more thing that can disagree with the filesystem.
+                    apps = remember(destination) {
+                        dev.ely.warp.build.Projects.all(context)
+                    },
+                    onOpenChat = { id ->
+                        scope.launch {
+                            engine.open(id, conversations.loadMessages(id))
+                            destination = WarpDestination.CHAT
+                        }
+                    },
+                )
 
                 WarpDestination.FILES -> ComingSoonScreen(
                     "Files",

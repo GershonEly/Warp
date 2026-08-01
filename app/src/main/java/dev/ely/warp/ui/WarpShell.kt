@@ -44,11 +44,13 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Delete
 import dev.ely.warp.tools.Risk
+import dev.ely.warp.build.Projects
 import dev.ely.warp.tools.ALL_TOOLS
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.Switch
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Person
@@ -162,6 +164,10 @@ enum class WarpDestination(
     // and mixing the two weights is one of the quiet things that reads as
     // unfinished.
     CHAT("Chat", "Ask, and it builds", Icons.Outlined.ChatBubbleOutline),
+    // First in the workspace, because it is the one screen that shows what this
+    // phone has actually produced. §9h: every chat-app screenshot looks like
+    // every other chat-app screenshot; this one does not.
+    APPS("Apps", "What this phone built", Icons.Outlined.GridView),
     FILES("Files", "Browse the project", Icons.Outlined.FolderOpen),
     BUILD("Build", "Compile and install", Icons.Outlined.Build),
     ASSETS("Assets", "Icons and images", Icons.Outlined.Palette),
@@ -170,7 +176,7 @@ enum class WarpDestination(
 
     companion object {
         /** What the drawer lists under "Workspace" — Chat and Settings live elsewhere. */
-        val workspace = listOf(FILES, BUILD, ASSETS)
+        val workspace = listOf(APPS, FILES, BUILD, ASSETS)
     }
 }
 
@@ -203,6 +209,8 @@ fun WarpShell(
     onReorderFolders: (List<Folder>) -> Unit = {},
     /** What this conversation already trusts. Empty until something is granted. */
     grantedTools: @Composable (String) -> Set<String> = { emptySet() },
+    /** The app built in a conversation, or null. Used by the delete warning. */
+    appFor: (String) -> Projects.App? = { null },
     onSetToolGrant: (String, String, Boolean) -> Unit = { _, _, _ -> },
     content: @Composable (WarpDestination) -> Unit,
 ) {
@@ -395,6 +403,7 @@ fun WarpShell(
     confirmingDelete?.let { conversation ->
         DeleteDialog(
             conversation = conversation,
+            app = appFor(conversation.id),
             onDismiss = { confirmingDelete = null },
             onConfirm = {
                 confirmingDelete = null
@@ -613,16 +622,32 @@ private fun MoveToFolderSheet(
 @Composable
 private fun DeleteDialog(
     conversation: Conversation,
+    /** The app built in this chat, if there is one. */
+    app: Projects.App? = null,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Delete conversation?") },
+        // The title changes, because these are not the same act. Deleting a
+        // question is nothing; deleting the only copy of an app you built is
+        // something, and a dialog that words both identically is how somebody
+        // taps through the second one out of habit learned on the first.
+        title = { Text(if (app == null) "Delete conversation?" else "Delete this app?") },
         text = {
             Text(
-                "\"${conversation.title}\" and everything in it will be removed. " +
-                    "You will have a few seconds to undo."
+                if (app == null) {
+                    "\"${conversation.title}\" and everything in it will be removed. " +
+                        "You will have a few seconds to undo."
+                } else {
+                    // Names the app and counts the files, because "everything in
+                    // it" does not tell you that a working app lives here and
+                    // exists nowhere else — not on GitHub, not on a PC.
+                    "\"${conversation.title}\" also holds the app ${app.name} " +
+                        "(${app.fileCount} files). The code is only on this phone, " +
+                        "so deleting the chat deletes the app.\n\n" +
+                        "You will have a few seconds to undo."
+                }
             )
         },
         confirmButton = {

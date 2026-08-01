@@ -3,6 +3,7 @@ package dev.ely.warp.tools
 import android.content.Context
 import android.util.Log
 import dev.ely.warp.ai.ToolCall
+import dev.ely.warp.build.Projects
 import org.json.JSONObject
 import java.io.File
 
@@ -24,13 +25,24 @@ class ToolRunner(
 ) {
 
     /**
-     * Where the model is allowed to work.
+     * Which chat is open. Set once the engine exists, like the permission desk.
      *
-     * One folder inside the app's own storage, for now. Every tool resolves
-     * against it and refuses to leave, so the boundary is a property of this
-     * path rather than a rule each tool has to remember.
+     * A property rather than a constructor argument because the runner has to
+     * exist before the engine does, and the engine is what knows.
      */
-    val project: File = File(context.filesDir, "project").apply { mkdirs() }
+    @Volatile
+    var conversation: () -> String? = { null }
+
+    /**
+     * Where the model is allowed to work **for the chat it is working in**.
+     *
+     * Resolved per call, not once. A single shared folder meant asking for a
+     * second app silently overwrote the first, and it meant a tool permission
+     * granted in one chat protected nothing in another — same files. Every
+     * tool still resolves against this and refuses to leave it, so the boundary
+     * is a property of the path rather than a rule each tool must remember.
+     */
+    val project: File get() = Projects.forConversation(context, conversation())
 
     /**
      * Run a call and turn it into the card the chat will show.

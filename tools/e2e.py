@@ -85,6 +85,14 @@ else:
     print("  the app never became ready")
     sys.exit(1)
 
+# Force the mock provider before anything else.
+#
+# Every check here assumes scripted replies. Left on a real model the suite still
+# runs, still mostly passes, and quietly spends the user's money on 120 requests
+# — which is exactly what happened once: the model was switched by hand for a
+# live test and the next suite run went to OpenRouter without saying so.
+call("POST", "/model", {"provider": "mock", "model": "mock-fast"})
+
 # An interrupted run can leave a question on screen and a turn waiting on it for
 # ever. Clear it before anything else, or every later check inherits the mess.
 call("POST", "/permission", {"decision": "DENY"})
@@ -189,6 +197,12 @@ print("\n7. TOOLS REALLY RUN")
 # walks the app's own project folder, and the result goes back into the next
 # request. Every earlier version of the tool cards passed by looking right.
 call("POST", "/chat/new")
+# A brand new chat has an empty folder, and list_dir returning nothing is then
+# correct rather than broken. Give it a project so the check is about the tool
+# round-trip and not about an empty directory.
+call("POST", "/chat/send", {"text": "hello"})
+settle()
+call("POST", "/tool", {"name": "new_project", "args": {"name": "Looker"}})
 call("POST", "/chat/send", {"text": "look at the project files"})
 settle()
 s, st = call("GET", "/state")
@@ -209,8 +223,11 @@ check("the tool output reached the model",
       len(msgs) >= 3 and bool(calls)
       and (calls[0]["body"] or "|").split("\n")[0] in msgs[-1]["text"],
       "the last reply quotes what the tool found")
+# Five: hello + reply, then the request + the tool turn + the turn that
+# reports what came back. The number matters only as "it did not balloon" —
+# the real assertion is the single tool call above.
 check("one round of tools, not eight — the budget is not the brake",
-      len(msgs) == 3, f"messages={len(msgs)}")
+      len(msgs) == 5, f"messages={len(msgs)}")
 
 s, out = call("POST", "/tool",
               {"name": "read_file", "args": {"path": "../databases/warp.db"}})
@@ -222,6 +239,17 @@ print("\n8. NOTHING IS WRITTEN WITHOUT YOU")
 # The one path in Warp that can destroy work. Every check here reads the disk
 # through run-as, not the card — a card saying DENIED while the file changed is
 # precisely the failure worth catching.
+
+
+def project_path(rel=""):
+    """Where the open chat's files live on the phone.
+
+    There is no single "the project" any more — each conversation has its own
+    folder, which is what makes the shelf possible. Every path in this suite
+    goes through here so the layout is stated once.
+    """
+    cid = call("GET", "/state")[1].get("conversationId") or "_scratch"
+    return f"files/projects/{cid}" + (f"/{rel}" if rel else "")
 
 
 def on_device(*args):
@@ -236,7 +264,7 @@ def tool_cards():
 
 
 call("POST", "/permission/revoke")
-on_device("rm", "-f", "files/project/src/Counter.kt")
+on_device("rm", "-f", project_path("src/Counter.kt"))
 
 call("POST", "/chat/new")
 call("POST", "/chat/send", {"text": "create a new file for me"})
@@ -251,8 +279,8 @@ check("the turn is still open while it waits", st["busy"] is True)
 call("POST", "/permission", {"decision": "DENY"})
 time.sleep(3)
 check("no really means no — nothing on disk",
-      "Counter.kt" not in on_device("ls", "files/project/src"),
-      on_device("ls", "files/project/src").replace("\n", " "))
+      "Counter.kt" not in on_device("ls", project_path("src")),
+      on_device("ls", project_path("src")).replace("\n", " "))
 check("and the card says so",
       any(c["status"] == "DENIED" for c in tool_cards()))
 
@@ -262,9 +290,9 @@ settle()
 call("POST", "/permission", {"decision": "ONCE"})
 settle()
 check("Allow writes the file for real",
-      "Counter.kt" in on_device("ls", "files/project/src"))
+      "Counter.kt" in on_device("ls", project_path("src")))
 check("the file holds what was asked for",
-      "fun main()" in on_device("cat", "files/project/src/Counter.kt"))
+      "fun main()" in on_device("cat", project_path("src/Counter.kt")))
 check("the card reports what happened, not 'ok'",
       any("created" in (c["result"] or "") for c in tool_cards()),
       f"{[c['result'] for c in tool_cards()]}")
@@ -308,6 +336,13 @@ check("revoke takes an Always back, per chat", r.get("granted") == [],
 
 s, r = call("GET", "/permission?id=" + trusting)
 check("and it stays taken back", r["granted"] == [])
+
+# The /tool route works in whichever chat is open, and by now that is a
+# different one from the chat the earlier Allow wrote into. Put a file there
+# first, so this section tests edit_file rather than testing which chat is open.
+call("POST", "/tool", {"name": "write_file", "args": {
+    "path": "src/Counter.kt",
+    "content": "fun main() {\n    var count = 0\n    println(count)\n}\n"}})
 
 s, r = call("POST", "/tool", {"name": "edit_file", "args": {
     "path": "src/Counter.kt", "old": "var count = 0", "new": "var count = 100"}})
@@ -513,6 +548,16 @@ print("\n12. A NEW PROJECT IS ONE A COMPILER ACCEPTS")
 
 
 def wipe_project():
+    """Clear the open chat's project folder.
+
+    Each conversation has its own folder now, so there is no single "the
+    project" to delete any more. Wiping the old shared path silently did
+    nothing, and the checks that followed then failed against whatever the
+    previous section had built.
+    """
+    on_device("rm", "-rf", project_path())
+    # Anything left from an older layout, so a phone that has been through the
+    # migration does not keep failing on a folder nobody reads any more.
     on_device("rm", "-rf", "files/project")
 
 
@@ -562,7 +607,7 @@ check("a name with no letters at all is refused",
 
 wipe_project()
 new_project("Notes & Co")
-strings = on_device("cat", "files/project/res/values/strings.xml")
+strings = on_device("cat", project_path("res/values/strings.xml"))
 check("the app name is escaped for XML", "Notes &amp; Co" in strings,
       strings.splitlines()[-2].strip() if strings else "")
 
@@ -590,17 +635,18 @@ subprocess.run([ADB, "uninstall", "com.example.crashy"], capture_output=True)
 
 wipe_project()
 check("build refuses with no project, and names the fix",
-      "new_project" in (call("POST", "/tool", {"name": "build", "args": {}})[1].get("failed") or ""))
+      "new_project" in (call("POST", "/tool", {"name": "build", "args": {}},
+                             timeout=600)[1].get("failed") or ""))
 check("install refuses with no project",
-      bool(call("POST", "/tool", {"name": "install", "args": {}})[1].get("failed")))
+      bool(call("POST", "/tool", {"name": "install", "args": {}}, timeout=60)[1].get("failed")))
 
 new_project("Crashy")
 check("install refuses before anything is built",
       "nothing built yet" in
-      (call("POST", "/tool", {"name": "install", "args": {}})[1].get("failed") or ""))
+      (call("POST", "/tool", {"name": "install", "args": {}}, timeout=60)[1].get("failed") or ""))
 check("launch refuses when it is not installed",
       "not installed" in
-      (call("POST", "/tool", {"name": "launch", "args": {}})[1].get("failed") or ""))
+      (call("POST", "/tool", {"name": "launch", "args": {}}, timeout=60)[1].get("failed") or ""))
 
 broken = 'package com.example.crashy\n\nclass MainActivity {\n    val x: Int = "no"\n}\n'
 call("POST", "/tool", {"name": "write_file",
@@ -629,12 +675,18 @@ check("fixing it makes the build pass", "built" in (r.get("summary") or ""),
 # posts its own death to this provider; here we post one by hand and check the
 # tool reads it. Logcat could not do this at all — Android hides another app's
 # log unless READ_LOGS is granted, and on Xiaomi that grant is one-time.
-trace = ("Thread: main\\njava.lang.RuntimeException: Unable to start activity\\n"
-         "Caused by: java.lang.ArrayIndexOutOfBoundsException: length=2; index=7")
-subprocess.run([ADB, "shell", "content", "insert",
-                "--uri", "content://dev.ely.warp.crashes",
-                "--bind", "package:s:com.example.crashy",
-                "--bind", f"trace:s:{trace}"], capture_output=True, text=True)
+# No colons and no newlines in the value: `adb shell content` parses bindings
+# as key:type:value and splits the command on spaces, so a real stack trace
+# cannot survive the trip. That is a limitation of this injection route, not of
+# the provider — a real crash arrives from the app itself, formatted freely.
+trace = ("java.lang.RuntimeException Unable to start activity "
+         "Caused by java.lang.ArrayIndexOutOfBoundsException length=2 index=7")
+subprocess.run(
+    [ADB, "shell",
+     "content insert --uri content://dev.ely.warp.crashes "
+     "--bind package:s:com.example.crashy "
+     f"--bind trace:s:'{trace}'"],
+    capture_output=True, text=True)
 
 s, r = call("POST", "/tool", {"name": "logcat", "args": {}}, timeout=120)
 check("a delivered crash is found", "CRASHED" in (r.get("summary") or ""),
@@ -660,7 +712,7 @@ installed = subprocess.run([ADB, "install", "-r", apk], capture_output=True, tex
 check("the APK Warp built really installs", "Success" in installed.stdout,
       installed.stdout.strip()[:80] or installed.stderr.strip()[:80])
 
-s, r = call("POST", "/tool", {"name": "launch", "args": {}})
+s, r = call("POST", "/tool", {"name": "launch", "args": {}}, timeout=60)
 check("and then launch reaches it", bool(r.get("summary")), json.dumps(r)[:80])
 time.sleep(3)
 s, r = call("POST", "/tool", {"name": "logcat", "args": {}}, timeout=120)

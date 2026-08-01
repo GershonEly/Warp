@@ -78,6 +78,17 @@ object DebugBridge {
     @Volatile
     var goal: (() -> Triple<String, Int, Int>?)? = null
 
+    /**
+     * Choose the provider and model, as the picker would.
+     *
+     * Here so a run against a real model can be scripted rather than tapped
+     * through. It returns what the choice reads back as — asking for a model
+     * that does not exist has to fail loudly, or a whole test run would quietly
+     * be measuring the wrong model.
+     */
+    @Volatile
+    var chooseModel: ((String, String) -> String?)? = null
+
     /** Which conversation is open, so a permission route can default to it. */
     @Volatile
     var conversation: (() -> String?)? = null

@@ -403,7 +403,9 @@ object DebugServer {
             // This is how the scaffold gets *proven* to compile in the meantime
             // — a starting project that does not build is worse than none.
             "GET /project" -> {
-                val dir = java.io.File(context.filesDir, "project")
+                val dir = dev.ely.warp.build.Projects.forConversation(
+                    context, DebugBridge.conversation?.invoke()
+                )
                 val meta = dev.ely.warp.build.NewProject.meta(dir)
                 200 to JSONObject()
                     .put("exists", dev.ely.warp.build.NewProject.exists(dir))
@@ -420,7 +422,9 @@ object DebugServer {
             }
 
             "POST /project/build" -> runBlocking {
-                val dir = java.io.File(context.filesDir, "project")
+                val dir = dev.ely.warp.build.Projects.forConversation(
+                    context, DebugBridge.conversation?.invoke()
+                )
                 val meta = dev.ely.warp.build.NewProject.meta(dir)
                     ?: return@runBlocking 400 to error("no project here")
 
@@ -459,6 +463,33 @@ object DebugServer {
                 }
             }
 
+            "POST /model" -> {
+                val provider = json.optString("provider").takeIf { it.isNotBlank() }
+                    ?: return 400 to error("expected a provider")
+                val model = json.optString("model").takeIf { it.isNotBlank() }
+                    ?: return 400 to error("expected a model")
+                val choose = DebugBridge.chooseModel ?: return 503 to error("no chat on screen")
+                val label = choose(provider, model)
+                    ?: return 404 to error("no model $model on $provider")
+                200 to JSONObject().put("model", label)
+            }
+
+            // The shelf, as data. §9h: a conversation becomes an app when
+            // the AI writes its first file, so this lists folders rather than
+            // any flag somebody has to remember to set.
+            "GET /apps" -> {
+                val apps = dev.ely.warp.build.Projects.all(context)
+                200 to JSONObject().put("apps", JSONArray(apps.map {
+                    JSONObject()
+                        .put("conversationId", it.conversationId)
+                        .put("name", it.name)
+                        .put("applicationId", it.applicationId)
+                        .put("files", it.fileCount)
+                        .put("built", it.built)
+                        .put("apkBytes", it.apkBytes)
+                }))
+            }
+
             "GET /goal" -> {
                 val state = DebugBridge.goal?.invoke()
                 200 to JSONObject()
@@ -485,7 +516,9 @@ object DebugServer {
                 // testing a tool's own behaviour, and it is only ever reachable
                 // in a debug build. The chat path is the one that must ask.
 
-                val project = java.io.File(context.filesDir, "project").apply { mkdirs() }
+                val project = dev.ely.warp.build.Projects.forConversation(
+                    context, DebugBridge.conversation?.invoke()
+                )
 
                 when (val r = tool.run(dev.ely.warp.tools.ToolEnv(project, context), args)) {
                     is dev.ely.warp.tools.ToolResult.Ok -> 200 to JSONObject()

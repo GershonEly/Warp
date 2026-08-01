@@ -238,6 +238,15 @@ class ConversationRepository(context: Context) :
     suspend fun purgeOldDeletes(now: Long) =
         conversations.purgeDeletedBefore(now - UNDO_WINDOW_MS)
 
+    /**
+     * Every conversation id that still exists, deleted or not.
+     *
+     * For finding project folders whose conversation is gone. Deliberately
+     * includes soft-deleted rows: those are still undoable, and deleting the
+     * files behind an undoable conversation would make Undo a lie.
+     */
+    suspend fun allConversationIds(): Set<String> = conversations.allIds().toSet()
+
     // ── folders ──────────────────────────────────────────────────────────
 
     suspend fun createFolder(name: String, now: Long): String {
