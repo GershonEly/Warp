@@ -102,6 +102,14 @@ call("POST", "/chat/command", {"text": "/goal clear"})
 # replies with, and unrelated sections start failing for a reason nothing names.
 call("POST", "/chat/command", {"text": "/rules clear"})
 
+# Everything that existed before this run.
+#
+# The suite creates a conversation for nearly every check and used to leave all
+# of them behind: 240 chats and 19 apps had piled up, and the shelf was showing
+# "Crashy" five times as though they were real work. Anything not in this set
+# when the run ends was made by the run, and goes.
+BEFORE = {c["id"] for c in call("GET", "/conversations")[1]["conversations"]}
+
 print("\n1. THE SURFACE ITSELF")
 req = urllib.request.Request(BASE + "/state")
 try:
@@ -804,6 +812,22 @@ for dest in ("SETTINGS", "BUILD", "CHAT"):
 s, r = call("POST", "/nav", {"to": "ATLANTIS"})
 check("a destination that does not exist is refused", s == 400)
 
+
+# Put the phone back as it was found.
+#
+# Before the summary rather than after, so a run that is read and forgotten
+# still leaves nothing behind. Deleting a conversation takes its project folder
+# with it on the next start, so the shelf is cleaned by the same act.
+made = [c for c in call("GET", "/conversations")[1]["conversations"]
+        if c["id"] not in BEFORE]
+for c in made:
+    call("POST", "/conversation/delete", {"id": c["id"]})
+if made:
+    print(f"\n  tidied up {len(made)} conversations this run created")
+
+# Back to the mock, since a real model may have been selected by hand before
+# this ran and leaving it selected is how the next run spends money.
+call("POST", "/model", {"provider": "mock", "model": "mock-fast"})
 
 print("\n" + "=" * 52)
 print(f"  {len(passed)} passed, {len(failed)} failed")
