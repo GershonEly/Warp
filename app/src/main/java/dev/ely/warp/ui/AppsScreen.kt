@@ -62,6 +62,7 @@ import dev.ely.warp.ui.theme.WarpSuccess
 fun AppsScreen(
     apps: List<Projects.App>,
     onOpenChat: (String) -> Unit,
+    onOpenFiles: (Projects.App) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var open by remember { mutableStateOf<Projects.App?>(null) }
@@ -105,7 +106,12 @@ fun AppsScreen(
     }
 
     open?.let { app ->
-        AppSheet(app, onDismiss = { open = null }, onOpenChat = onOpenChat)
+        AppSheet(
+            app,
+            onDismiss = { open = null },
+            onOpenChat = onOpenChat,
+            onOpenFiles = { open = null; onOpenFiles(it) },
+        )
     }
 }
 
@@ -128,7 +134,7 @@ private fun AppTile(app: Projects.App, onClick: () -> Unit) {
                 // Rounded like a launcher icon, because that is what it stands
                 // in for. A square would read as a file, not an app.
                 .clip(RoundedCornerShape(22.dp))
-                .background(tileColour(app.applicationId)),
+                .background(appTileColour(app.applicationId)),
         ) {
             Text(
                 app.name.trim().firstOrNull()?.uppercase() ?: "?",
@@ -166,6 +172,7 @@ private fun AppSheet(
     app: Projects.App,
     onDismiss: () -> Unit,
     onOpenChat: (String) -> Unit,
+    onOpenFiles: (Projects.App) -> Unit,
 ) {
     val context = LocalContext.current
     var note by remember { mutableStateOf<String?>(null) }
@@ -184,7 +191,7 @@ private fun AppSheet(
                     modifier = Modifier
                         .size(56.dp)
                         .clip(RoundedCornerShape(16.dp))
-                        .background(tileColour(app.applicationId)),
+                        .background(appTileColour(app.applicationId)),
                 ) {
                     Text(
                         app.name.trim().firstOrNull()?.uppercase() ?: "?",
@@ -241,6 +248,11 @@ private fun AppSheet(
                     }) { Text("Open") }
                 }
 
+                // Straight into the code from the shelf. Tapping an app and
+                // being offered everything except a way to see what it is made
+                // of was the gap that made Files hard to find at all.
+                TextButton(onClick = { onOpenFiles(app) }) { Text("Files") }
+
                 Spacer(Modifier.weight(1f))
                 // §9h: "the way into the conversation that made it".
                 TextButton(onClick = { onOpenChat(app.conversationId) }) { Text("Chat") }
@@ -260,7 +272,7 @@ private fun AppSheet(
  * Every hue is kept dark enough for white text to sit on it. §9h is explicit
  * that legibility outranks the effect entirely.
  */
-private fun tileColour(applicationId: String): Color {
+internal fun appTileColour(applicationId: String): Color {
     val hue = ((applicationId.hashCode() % 360) + 360) % 360
     return Color.hsv(hue.toFloat(), saturation = 0.55f, value = 0.55f)
 }

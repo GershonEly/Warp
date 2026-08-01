@@ -1,6 +1,9 @@
 package dev.ely.warp.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,92 +13,225 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.ely.warp.build.Projects
 import dev.ely.warp.ui.theme.WarpMono
 import dev.ely.warp.ui.theme.WarpSpace
 import java.io.File
 
 /**
- * The files of the app you are working on.
+ * Two levels: your apps, then one app's files.
  *
- * A real destination, unlike the editor: §9d settles that *browsing a project is
- * a real place*, while an editor is something you open over what you were doing
- * and close again. Nobody starts their day in an editor on a phone.
+ * The first version listed only the open chat's app, which meant Files showed
+ * either your code or "nothing here yet" with **no way to tell which chat it was
+ * reading**. That is invisible state deciding what a screen says, and it is
+ * exactly the kind of thing that reads as broken rather than as empty.
  *
- * It follows the open conversation, because files belong to a chat now. Showing
- * "the project" without saying which one was fine when there was only ever one;
- * with a shelf full of apps it would be a screen that quietly lies.
+ * So it browses. §9d keeps Files a destination because *browsing a project is a
+ * real place* — and a place you can only reach by first opening the right
+ * conversation is not one.
  */
 @Composable
 fun FilesScreen(
-    /** The app's folder, or null when this chat has not built anything. */
-    project: File?,
-    /** What the app is called, for the header. */
-    appName: String?,
+    apps: List<Projects.App>,
+    /** Where an app's files live. */
+    folderFor: (Projects.App) -> File,
     onOpen: (File) -> Unit,
     modifier: Modifier = Modifier,
+    /** Start inside this app, when arriving from the shelf. */
+    initial: Projects.App? = null,
 ) {
-    val files = remember(project, project?.lastModified()) {
-        project?.walkTopDown()
-            ?.filter { it.isFile }
-            // The APK is an output, not source. Listing it invites tapping it,
-            // and there is nothing useful to show for 700 KB of zip.
-            ?.filter { it.name != "app.apk" }
-            ?.sortedBy { it.invariantPath(project) }
-            ?.toList()
-            .orEmpty()
+    var chosen by remember(initial, apps) {
+        mutableStateOf(initial ?: apps.singleOrNull())
     }
 
+    // Back goes up a level before it leaves the screen, which is what "into a
+    // folder" has meant on every phone for fifteen years.
+    BackHandler(enabled = chosen != null && apps.size > 1) { chosen = null }
+
     Column(modifier = modifier.fillMaxSize().padding(horizontal = WarpSpace.screen)) {
-        Text(
-            "Files",
-            style = MaterialTheme.typography.headlineSmall,
-            modifier = Modifier.padding(top = WarpSpace.large),
-        )
-
-        if (project == null || files.isEmpty()) {
-            Text(
-                // Says what to do rather than that something is missing. An
-                // empty file list and a broken file list look identical.
-                "This chat has not built an app yet. Ask for one, and its files " +
-                    "appear here as they are written.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = WarpSpace.medium),
+        val app = chosen
+        if (app == null) {
+            AppList(apps) { chosen = it }
+        } else {
+            FileList(
+                app = app,
+                folder = folderFor(app),
+                showBack = apps.size > 1,
+                onBack = { chosen = null },
+                onOpen = onOpen,
             )
-            return@Column
         }
+    }
+}
 
+@Composable
+private fun AppList(apps: List<Projects.App>, onPick: (Projects.App) -> Unit) {
+    var query by remember { mutableStateOf("") }
+    val shown = remember(apps, query) {
+        val q = query.trim().lowercase()
+        if (q.isEmpty()) apps
+        else apps.filter { q in it.name.lowercase() || q in it.applicationId.lowercase() }
+    }
+
+    Text(
+        "Files",
+        style = MaterialTheme.typography.headlineSmall,
+        modifier = Modifier.padding(top = WarpSpace.large),
+    )
+
+    if (apps.isEmpty()) {
         Text(
-            "${appName ?: "This app"} · ${files.size} files",
-            style = MaterialTheme.typography.bodySmall,
+            // What to do, not what is missing. An empty list and a broken list
+            // look the same.
+            "Nothing built yet. Ask for an app in a chat and its files appear here.",
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = WarpSpace.medium),
         )
-        Spacer(Modifier.size(WarpSpace.medium))
+        return
+    }
 
-        LazyColumn {
-            items(items = files, key = { f: File -> f.absolutePath }) { file ->
-                FileRow(file, project) { onOpen(file) }
+    // Only once there is enough to search. A search box above two rows is
+    // furniture pretending to be a feature.
+    if (apps.size >= 4) {
+        Spacer(Modifier.size(WarpSpace.small))
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            placeholder = { Text("Search apps") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+
+    Spacer(Modifier.size(WarpSpace.small))
+    Text(
+        if (query.isBlank()) "${apps.size} apps" else "${shown.size} of ${apps.size}",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.size(WarpSpace.small))
+
+    LazyColumn {
+        items(items = shown, key = { a: Projects.App -> a.conversationId }) { app ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onPick(app) }
+                    .padding(vertical = 10.dp),
+            ) {
+                // The same tile as the shelf, so an app is visibly the same
+                // object in both places rather than two things that happen to
+                // share a name.
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(appTileColour(app.applicationId)),
+                ) {
+                    Text(
+                        app.name.trim().firstOrNull()?.uppercase() ?: "?",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                    )
+                }
+                Spacer(Modifier.size(WarpSpace.medium))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        app.name,
+                        style = MaterialTheme.typography.bodyLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        app.applicationId,
+                        style = WarpMono,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(
+                    "${app.fileCount} files",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
 }
 
 @Composable
+private fun FileList(
+    app: Projects.App,
+    folder: File,
+    showBack: Boolean,
+    onBack: () -> Unit,
+    onOpen: (File) -> Unit,
+) {
+    val files = remember(folder, folder.lastModified()) {
+        folder.walkTopDown()
+            .filter { it.isFile }
+            // Output, not source. Listing it invites tapping 700 KB of zip.
+            .filter { it.name != "app.apk" && it.name != "warp.json" }
+            .sortedBy { it.invariantPath(folder) }
+            .toList()
+    }
+
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+        if (showBack) {
+            IconButton(onClick = onBack, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "All apps")
+            }
+            Spacer(Modifier.size(4.dp))
+        }
+        Column {
+            Text(app.name, style = MaterialTheme.typography.titleMedium)
+            Text(
+                "${files.size} files",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    Spacer(Modifier.size(WarpSpace.small))
+
+    LazyColumn {
+        items(items = files, key = { f: File -> f.absolutePath }) { file ->
+            FileRow(file, folder) { onOpen(file) }
+        }
+    }
+}
+
+@Composable
 private fun FileRow(file: File, project: File, onClick: () -> Unit) {
-    val path = file.invariantPath(project)
-    val folder = path.substringBeforeLast('/', "")
+    val folder = file.invariantPath(project).substringBeforeLast('/', "")
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -120,9 +256,9 @@ private fun FileRow(file: File, project: File, onClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
             )
             if (folder.isNotEmpty()) {
-                // The folder under the name rather than a tree with chevrons.
-                // A project here is five files deep at most, and an expandable
-                // tree would be three taps to reach what one line can show.
+                // The folder under the name rather than a tree with chevrons. A
+                // project here is five files deep at most, and a tree would be
+                // three taps to reach what one line already shows.
                 Text(
                     folder,
                     style = WarpMono,

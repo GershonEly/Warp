@@ -67,7 +67,12 @@ object Projects {
             .filter { it.isDirectory && it.name != SCRATCH }
             .mapNotNull { dir ->
                 val meta = NewProject.meta(dir) ?: return@mapNotNull null
-                val files = dir.walkTopDown().filter { it.isFile }.count()
+                // Source only. The APK and the metadata are outputs, and a
+                // count that includes them disagrees with the file list it
+                // labels — the row said 6 files and tapping it showed 5.
+                val files = dir.walkTopDown()
+                    .filter { it.isFile && it.name != "app.apk" && it.name != "warp.json" }
+                    .count()
                 val apk = NewProject.lastApk(dir)
                 App(
                     conversationId = dir.name,

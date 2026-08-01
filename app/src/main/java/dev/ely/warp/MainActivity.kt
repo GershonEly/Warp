@@ -177,6 +177,9 @@ private fun WarpApp() {
      */
     var editing by remember { mutableStateOf<java.io.File?>(null) }
 
+    /** Which app Files should open inside, when arriving from the shelf. */
+    var filesFor by remember { mutableStateOf<dev.ely.warp.build.Projects.App?>(null) }
+
     var choice by remember { mutableStateOf(registry.choice) }
 
     // The drawer's list, straight from the database. It updates itself: sending
@@ -482,22 +485,23 @@ private fun WarpApp() {
                             destination = WarpDestination.CHAT
                         }
                     },
+                    onOpenFiles = { app ->
+                        filesFor = app
+                        destination = WarpDestination.FILES
+                    },
                 )
 
-                WarpDestination.FILES -> {
-                    // Recomputed whenever the open chat changes, because files
-                    // belong to a conversation now. A screen that showed "the
-                    // project" would be showing whichever one happened to be
-                    // first.
-                    val dir = openConversationId?.let {
-                        dev.ely.warp.build.Projects.forConversation(context, it)
-                    }
-                    FilesScreen(
-                        project = dir?.takeIf { dev.ely.warp.build.NewProject.exists(it) },
-                        appName = dir?.let { dev.ely.warp.build.NewProject.meta(it)?.name },
-                        onOpen = { editing = it },
-                    )
-                }
+                WarpDestination.FILES -> FilesScreen(
+                    // Every app, not the open chat's. Files used to depend on
+                    // which conversation happened to be open, which is invisible
+                    // state deciding what a screen says.
+                    apps = remember(destination, filesFor) {
+                        dev.ely.warp.build.Projects.all(context)
+                    },
+                    folderFor = { dev.ely.warp.build.Projects.forConversation(context, it.conversationId) },
+                    onOpen = { editing = it },
+                    initial = filesFor,
+                )
                 WarpDestination.ASSETS -> ComingSoonScreen(
                     "Assets",
                     "Icon and image generation, resized for every density " +
