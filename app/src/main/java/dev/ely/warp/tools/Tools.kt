@@ -412,6 +412,10 @@ object NewProjectTool : Tool {
                 "AndroidManifest.xml",
                 "res/values/strings.xml",
                 "src/MainActivity.kt",
+                // Listed because it is real and the model will see it in the
+                // folder. A file that appears from nowhere invites being tidied
+                // away, and this one is what reports crashes back to Warp.
+                "src/CrashReporter.kt  (sends crashes to Warp — leave it)",
             ).joinToString("\n"),
         )
     }

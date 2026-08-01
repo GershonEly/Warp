@@ -8,6 +8,9 @@ import json
 import sys
 import time
 import urllib.request
+import subprocess
+
+ADB = r"C:\Users\ely\Android\Sdk\platform-tools\adb.exe"
 
 # 127.0.0.1, never "localhost".
 #
@@ -20,7 +23,7 @@ KEY = "test123"
 passed, failed = [], []
 
 
-def call(method, path, body=None, timeout=15):
+def call(method, path, body=None, timeout=15, _retry=True):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(BASE + path, data=data, method=method)
     req.add_header("X-Warp-Key", KEY)
@@ -30,6 +33,16 @@ def call(method, path, body=None, timeout=15):
             return r.status, json.loads(r.read().decode())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read().decode())
+    except urllib.error.URLError:
+        # The forward dies on its own. Seen after the system installer takes the
+        # screen, after `adb install`, and after a replug — three causes, one
+        # symptom, and the suite used to fall over with a stack trace blaming
+        # whichever check happened to run next.
+        if not _retry:
+            raise
+        subprocess.run([ADB, "forward", "tcp:8099", "tcp:8099"], capture_output=True)
+        time.sleep(1)
+        return call(method, path, body, timeout, _retry=False)
 
 
 def settle(limit=25.0):
@@ -209,8 +222,6 @@ print("\n8. NOTHING IS WRITTEN WITHOUT YOU")
 # The one path in Warp that can destroy work. Every check here reads the disk
 # through run-as, not the card — a card saying DENIED while the file changed is
 # precisely the failure worth catching.
-import subprocess
-ADB = r"C:\Users\ely\Android\Sdk\platform-tools\adb.exe"
 
 
 def on_device(*args):
@@ -565,7 +576,102 @@ if built.get("ok"):
           f"{built.get('apk')} {built.get('bytes')} bytes in {built.get('ms')} ms")
 
 
-print("\n13. SETTINGS ROUND-TRIP")
+print("\n13. BUILD, LAUNCH, AND READING A CRASH")
+# The loop this whole project exists for: write, build, read the error, fix,
+# build again. Slow on purpose — it really compiles, twice.
+#
+# `install` is not driven here and cannot be: Android's installer is a separate
+# screen a person has to agree to. What IS checked is that install refuses
+# honestly when there is nothing to install.
+
+# A previous run may have left the app installed, which would make "launch
+# refuses when it is not installed" pass or fail depending on history.
+subprocess.run([ADB, "uninstall", "com.example.crashy"], capture_output=True)
+
+wipe_project()
+check("build refuses with no project, and names the fix",
+      "new_project" in (call("POST", "/tool", {"name": "build", "args": {}})[1].get("failed") or ""))
+check("install refuses with no project",
+      bool(call("POST", "/tool", {"name": "install", "args": {}})[1].get("failed")))
+
+new_project("Crashy")
+check("install refuses before anything is built",
+      "nothing built yet" in
+      (call("POST", "/tool", {"name": "install", "args": {}})[1].get("failed") or ""))
+check("launch refuses when it is not installed",
+      "not installed" in
+      (call("POST", "/tool", {"name": "launch", "args": {}})[1].get("failed") or ""))
+
+broken = 'package com.example.crashy\n\nclass MainActivity {\n    val x: Int = "no"\n}\n'
+call("POST", "/tool", {"name": "write_file",
+                       "args": {"path": "src/MainActivity.kt", "content": broken}})
+s, r = call("POST", "/tool", {"name": "build", "args": {}}, timeout=600)
+fail = r.get("failed") or ""
+check("a broken project fails to build", bool(fail), json.dumps(r)[:70])
+# The whole reason build returns the raw output: the model has to read this and
+# fix it, and a summary would throw away the line number.
+check("and the failure carries the compiler's own words",
+      "MainActivity.kt:4" in fail and "expected 'Int'" in fail,
+      next((l for l in fail.splitlines() if "MainActivity.kt" in l), fail[:90]))
+
+fixed = ('package com.example.crashy\n\nimport android.app.Activity\n'
+         'import android.os.Bundle\n\nclass MainActivity : Activity() {\n'
+         '    override fun onCreate(savedInstanceState: Bundle?) {\n'
+         '        super.onCreate(savedInstanceState)\n'
+         '    }\n}\n')
+call("POST", "/tool", {"name": "write_file",
+                       "args": {"path": "src/MainActivity.kt", "content": fixed}})
+s, r = call("POST", "/tool", {"name": "build", "args": {}}, timeout=600)
+check("fixing it makes the build pass", "built" in (r.get("summary") or ""),
+      r.get("summary") or json.dumps(r)[:90])
+
+# Crash reporting, without needing anyone to tap Install. Every app Warp builds
+# posts its own death to this provider; here we post one by hand and check the
+# tool reads it. Logcat could not do this at all — Android hides another app's
+# log unless READ_LOGS is granted, and on Xiaomi that grant is one-time.
+trace = ("Thread: main\\njava.lang.RuntimeException: Unable to start activity\\n"
+         "Caused by: java.lang.ArrayIndexOutOfBoundsException: length=2; index=7")
+subprocess.run([ADB, "shell", "content", "insert",
+                "--uri", "content://dev.ely.warp.crashes",
+                "--bind", "package:s:com.example.crashy",
+                "--bind", f"trace:s:{trace}"], capture_output=True, text=True)
+
+s, r = call("POST", "/tool", {"name": "logcat", "args": {}}, timeout=120)
+check("a delivered crash is found", "CRASHED" in (r.get("summary") or ""),
+      (r.get("summary") or json.dumps(r))[:100])
+# "CRASHED - Thread: main" was the first version of this, which is true and
+# says nothing. The headline has to name the actual fault.
+check("and the headline names the real fault, not the wrapper",
+      "ArrayIndexOutOfBounds" in (r.get("summary") or ""), r.get("summary") or "")
+check("the whole trace comes back with it",
+      "Unable to start activity" in (r.get("body") or ""))
+
+# Install the APK Warp just built, over adb. The `install` tool cannot be driven
+# from here — Android's installer is a screen a person agrees to — but the APK
+# itself can still be proven installable, which is the part that could break.
+import tempfile, os
+apk = os.path.join(tempfile.gettempdir(), "e2e-built.apk")
+with open(apk, "wb") as f:
+    f.write(subprocess.run(
+        [ADB, "exec-out", "run-as", "dev.ely.warp",
+         "cat", "files/work/build/com.example.crashy.apk"],
+        capture_output=True).stdout)
+installed = subprocess.run([ADB, "install", "-r", apk], capture_output=True, text=True)
+check("the APK Warp built really installs", "Success" in installed.stdout,
+      installed.stdout.strip()[:80] or installed.stderr.strip()[:80])
+
+s, r = call("POST", "/tool", {"name": "launch", "args": {}})
+check("and then launch reaches it", bool(r.get("summary")), json.dumps(r)[:80])
+time.sleep(3)
+s, r = call("POST", "/tool", {"name": "logcat", "args": {}}, timeout=120)
+# A stale crash sends you to fix something already fixed, which is worse than no
+# crash at all. A launch that never started anything must NOT clear it, though —
+# that would erase the evidence of the failure you are looking at.
+check("launching forgets the previous crash",
+      "CRASHED" not in (r.get("summary") or ""), (r.get("summary") or "")[:90])
+
+
+print("\n14. SETTINGS ROUND-TRIP")
 s, r = call("POST", "/settings", {"name": "ambient", "value": "false"})
 check("turning the atmosphere off reads back as off", r.get("value") == "false")
 s, r = call("POST", "/settings", {"name": "ambient", "value": "true"})

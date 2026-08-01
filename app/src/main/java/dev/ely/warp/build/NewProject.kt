@@ -96,6 +96,7 @@ object NewProject {
         File(dir, "AndroidManifest.xml").writeText(manifest(id))
         File(dir, "res/values/strings.xml").writeText(strings(cleanName))
         File(dir, "src/MainActivity.kt").writeText(mainActivity(id))
+        File(dir, "src/CrashReporter.kt").writeText(crashReporter(id))
         File(dir, META_FILE).writeText(
             JSONObject().put("name", cleanName).put("applicationId", id).toString()
         )
@@ -150,6 +151,7 @@ object NewProject {
             package="$id">
 
             <application
+                android:name=".CrashReporter"
                 android:label="@string/app_name"
                 android:allowBackup="false">
 
@@ -205,6 +207,62 @@ object NewProject {
                     setBackgroundColor(Color.parseColor("#101014"))
                 }
                 setContentView(label)
+            }
+        }
+    """.trimIndent()
+
+    /**
+     * Sends the crash to Warp before the app dies.
+     *
+     * An `Application` rather than something set up in `onCreate`, and that is
+     * the whole point: the first crash this project ever produced happened while
+     * Android was *instantiating* MainActivity, so a handler installed inside
+     * the activity would never have run. An Application is built before any
+     * activity exists, which is early enough to catch that.
+     *
+     * It writes through a ContentProvider rather than a file, because there is
+     * no path on the phone that one app can write and another can read without a
+     * permission somebody has to grant \u2014 and the log permission this
+     * replaces is exactly the one that kept expiring.
+     *
+     * The default handler is still called afterwards, so the app dies the way it
+     * would have. Swallowing the crash would leave a frozen app and a report of
+     * a crash nobody saw.
+     */
+    private fun crashReporter(id: String) = """
+        package $id
+
+        import android.app.Application
+        import android.content.ContentValues
+        import android.net.Uri
+        import java.io.PrintWriter
+        import java.io.StringWriter
+
+        class CrashReporter : Application() {
+            override fun onCreate() {
+                super.onCreate()
+                val previous = Thread.getDefaultUncaughtExceptionHandler()
+
+                Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+                    try {
+                        val trace = StringWriter()
+                        error.printStackTrace(PrintWriter(trace))
+
+                        contentResolver.insert(
+                            Uri.parse("content://dev.ely.warp.crashes"),
+                            ContentValues().apply {
+                                put("package", packageName)
+                                put(
+                                    "trace",
+                                    "Thread: " + thread.name + "\n" + trace.toString(),
+                                )
+                            },
+                        )
+                    } catch (ignored: Throwable) {
+                        // Reporting must never be the reason a crash is lost.
+                    }
+                    previous?.uncaughtException(thread, error)
+                }
             }
         }
     """.trimIndent()

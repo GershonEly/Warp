@@ -4,6 +4,7 @@ import android.content.Intent
 import androidx.core.content.FileProvider
 import dev.ely.warp.build.ApkSigner
 import dev.ely.warp.build.BuildEngine
+import dev.ely.warp.build.CrashInbox
 import dev.ely.warp.build.NewProject
 import dev.ely.warp.build.Toolchain
 import org.json.JSONObject
@@ -144,6 +145,11 @@ object LaunchProject : Tool {
                 "${meta.applicationId} is not installed — the install was not confirmed"
             )
 
+        // Forget the last crash before starting, so a run that succeeds cannot
+        // be reported as the failure it replaced. A stale crash is worse than no
+        // crash: it sends you to fix something that is already fixed.
+        CrashInbox.clear(env.context, meta.applicationId)
+
         runCatching {
             env.context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }.getOrElse { return ToolResult.Failed(it.message ?: "could not start it") }
@@ -177,6 +183,14 @@ object ReadLogcat : Tool {
         val meta = NewProject.meta(env.project)
             ?: return ToolResult.Failed("there is no project here yet")
         val depth = args.optInt("lines", 400).coerceIn(50, 2000)
+
+        // The delivered crash first, because it is the only source that cannot
+        // be taken away. Every app Warp builds reports its own death through a
+        // ContentProvider; logcat is the fallback for apps that died before the
+        // reporter was installed, and for anything printed rather than thrown.
+        CrashInbox.lastCrash(env.context, meta.applicationId)?.let { trace ->
+            return ToolResult.Ok("CRASHED · ${headline(trace)}", trace)
+        }
 
         // **`-b crash` is the load-bearing flag.** Android writes uncaught
         // exceptions to a separate buffer, and without naming it a freshly
@@ -250,6 +264,26 @@ object ReadLogcat : Tool {
             else "${mine.size} lines from $id",
             mine.takeLast(200).joinToString("\n"),
         )
+    }
+
+    /**
+     * The one line worth putting on the card.
+     *
+     * The last `Caused by:` wins, because that is the actual fault: an Android
+     * crash arrives wrapped as *"Unable to start activity ...: some other
+     * exception"*, and the wrapper is the same sentence every time. The first
+     * attempt at this took the first non-blank line and produced "CRASHED ·
+     * Thread: main", which is true and says nothing.
+     */
+    private fun headline(trace: String): String {
+        val lines = trace.lines().map { it.trim() }.filter { it.isNotBlank() }
+        return (lines.lastOrNull { it.startsWith("Caused by:") }
+            ?: lines.firstOrNull { "Exception" in it || "Error" in it }
+            ?: lines.firstOrNull()
+            .orEmpty())
+            .removePrefix("Caused by:")
+            .trim()
+            .take(110)
     }
 
     /** The pid column of a `-v brief` line: `D/Tag ( 1234): text`. */

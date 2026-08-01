@@ -58,6 +58,16 @@
           Shares APKs Warp has built with Android's package installer.
           A raw file:// URI would throw FileUriExposedException on API 24+.
         -->
+        <!--
+            Where apps built by Warp post their crashes. Exported because a
+            different app has to reach it; see CrashInbox for why it is not
+            guarded by a permission or a signature.
+        -->
+        <provider
+            android:name=".build.CrashInbox"
+            android:authorities="dev.ely.warp.crashes"
+            android:exported="true" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
