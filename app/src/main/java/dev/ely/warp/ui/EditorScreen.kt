@@ -140,9 +140,12 @@ fun EditorScreen(
 
             Box(modifier = Modifier.weight(1f)) {
                 if (editing) {
+                    // No colour while typing. Re-highlighting the whole file on
+                    // every keystroke is work you can feel on a phone, and the
+                    // cursor is what you are watching anyway.
                     Editable(value) { value = it }
                 } else {
-                    Reading(value.text)
+                    Reading(value.text, Syntax.of(file.name))
                 }
             }
 
@@ -172,7 +175,7 @@ fun EditorScreen(
  * actually in it.
  */
 @Composable
-private fun Reading(text: String) {
+private fun Reading(text: String, language: Syntax.Language) {
     val lines = remember(text) { text.lines() }
     val vertical = rememberScrollState()
     val horizontal = rememberScrollState()
@@ -210,8 +213,18 @@ private fun Reading(text: String) {
                 .horizontalScroll(horizontal)
                 .padding(horizontal = 10.dp, vertical = 10.dp),
         ) {
+            // Carried down the file, so a block comment opened on one line
+            // keeps colouring the next. Highlighting each line in isolation
+            // would end the comment at every newline.
+            var carry = Syntax.Carry()
             lines.forEach { line ->
-                Text(line.ifEmpty { " " }, style = WarpMono, softWrap = false)
+                val (coloured, next) = highlightLine(line, language, carry)
+                carry = next
+                Text(
+                    if (line.isEmpty()) androidx.compose.ui.text.AnnotatedString(" ") else coloured,
+                    style = WarpMono,
+                    softWrap = false,
+                )
             }
         }
       }

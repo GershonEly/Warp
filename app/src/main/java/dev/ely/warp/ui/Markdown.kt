@@ -334,8 +334,11 @@ private fun CodeBlock(block: Block.Code) {
                 .horizontalScroll(rememberScrollState())
                 .padding(WarpSpace.medium)
         ) {
+            // The same highlighter as the editor, so a snippet in chat and
+            // the file it came from are not two different-looking things.
+            // §9f asked for this and it was the last item outstanding.
             Text(
-                block.text,
+                colouredCode(block.text, Syntax.of(block.language)),
                 style = WarpMono,
                 color = MaterialTheme.colorScheme.onSurface,
             )
