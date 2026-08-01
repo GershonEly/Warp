@@ -133,8 +133,17 @@ class GoogleProvider(private val context: Context) : AiProvider {
                     for (i in 0 until parts.length()) {
                         val part = parts.getJSONObject(i)
 
-                        part.textOrNull("text")
-                            ?.let { emit(AiEvent.TextDelta(it)) }
+                        // Gemini marks a reasoning part with `thought`
+                        // rather than sending it under a different key, so the
+                        // same field means different things depending on a flag
+                        // beside it.
+                        part.textOrNull("text")?.let {
+                            if (part.optBoolean("thought")) {
+                                emit(AiEvent.ReasoningDelta(it))
+                            } else {
+                                emit(AiEvent.TextDelta(it))
+                            }
+                        }
 
                         part.optJSONObject("functionCall")?.let { call ->
                             emit(

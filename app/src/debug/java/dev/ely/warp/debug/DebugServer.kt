@@ -236,6 +236,9 @@ object DebugServer {
                             .put("id", message.id)
                             .put("role", message.role.name)
                             .put("text", message.text)
+                            // Reported so "did any reasoning actually arrive"
+                            // is a check rather than a squint at the screen.
+                            .put("thinking", message.thinking)
                             .put("toolCalls", calls)
                             .put("error", message.error?.message ?: JSONObject.NULL)
                             .put("createdAt", message.createdAt)
@@ -477,6 +480,15 @@ object DebugServer {
             // The shelf, as data. §9h: a conversation becomes an app when
             // the AI writes its first file, so this lists folders rather than
             // any flag somebody has to remember to set.
+            // The room's state, as a word.
+            //
+            // Worth a route because the thing it drives is a slow glow behind
+            // the composer: "does it look like it is working" is not a check,
+            // and a state machine nobody can assert on is one that quietly
+            // stops working the first time something else changes.
+            "GET /build/status" -> 200 to JSONObject()
+                .put("state", dev.ely.warp.build.BuildStatus.state.value.name)
+
             "GET /apps" -> {
                 val apps = dev.ely.warp.build.Projects.all(context)
                 200 to JSONObject().put("apps", JSONArray(apps.map {

@@ -192,6 +192,7 @@ class ConversationRepository(context: Context) :
                 role = message.role.name,
                 text = message.text,
                 toolCallsJson = message.toolCalls.toJsonOrNull(),
+                thinking = message.thinking.takeIf { it.isNotBlank() },
                 errorKind = message.error?.storageKind(),
                 errorDetail = message.error?.storageDetail(),
                 createdAt = message.createdAt,
@@ -285,6 +286,7 @@ class ConversationRepository(context: Context) :
         role = runCatching { Role.valueOf(role) }.getOrDefault(Role.ASSISTANT),
         text = text,
         toolCalls = toolCallsJson.toToolCalls(),
+        thinking = thinking.orEmpty(),
         error = readError(errorKind, errorDetail),
         createdAt = createdAt,
     )

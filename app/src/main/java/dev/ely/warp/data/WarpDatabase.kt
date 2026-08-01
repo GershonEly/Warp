@@ -21,7 +21,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MessageFts::class,
         ToolGrantEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class WarpDatabase : RoomDatabase() {
@@ -61,6 +61,19 @@ abstract class WarpDatabase : RoomDatabase() {
          * several tools and a comma-joined string in a column is a list you
          * cannot index, cannot cascade, and eventually cannot parse.
          */
+        /**
+         * Somewhere to keep what the model was thinking.
+         *
+         * Nullable with no default, because "this model does not expose
+         * reasoning" and "it reasoned about nothing" are different facts and an
+         * empty string cannot hold both.
+         */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN thinking TEXT")
+            }
+        }
+
         private val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
@@ -104,7 +117,7 @@ abstract class WarpDatabase : RoomDatabase() {
                     WarpDatabase::class.java,
                     "warp.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     // Deliberately no fallbackToDestructiveMigration. Losing
                     // someone's conversations because a column moved is not an
                     // acceptable failure mode; a missing migration should break

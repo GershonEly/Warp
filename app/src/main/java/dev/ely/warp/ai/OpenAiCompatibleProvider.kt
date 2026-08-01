@@ -131,6 +131,26 @@ abstract class OpenAiCompatibleProvider(
                     delta?.textOrNull("content")
                         ?.let { emit(AiEvent.TextDelta(it)) }
 
+                    // Three shapes in the wild, and the first is the one that
+                    // actually arrives from OpenRouter: `reasoning_details`, an
+                    // array of typed blocks. The two flat strings are what other
+                    // OpenAI-compatible servers send.
+                    //
+                    // Found by asking a reasoning question, getting a correct
+                    // answer and an empty Thinking line, and going to read the
+                    // documentation rather than guessing a field name a third
+                    // time.
+                    val details = delta?.optJSONArray("reasoning_details")
+                    if (details != null) {
+                        for (i in 0 until details.length()) {
+                            details.optJSONObject(i)?.textOrNull("text")
+                                ?.let { emit(AiEvent.ReasoningDelta(it)) }
+                        }
+                    } else {
+                        (delta?.textOrNull("reasoning") ?: delta?.textOrNull("reasoning_content"))
+                            ?.let { emit(AiEvent.ReasoningDelta(it)) }
+                    }
+
                     delta?.optJSONArray("tool_calls")?.let { calls ->
                         for (i in 0 until calls.length()) {
                             val call = calls.getJSONObject(i)
@@ -240,6 +260,29 @@ abstract class OpenAiCompatibleProvider(
             put("messages", messages)
             put("stream", true)
             put("max_tokens", MAX_TOKENS)
+
+            // Ask for the reasoning, or none comes back.
+            //
+            // Tested: GPT-5.6 answered a reasoning question correctly through
+            // OpenRouter and returned an empty `reasoning` field, because it is
+            // opt-in. Without this the Thinking line would have had nothing to
+            // open, for every model, for ever.
+            //
+            // Mapped from Warp's existing Effort, which until now did nothing at
+            // all for this provider — the picker offers it, and it was thrown
+            // away here. It costs money: reasoning tokens are billed like any
+            // other. Low is the default and is cheap.
+            put(
+                "reasoning",
+                JSONObject().put(
+                    "effort",
+                    when (request.effort) {
+                        Effort.LOW -> "low"
+                        Effort.MEDIUM -> "medium"
+                        Effort.HIGH, Effort.MAX -> "high"
+                    },
+                ),
+            )
 
             if (request.tools.isNotEmpty()) {
                 val tools = JSONArray()

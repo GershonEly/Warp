@@ -4,6 +4,7 @@ import android.content.Intent
 import androidx.core.content.FileProvider
 import dev.ely.warp.build.ApkSigner
 import dev.ely.warp.build.BuildEngine
+import dev.ely.warp.build.BuildStatus
 import dev.ely.warp.build.CrashInbox
 import dev.ely.warp.build.NewProject
 import dev.ely.warp.build.Toolchain
@@ -53,20 +54,39 @@ object BuildProject : Tool {
             ?: return ToolResult.Failed("there is no project here yet — call new_project first")
 
         val log = StringBuilder()
+        // Announced before the work starts and closed in a finally, so a build
+        // that throws cannot leave the room moving for ever.
+        BuildStatus.started()
         val outcome = runCatching {
             engineFor(env.context).build(
                 BuildEngine.Request(projectDir = env.project, applicationId = meta.applicationId),
                 onLine = { log.appendLine(it.text) },
             )
-        }.getOrElse { return ToolResult.Failed(it.message ?: "the build could not start") }
+        }.getOrElse {
+            BuildStatus.finished(ok = false)
+            return ToolResult.Failed(it.message ?: "the build could not start")
+        }
+        BuildStatus.finished(ok = outcome is BuildEngine.Outcome.Success)
 
         return when (outcome) {
             is BuildEngine.Outcome.Success -> {
-                NewProject.recordBuild(env.project, outcome.apk)
+                // Copied out of the shared work directory into the project's
+                // own folder, because the work directory holds exactly one
+                // build: compiling a second app deleted the first app's APK,
+                // and the shelf then said "not built" for something you had
+                // watched build a minute earlier.
+                //
+                // The work directory stays shared on purpose — it holds the
+                // pre-dexed Kotlin runtime, which is what took a build from
+                // 41 s to 18 s. Only the finished artefact moves.
+                val kept = File(env.project, "app.apk")
+                val apk = runCatching { outcome.apk.copyTo(kept, overwrite = true) }
+                    .getOrDefault(outcome.apk)
+                NewProject.recordBuild(env.project, apk)
                 ToolResult.Ok(
                 // Size and time, because they are what changes between builds
                 // and what tells you the cache is working.
-                "built ${outcome.apk.name} · ${outcome.apk.length() / 1024} KB · " +
+                "built ${apk.name} · ${apk.length() / 1024} KB · " +
                     "${outcome.totalMs / 1000}s" + if (outcome.signed) "" else " · UNSIGNED",
                     outcome.stages.joinToString("\n") {
                         "${if (it.ok) "ok  " else "FAIL"} ${it.stage.label} (${it.durationMs} ms)"

@@ -129,6 +129,8 @@ data class MessageEntity(
     val role: String,
     val text: String,
     val toolCallsJson: String? = null,
+    /** The model's reasoning, if it exposed any. Null for almost every model. */
+    val thinking: String? = null,
     /** The name of the [dev.ely.warp.ai.AiError] subclass, or null if it worked. */
     val errorKind: String? = null,
     /** Provider text for the kinds that carry any. */

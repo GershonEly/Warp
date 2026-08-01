@@ -723,7 +723,69 @@ check("launching forgets the previous crash",
       "CRASHED" not in (r.get("summary") or ""), (r.get("summary") or "")[:90])
 
 
-print("\n14. SETTINGS ROUND-TRIP")
+print("\n14. THE ROOM CARRIES THE BUILD")
+# The wash behind the composer is what tells you the phone is compiling. Section
+# 9h says the room IS the progress, which is why there is no bar anywhere. A slow
+# glow is not something a test can look at, but the state machine driving it is.
+import threading
+
+seen_states = []
+
+
+def watch_build(seconds=140):
+    def run():
+        for _ in range(seconds * 2):
+            s = call("GET", "/build/status", timeout=10)[1].get("state")
+            if s and (not seen_states or seen_states[-1] != s):
+                seen_states.append(s)
+            time.sleep(0.5)
+    threading.Thread(target=run, daemon=True).start()
+
+
+check("the room is still when nothing is building",
+      call("GET", "/build/status")[1]["state"] == "IDLE")
+
+call("POST", "/chat/new")
+call("POST", "/chat/send", {"text": "hello"})
+settle()
+new_project("Roomy")
+call("POST", "/tool", {"name": "write_file", "args": {
+    "path": "src/MainActivity.kt",
+    "content": "package com.example.roomy\n\nclass MainActivity { val x: Int = 1 + \"no\" }\n"}})
+
+seen_states.clear()
+watch_build()
+call("POST", "/tool", {"name": "build", "args": {}}, timeout=600)
+time.sleep(2)
+check("it moves while compiling, then goes red",
+      seen_states[:3] == ["IDLE", "RUNNING", "FAILED"], " -> ".join(seen_states))
+time.sleep(3)
+# 9h: "pulls red, and stays until it has been looked at". A failure that fades on
+# a timer is one you can miss by looking away.
+check("and the red stays rather than fading",
+      call("GET", "/build/status")[1]["state"] == "FAILED")
+
+call("POST", "/tool", {"name": "write_file", "args": {
+    "path": "src/MainActivity.kt",
+    "content": ("package com.example.roomy\n\nimport android.app.Activity"
+                "\n\nclass MainActivity : Activity()\n")}})
+seen_states.clear()
+watch_build()
+call("POST", "/tool", {"name": "build", "args": {}}, timeout=600)
+time.sleep(3)
+check("a good build settles instead of staying lit",
+      "SUCCEEDED" in seen_states and seen_states[-1] == "IDLE",
+      " -> ".join(seen_states))
+
+# The APK has to survive the next app being built. It did not: one shared work
+# folder meant compiling B deleted A's APK, and the shelf then said "not built"
+# for something you had watched build.
+roomy = [a for a in call("GET", "/apps")[1]["apps"] if a["name"] == "Roomy"]
+check("the app keeps its own APK", bool(roomy) and roomy[0]["built"] is True,
+      f"{roomy[:1]}")
+
+
+print("\n15. SETTINGS ROUND-TRIP")
 s, r = call("POST", "/settings", {"name": "ambient", "value": "false"})
 check("turning the atmosphere off reads back as off", r.get("value") == "false")
 s, r = call("POST", "/settings", {"name": "ambient", "value": "true"})
@@ -733,7 +795,7 @@ s, r = call("POST", "/settings", {"name": "nonsense", "value": "x"})
 check("an unknown setting is refused rather than silently ignored", s == 400)
 
 
-print("\n14. NAVIGATION")
+print("\n16. NAVIGATION")
 for dest in ("SETTINGS", "BUILD", "CHAT"):
     call("POST", "/nav", {"to": dest})
     s, st = call("GET", "/state")

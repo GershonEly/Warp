@@ -161,6 +161,19 @@ data class ChatMessage(
     val id: String,
     val role: Role,
     val text: String,
+    /**
+     * What the model thought on the way to the answer, if it said.
+     *
+     * Kept apart from [text] because it is not the answer and must never be
+     * read as one. It is also the only part of a reply you are already paying
+     * for and could not see: reasoning tokens are billed whether or not
+     * anything displays them.
+     *
+     * Empty for models that do not expose reasoning, which is most of the cheap
+     * ones — and empty is why the UI shows no control rather than a control
+     * that opens onto nothing.
+     */
+    val thinking: String = "",
     /** Tool calls the assistant asked for in this message. */
     val toolCalls: List<ToolCall> = emptyList(),
     /** True while text is still streaming in. */
@@ -220,6 +233,15 @@ data class ToolCall(
 sealed interface AiEvent {
     /** A chunk of assistant text. */
     data class TextDelta(val text: String) : AiEvent
+
+    /**
+     * A chunk of the model's reasoning.
+     *
+     * Its own event rather than text with a flag, because everything downstream
+     * treats the two differently: one is shown, one is folded away; one is sent
+     * back to the provider next turn, one is not.
+     */
+    data class ReasoningDelta(val text: String) : AiEvent
 
     /** The model wants to call a tool. */
     data class ToolCallRequested(val call: ToolCall) : AiEvent

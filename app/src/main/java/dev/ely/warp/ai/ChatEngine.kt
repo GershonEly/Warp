@@ -402,6 +402,9 @@ class ChatEngine(
             when (event) {
                 is AiEvent.TextDelta -> update(replyId) { it.copy(text = it.text + event.text) }
 
+                is AiEvent.ReasoningDelta ->
+                    update(replyId) { it.copy(thinking = it.thinking + event.text) }
+
                 is AiEvent.ToolCallRequested -> {
                     update(replyId) { it.copy(toolCalls = it.toolCalls + event.call) }
 

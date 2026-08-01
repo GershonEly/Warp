@@ -151,6 +151,13 @@ class AnthropicProvider(
                                 "text_delta" ->
                                     delta.textOrNull("text")
                                         ?.let { emit(AiEvent.TextDelta(it)) }
+                                // Claude streams reasoning as its own delta
+                                // type, and only when thinking was asked for in
+                                // the request — which Warp does not do yet, so
+                                // this is here for the day it does.
+                                "thinking_delta" ->
+                                    delta.textOrNull("thinking")
+                                        ?.let { emit(AiEvent.ReasoningDelta(it)) }
                                 "input_json_delta" ->
                                     delta.textOrNull("partial_json")?.let { toolArgs.append(it) }
                             }

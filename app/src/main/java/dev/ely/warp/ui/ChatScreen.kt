@@ -117,6 +117,7 @@ import dev.ely.warp.ui.theme.WarpIndigo
 import dev.ely.warp.ui.theme.aurora
 import dev.ely.warp.ui.theme.WarpSpace
 import dev.ely.warp.ui.theme.LocalAnimationsEnabled
+import dev.ely.warp.build.BuildStatus
 import dev.ely.warp.data.Appearance
 import dev.ely.warp.data.Identity
 import dev.ely.warp.ai.Effort
@@ -172,6 +173,22 @@ fun Modifier.ambientWash(effort: Effort?): Modifier {
 
     val dark = LocalIsDark.current
 
+    // §9h: the room carries the build. Compiling moves, success settles once,
+    // failure pulls red and stays. Which is also why there is no progress bar
+    // anywhere in Warp — a bar would be a second thing saying the same thing,
+    // and worse, because it would say it in a corner instead of everywhere.
+    val build by BuildStatus.state.collectAsState()
+
+    // Success is shown, then let go of. Failure is not: it waits for the next
+    // build, so "until it has been looked at" means until you do something
+    // about it rather than until a timer decides you have had long enough.
+    LaunchedEffect(build) {
+        if (build == BuildStatus.State.SUCCEEDED) {
+            delay(1_400)
+            BuildStatus.settle()
+        }
+    }
+
     // Roughly four times the first attempt. Measured, that one peaked at +4 of
     // 255 — under two per cent, which is not subtle, it is invisible, and what
     // it produced was a flat grey screen with a smudge near the bottom.
@@ -180,6 +197,13 @@ fun Modifier.ambientWash(effort: Effort?): Modifier {
         Effort.MEDIUM -> 0.80f
         Effort.HIGH -> 1.10f
         Effort.MAX -> 1.35f
+    } * when (build) {
+        // Brighter while it works, and brighter still on the beat it lands, so
+        // the settle is something that happens rather than something that stops.
+        BuildStatus.State.RUNNING -> 1.7f
+        BuildStatus.State.SUCCEEDED -> 2.0f
+        BuildStatus.State.FAILED -> 1.4f
+        BuildStatus.State.IDLE -> 1f
     } * if (dark) 1f else 0.30f
 
     // Eased, so changing effort settles rather than cuts. Slower than anything
@@ -193,12 +217,16 @@ fun Modifier.ambientWash(effort: Effort?): Modifier {
     // One slow value, three different responses to it inside `aurora`. Forty
     // seconds a cycle, which is far too slow to watch and exactly fast enough
     // that the screen is never twice the same.
+    // Forty seconds a cycle at rest — far too slow to watch, and exactly fast
+    // enough that the screen is never twice the same. Six while compiling, which
+    // is the difference between weather and something working.
+    val cycleMs = if (build == BuildStatus.State.RUNNING) 6_000 else 40_000
     val drift = if (LocalAnimationsEnabled.current) {
         val t = rememberInfiniteTransition(label = "aurora")
         val phase by t.animateFloat(
             initialValue = 0f,
             targetValue = (2 * Math.PI).toFloat(),
-            animationSpec = infiniteRepeatable(tween(40_000, easing = LinearEasing)),
+            animationSpec = infiniteRepeatable(tween(cycleMs, easing = LinearEasing)),
             label = "auroraDrift",
         )
         sin(phase)
@@ -206,12 +234,16 @@ fun Modifier.ambientWash(effort: Effort?): Modifier {
         0f
     }
 
+    // Red on failure, and every field of it — a single red streak among the
+    // blues reads as decoration. The room changing colour is the point.
+    val failed = build == BuildStatus.State.FAILED
+    val error = MaterialTheme.colorScheme.error
     return aurora(
         strength = strength,
         drift = drift,
-        primary = MaterialTheme.colorScheme.primary,
-        accent = WarpAccent,
-        indigo = WarpIndigo,
+        primary = if (failed) error else MaterialTheme.colorScheme.primary,
+        accent = if (failed) error else WarpAccent,
+        indigo = if (failed) error else WarpIndigo,
     )
 }
 
@@ -873,8 +905,12 @@ private fun AssistantMessage(
 
         Column(modifier = Modifier.weight(1f)) {
             // Before the first token there is nothing to read, so name what is
-            // happening rather than leaving an empty space.
-            if (working) ThinkingLine()
+            // happening rather than leaving an empty space. It also stays after
+            // the answer arrives whenever there is reasoning to show, since that
+            // is when you actually want to look at it.
+            if (working || message.thinking.isNotBlank()) {
+                ThinkingLine(thinking = message.thinking, working = working)
+            }
 
             // Markdown, not plain text. Only the assistant's side: what you
             // typed is what you typed, and reinterpreting somebody's own words
@@ -918,15 +954,79 @@ private fun AssistantMessage(
     }
 }
 
+/**
+ * "Thinking…", and what it was actually thinking.
+ *
+ * Reasoning tokens are billed whether or not anything shows them, so throwing
+ * the text away was the one part of a reply you were paying for and could not
+ * read. It stays after the answer lands, because the useful moment is usually
+ * later — when the answer turns out to be wrong and you want to know why.
+ *
+ * Folded by default. A wall of reasoning above every reply is how people learn
+ * to scroll past the answer too.
+ *
+ * @param thinking empty for the many models that expose nothing. Then there is
+ *   no chevron and nothing to tap, rather than a control that opens onto an
+ *   empty box.
+ */
 @Composable
-private fun ThinkingLine() {
-    // No spinner beside it: the mark itself is already turning, and two things
-    // spinning at once reads as clutter.
-    Text(
-        "Thinking…",
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+private fun ThinkingLine(
+    thinking: String = "",
+    working: Boolean = true,
+) {
+    var open by remember { mutableStateOf(false) }
+    val has = thinking.isNotBlank()
+
+    Column {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = if (has) Modifier.clickable { open = !open } else Modifier,
+        ) {
+            // No spinner beside it: the mark itself is already turning, and two
+            // things spinning at once reads as clutter.
+            Text(
+                if (working) "Thinking…" else "Thought about it",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (has) {
+                Spacer(Modifier.size(2.dp))
+                Icon(
+                    Icons.Outlined.KeyboardArrowDown,
+                    contentDescription = if (open) "Hide the reasoning" else "Show the reasoning",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .size(18.dp)
+                        // Turned rather than swapped for a second icon, so the
+                        // chevron is visibly the same object either way.
+                        .graphicsLayer { rotationZ = if (open) 180f else 0f },
+                )
+            }
+        }
+
+        if (has && open) {
+            Spacer(Modifier.size(6.dp))
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    thinking.trim(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .padding(12.dp)
+                        // Capped and scrollable: reasoning runs to thousands of
+                        // words on a hard question, and a message that pushes
+                        // the answer off the screen has buried the thing you
+                        // opened the app for.
+                        .heightIn(max = 260.dp)
+                        .verticalScroll(rememberScrollState()),
+                )
+            }
+        }
+    }
 }
 
 @Composable
