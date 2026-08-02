@@ -366,6 +366,7 @@ fun AnsweredQuestion(call: dev.ely.warp.ai.ToolCall, modifier: Modifier = Modifi
 fun GoalBar(
     goal: ChatEngine.Goal,
     onStop: () -> Unit,
+    onContinue: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -393,8 +394,18 @@ fun GoalBar(
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                 )
             }
+            // Continue rather than Stop when it has run out of turns. Ending
+            // a goal at the limit threw away the only valuable thing about it —
+            // what it was trying to do — and saying "continue" by hand is
+            // exactly what rescued the run this was rebuilt after.
+            if (goal.paused) {
+                TextButton(onClick = onContinue) {
+                    Text("Continue", style = MaterialTheme.typography.labelLarge)
+                }
+            }
             TextButton(onClick = onStop) {
-                Text("Stop", style = MaterialTheme.typography.labelLarge)
+                Text(if (goal.paused) "Drop" else "Stop",
+                    style = MaterialTheme.typography.labelLarge)
             }
         }
     }

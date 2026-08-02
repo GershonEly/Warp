@@ -89,6 +89,10 @@ object DebugBridge {
     @Volatile
     var chooseModel: ((String, String) -> String?)? = null
 
+    /** Carry on with a paused goal, as the Continue button does. */
+    @Volatile
+    var continueGoal: (() -> Boolean)? = null
+
     /** Which conversation is open, so a permission route can default to it. */
     @Volatile
     var conversation: (() -> String?)? = null

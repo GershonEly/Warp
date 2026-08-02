@@ -130,6 +130,15 @@ class ChatEngine(
         val limit: Int,
         /** Tool calls made so far. What tells working from stuck. */
         val steps: Int = 0,
+        /**
+         * Out of turns, and waiting to be told to carry on.
+         *
+         * The first version threw the goal away at the limit, and the user did
+         * by hand exactly what this now offers: said "continue", and the work
+         * finished. Ending a goal because a counter ran out discards the one
+         * thing worth keeping — what it was trying to do.
+         */
+        val paused: Boolean = false,
     ) {
         /**
          * What the bar says.
@@ -144,9 +153,11 @@ class ChatEngine(
          * The turn budget stays visible because it is the brake, and you should
          * be able to see how much rope is left.
          */
-        val label: String get() =
-            if (steps == 0) "turn $turn of $limit"
-            else "$steps step${if (steps == 1) "" else "s"} · turn $turn of $limit"
+        val label: String get() = when {
+            paused -> "paused after $turn turns · tap Continue"
+            steps == 0 -> "turn $turn of $limit"
+            else -> "$steps step${if (steps == 1) "" else "s"} · turn $turn of $limit"
+        }
     }
 
     private val _goal = MutableStateFlow<Goal?>(null)
@@ -175,6 +186,18 @@ class ChatEngine(
     fun clearGoal() {
         _goal.value = null
         stop()
+    }
+
+    /**
+     * Carry on with a paused goal.
+     *
+     * The turn count restarts rather than continuing, because the budget is a
+     * guard against unattended looping and you are, by pressing this, attending.
+     */
+    fun resumeGoal() {
+        val paused = _goal.value?.takeIf { it.paused } ?: return
+        _goal.value = paused.copy(turn = 1, paused = false)
+        send(CONTINUE_MESSAGE, Mode.GOAL, condition = paused.condition)
     }
 
     /** Send a user message and stream the reply. */
@@ -289,22 +312,34 @@ class ChatEngine(
             }
             replyId = last
 
-            if (current.turn >= current.limit) {
+            // A turn that failed is not a turn that was spent.
+            //
+            // Two of the user's ten turns were "No internet connection", and a
+            // third ended on a permission he refused. The budget exists to stop
+            // a model looping unattended; a dropped connection is not looping,
+            // and neither is being told no.
+            val failed = _messages.value.firstOrNull { it.id == last }?.error != null
+            val spent = if (failed) current.turn else current.turn + 1
+
+            if (spent > current.limit) {
+                // Paused, not ended. The goal survives with a Continue button,
+                // because saying "continue" by hand is exactly what worked when
+                // this stopped dead on him.
                 update(replyId) {
                     it.copy(
                         streaming = false,
                         error = AiError.Unknown(
-                            "Stopped after ${current.limit} turns without reaching: " +
-                                current.condition
+                            "Paused after ${current.limit} turns. It has not reached: " +
+                                "${current.condition}. Tap Continue to carry on."
                         ),
                     )
                 }
-                _goal.value = null
+                _goal.value = current.copy(paused = true)
                 persistNow(replyId)
                 return
             }
 
-            _goal.value = current.copy(turn = current.turn + 1)
+            _goal.value = current.copy(turn = spent)
             replyId = UUID.randomUUID().toString()
             activeReplyId = replyId
             _messages.value = _messages.value + ChatMessage(
@@ -357,9 +392,17 @@ class ChatEngine(
                 ?.let { calls -> calls.isNotEmpty() && calls.all { it.name == "ask" } } == true
 
             if (round >= MAX_TOOL_ROUNDS) {
-                // Said out loud rather than stopping quietly. A budget that ends
-                // a turn silently is indistinguishable from a model that decided
-                // it was done, and those need different responses from you.
+                // Inside a goal this is not an error, it is a turn boundary.
+                //
+                // It fired twice during a real run of eight `edit_file`s and
+                // reported "Stopped after 8 rounds of tool calls", which reads
+                // as a fault. A turn spending its rounds on edits is working;
+                // the goal loop simply takes over and starts the next turn.
+                if (_goal.value != null) return replyId
+
+                // Outside a goal there is nothing to take over, so it has to be
+                // said out loud. A budget that ends a turn silently is
+                // indistinguishable from a model that decided it was done.
                 update(replyId) {
                     it.copy(
                         streaming = false,
@@ -677,13 +720,49 @@ class ChatEngine(
          * decides for itself when to stop is an agent that spends until it is
          * satisfied — and Warp is BYOK, so that is your money.
          */
-        private const val MAX_GOAL_TURNS = 10
+        /**
+         * How many turns a goal gets before it pauses and asks.
+         *
+         * Twenty-five rather than ten, and it pauses rather than ending. Ten was
+         * chosen from nothing; a real run building a game needed far more, and
+         * the user finished the same work by hand in nine further exchanges
+         * after the goal gave up. The number still exists because BYOK means
+         * this is his money, but it should be reached rarely and never quietly.
+         */
+        private const val MAX_GOAL_TURNS = 25
 
+        /** What a resumed goal says, so the model knows nothing else changed. */
+        const val CONTINUE_MESSAGE = "Continue with the goal. Do not start again."
+
+        /**
+         * What Warp is, on every single message.
+         *
+         * The paragraph about scope is not padding. Asked for a 1v1 arena game,
+         * the model repeatedly told the user the app needed bigger servers —
+         * and then built the lobby, three fighters, abilities, rounds and cover
+         * anyway. One true limit (online multiplayer needs a backend, and Warp
+         * has none) had been generalised into the whole project being blocked.
+         *
+         * Guidance, not a switch: a prompt makes that much less likely and
+         * cannot make it impossible. It is here rather than in the goal
+         * directive because he saw it in ordinary conversation too.
+         */
         val DEFAULT_SYSTEM_PROMPT = """
             You are Warp, an AI coding assistant that runs entirely on an Android phone.
             You can create and edit Android projects in Kotlin, and Warp compiles them
             on the device itself — no computer and no cloud build.
             Keep answers short and concrete. Prefer doing over explaining.
+
+            About what you can build: everything runs on this one phone. There is no
+            server, no backend and no account system, and there never will be for an
+            app you build here. If part of a request needs one — online multiplayer,
+            leaderboards, cloud saves, sign-in — build absolutely everything else and
+            name only that one feature as out of scope, once. Never say the app needs
+            bigger or better servers, never describe the whole project as blocked
+            because one feature would need a backend, and never repeat the limitation
+            after you have stated it. Offline versions of those features — a local
+            two-player mode, an on-device high-score table, a bot opponent — are
+            usually what the person actually wants, so offer one and carry on.
         """.trimIndent()
     }
 }

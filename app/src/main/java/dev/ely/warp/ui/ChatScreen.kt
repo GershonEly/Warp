@@ -400,6 +400,7 @@ fun ChatScreen(
                 onNoteShown = { ruleFeedback = null },
                 goal = goal,
                 onStopGoal = { engine.clearGoal() },
+                onContinueGoal = { engine.resumeGoal() },
                 matches = matchingCommands(input),
                 // A trailing space, so the argument is typed rather than
                 // rubbing up against the command name.
@@ -1251,6 +1252,7 @@ private fun Composer(
     /** The running goal, shown above the field until it is done or stopped. */
     goal: ChatEngine.Goal? = null,
     onStopGoal: () -> Unit = {},
+    onContinueGoal: () -> Unit = {},
     /** Commands matching what is typed, or null when this is not a command. */
     matches: List<SlashCommand>? = null,
     onPickCommand: (SlashCommand) -> Unit = {},
@@ -1363,6 +1365,7 @@ private fun Composer(
             GoalBar(
                 goal = it,
                 onStop = onStopGoal,
+                onContinue = onContinueGoal,
                 modifier = Modifier.padding(
                     horizontal = WarpSpace.medium,
                     vertical = WarpSpace.small,

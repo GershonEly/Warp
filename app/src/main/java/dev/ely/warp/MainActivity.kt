@@ -281,6 +281,11 @@ private fun WarpApp() {
             "$providerId | $modelId"
         }
         DebugBridge.goal = { engine.goal.value }
+        DebugBridge.continueGoal = {
+            val paused = engine.goal.value?.paused == true
+            if (paused) engine.resumeGoal()
+            paused
+        }
         DebugBridge.conversation = { engine.conversationId.value }
         DebugBridge.setting = { name, value ->
             val appearance = Appearance.get(context)

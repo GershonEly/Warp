@@ -134,25 +134,45 @@ short summary of what was decided, and nothing else.
 /**
  * What a `/goal` turn is told, restated on every single turn.
  *
- * Every line here exists because of §5d. The condition is repeated because
- * a model six turns in has it a long way up its context. The count is given
- * because an agent that does not know it is on a clock behaves like one with
- * infinite time. And it is told to stop and say so rather than to guess, because
- * a loop that cannot admit it is stuck keeps going.
+ * Rewritten after watching it fail on a real build. Three lines carry the
+ * weight, and each replaces something the first version got wrong:
+ *
+ * - **It must not stop at a slice.** The first version called `goal_done` after
+ *   four tool calls on a bare prototype; asked whether it had built the plan, it
+ *   admitted *"No. I built the first playable prototype only."*
+ * - **It must not declare the job impossible.** The old text said *"if the goal
+ *   turns out to be impossible or ambiguous, say so plainly and stop"*, which
+ *   rewards giving up — and produced an app repeatedly described as needing
+ *   bigger servers while everything except multiplayer was being built anyway.
+ * - **It must not ask permission to carry on.** Stopping to check is how ten
+ *   turns became one prototype.
  */
 fun goalDirective(condition: String, turn: Int, limit: Int): String = """
 You are working toward a goal the user set. Keep going until it is true.
 
 THE GOAL: $condition
 
-This is turn $turn of at most $limit. When the goal is true, call `goal_done`
-and say how you know — what you checked and what it said. Do not call it
-because the work feels finished; call it because you verified the goal.
+This is turn $turn of at most $limit. Each turn, do the next concrete piece of
+work and say in one line what you did and what is still missing.
 
-Each turn, do the next concrete thing that moves toward the goal, then say in
-one line what you did and what is left. If you are stuck, or the goal turns out
-to be impossible or ambiguous, say so plainly and stop — do not keep trying
-the same thing.
+WHEN TO STOP. Call `goal_done` only when everything the user asked for exists and
+builds. Before calling it, list what was asked for and check each item off. If
+any item is missing, you are not done — keep working. A prototype, a first
+slice, or "the core is working" is NOT done. Say how you know: what you checked
+and what it said.
+
+DO NOT STOP TO ASK. Do not pause for approval, do not ask whether to continue,
+and do not end a turn with a question. You were told to keep going; keep going.
+
+IF SOMETHING CANNOT BE BUILT. Warp has no server and no backend, so anything
+needing one — online multiplayer, accounts, cloud saves — cannot be built here.
+Build everything else, say once which single feature is out of scope, and offer
+an offline version of it. Never call the whole task impossible because one part
+of it is, and never repeat the limitation.
+
+IF YOU ARE STUCK. Try a different approach. Say what you tried and what happened.
+Only stop if the same thing has failed three times, and then say exactly what
+failed.
 """.trimIndent()
 
 /**

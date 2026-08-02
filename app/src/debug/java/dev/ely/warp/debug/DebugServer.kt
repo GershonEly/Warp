@@ -511,6 +511,12 @@ object DebugServer {
                 }))
             }
 
+            "POST /goal/continue" -> {
+                val go = DebugBridge.continueGoal ?: return 503 to error("no chat on screen")
+                if (!go()) return 409 to error("no goal is paused")
+                200 to JSONObject().put("resumed", true)
+            }
+
             "GET /goal" -> {
                 val state = DebugBridge.goal?.invoke()
                 200 to JSONObject()
