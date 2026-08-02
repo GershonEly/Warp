@@ -471,6 +471,29 @@ reopened = call("GET", "/messages?id=" + grilled)[1]["messages"]
 kept = [c["result"] for m in reopened for c in m.get("toolCalls", []) if c["name"] == "ask"]
 check("the answers survive reopening the chat", kept == answers, f"{kept}")
 
+# A grilling is questions, and questions were counted against the tool-round
+# budget — so a real model asked eight and was cut off with "Stopped after 8
+# rounds of tool calls", which reads as a fault rather than a limit. The mock
+# could only ever ask two, so nothing here could have caught it.
+call("POST", "/chat/new")
+command("/grill-me grill me hard about a habit tracker")
+answered = 0
+for _ in range(80):
+    time.sleep(0.4)
+    if call("GET", "/question", timeout=10)[1].get("asking"):
+        call("POST", "/question/answer", {"option": 0})
+        answered += 1
+        continue
+    if not call("GET", "/state", timeout=10)[1].get("busy") and answered:
+        break
+
+check("a long grilling is not cut off by the round budget", answered >= 10,
+      f"{answered} questions answered")
+msgs = call("GET", "/messages?id=" + call("GET", "/state")[1]["conversationId"])[1]["messages"]
+check("and it ends without an error",
+      not any(m["error"] for m in msgs),
+      next((m["error"] for m in msgs if m["error"]), "")[:70])
+
 
 print("\n11. /GOAL WORKS ACROSS TURNS, AND STOPS")
 # The dangerous command. §5d's third failure is "frozen while claiming to work",
@@ -499,16 +522,27 @@ check("/goal with nothing running says so",
 call("POST", "/chat/new")
 command("/goal the counter file exists")
 turns = set()
+steps_seen = False
 for _ in range(40):
     time.sleep(0.4)
     g = goal_state()
     if not g["running"]:
         break
     turns.add(g["turn"])
+    if "step" in (g.get("label") or ""):
+        steps_seen = True
 
 check("it ran more than one turn", len(turns) > 1, f"turns seen: {sorted(turns)}")
 check("the count climbs rather than sitting still", turns == set(range(1, max(turns) + 1)),
       f"{sorted(turns)}")
+
+# The bar led with "turn 1 of 10" and sat there through an entire successful
+# run, because a model that reads, writes, builds and fixes does all of it
+# inside one turn. A progress signal that does not move is the failure the
+# feature exists to prevent.
+check("the bar reports steps, not just turns",
+      "step" in (call("GET", "/goal")[1].get("label") or "")
+      or steps_seen, f"{sorted(turns)}")
 
 cid = call("GET", "/state")[1]["conversationId"]
 msgs = call("GET", "/messages?id=" + cid)[1]["messages"]

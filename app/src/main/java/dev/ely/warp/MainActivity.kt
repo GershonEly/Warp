@@ -280,9 +280,7 @@ private fun WarpApp() {
             engine.model = modelId
             "$providerId | $modelId"
         }
-        DebugBridge.goal = {
-            engine.goal.value?.let { Triple(it.condition, it.turn, it.limit) }
-        }
+        DebugBridge.goal = { engine.goal.value }
         DebugBridge.conversation = { engine.conversationId.value }
         DebugBridge.setting = { name, value ->
             val appearance = Appearance.get(context)

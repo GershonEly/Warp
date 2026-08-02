@@ -71,12 +71,12 @@ object DebugBridge {
     /**
      * The running goal as (condition, turn, limit), or null.
      *
-     * A plain triple rather than the engine's type, so the debug layer does not
-     * depend on the chat layer's shape — the same reason every other hook
-     * here is a lambda.
+     * The engine's own type here, unlike the other hooks: it grew a field, the
+     * triple silently dropped it, and a route that reports four of five facts
+     * is a route you cannot check the fifth with.
      */
     @Volatile
-    var goal: (() -> Triple<String, Int, Int>?)? = null
+    var goal: (() -> dev.ely.warp.ai.ChatEngine.Goal?)? = null
 
     /**
      * Choose the provider and model, as the picker would.

@@ -102,8 +102,34 @@ class MockProvider(
                 )
                 delay(200)
             } else {
-                emitWords("Turn $turn: did the next piece. More to do.")
-                emit(AiEvent.Completed())
+                // Real work happens through tools, so the mock's goal turns do
+                // too. Without this the step counter only ticked once, right at
+                // the end, and no test could see it move — the same blindness
+                // that let the bar sit at "turn 1 of 10" through a whole
+                // successful run.
+                //
+                // Only on the first round of a turn: once a tool has run the
+                // provider is called again with the same turn number, and asking
+                // for the tool again would spend the round budget in a circle.
+                val alreadyWorked = request.messages.lastOrNull { it.role == Role.ASSISTANT }
+                    ?.toolCalls?.isNotEmpty() == true
+
+                if (!alreadyWorked) {
+                    emitWords("Turn $turn: looking at what is there.")
+                    emit(
+                        AiEvent.ToolCallRequested(
+                            ToolCall(
+                                id = UUID.randomUUID().toString(),
+                                name = "list_dir",
+                                argumentsJson = JSONObject().put("path", ".").toString(),
+                            )
+                        )
+                    )
+                    delay(150)
+                } else {
+                    emitWords("Turn $turn: did the next piece. More to do.")
+                    emit(AiEvent.Completed())
+                }
             }
             return@flow
         }
@@ -116,6 +142,23 @@ class MockProvider(
             val answered = request.messages
                 .flatMap { it.toolCalls }
                 .filter { it.name == "ask" && it.result != null }
+
+            // "grill me hard" keeps asking, so the round budget can be proven.
+            // A real model asked eight questions and was cut off with "Stopped
+            // after 8 rounds of tool calls"; the mock could only ever ask two,
+            // so nothing here could have caught it. A deliberate escape hatch,
+            // like "pretend offline".
+            val relentless = request.messages.any { "grill me hard" in it.text.lowercase() }
+            if (relentless && answered.size < 12) {
+                emitWords("Question ${answered.size + 1}.")
+                askAbout(
+                    question = "Decision number ${answered.size + 1}?",
+                    options = listOf("This one", "The other one"),
+                    recommended = 0,
+                    because = "Asked to keep going until told to stop.",
+                )
+                return@flow
+            }
 
             when (answered.size) {
                 0 -> {

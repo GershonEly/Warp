@@ -515,9 +515,12 @@ object DebugServer {
                 val state = DebugBridge.goal?.invoke()
                 200 to JSONObject()
                     .put("running", state != null)
-                    .put("condition", state?.first ?: JSONObject.NULL)
-                    .put("turn", state?.second ?: JSONObject.NULL)
-                    .put("limit", state?.third ?: JSONObject.NULL)
+                    .put("condition", state?.condition ?: JSONObject.NULL)
+                    .put("turn", state?.turn ?: JSONObject.NULL)
+                    .put("limit", state?.limit ?: JSONObject.NULL)
+                    // The number the bar actually leads with.
+                    .put("steps", state?.steps ?: JSONObject.NULL)
+                    .put("label", state?.label ?: JSONObject.NULL)
             }
 
             "GET /rules" -> {

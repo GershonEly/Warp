@@ -124,8 +124,29 @@ class ChatEngine(
      *
      * @param turn which turn it is on, from 1. @param limit where it stops.
      */
-    data class Goal(val condition: String, val turn: Int, val limit: Int) {
-        val label: String get() = "turn $turn of $limit"
+    data class Goal(
+        val condition: String,
+        val turn: Int,
+        val limit: Int,
+        /** Tool calls made so far. What tells working from stuck. */
+        val steps: Int = 0,
+    ) {
+        /**
+         * What the bar says.
+         *
+         * The step count leads, because the turn number barely moves: a model
+         * that reads three files, writes one, builds, fixes and builds again
+         * does all of it inside **one** turn, using tool rounds. The first
+         * version showed only "turn 1 of 10", which sat still through an entire
+         * successful run and told you nothing — which is exactly the failure
+         * §5d names, on the feature built to prevent it.
+         *
+         * The turn budget stays visible because it is the brake, and you should
+         * be able to see how much rope is left.
+         */
+        val label: String get() =
+            if (steps == 0) "turn $turn of $limit"
+            else "$steps step${if (steps == 1) "" else "s"} · turn $turn of $limit"
     }
 
     private val _goal = MutableStateFlow<Goal?>(null)
@@ -322,6 +343,19 @@ class ChatEngine(
             // after the goal was already reached, each one paid for.
             if (goalDoneIn(replyId)) return replyId
 
+            // A round that stopped and waited for a person does not count.
+            //
+            // The budget exists to stop a model looping while nobody is looking.
+            // A question is the opposite of that: you are sitting there, you
+            // answered it, and the next question only happened because you did.
+            // Counting them meant `/grill-me` — where questions **are** the
+            // work — hit the cap after eight and stopped with an error that
+            // read like a fault. Observed on a real model: eight questions, then
+            // "Stopped after 8 rounds of tool calls".
+            val onlyAsked = _messages.value.firstOrNull { it.id == replyId }
+                ?.toolCalls
+                ?.let { calls -> calls.isNotEmpty() && calls.all { it.name == "ask" } } == true
+
             if (round >= MAX_TOOL_ROUNDS) {
                 // Said out loud rather than stopping quietly. A budget that ends
                 // a turn silently is indistinguishable from a model that decided
@@ -339,7 +373,7 @@ class ChatEngine(
                 return replyId
             }
 
-            round++
+            if (!onlyAsked) round++
             replyId = UUID.randomUUID().toString()
             activeReplyId = replyId
             _messages.value = _messages.value + ChatMessage(
@@ -424,6 +458,9 @@ class ChatEngine(
                         }
                         put(executor.execute(event.call, put))
                         ranTools = true
+
+                        // Every tool call is a visible step while a goal runs.
+                        _goal.value?.let { _goal.value = it.copy(steps = it.steps + 1) }
                     }
                 }
 
