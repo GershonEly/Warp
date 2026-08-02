@@ -95,8 +95,40 @@ object Icons {
      * @return true when something was written.
      */
     fun ensure(project: File, name: String, colour: Int): Boolean {
-        if (File(project, "res/mipmap-anydpi-v26/ic_launcher.xml").isFile) return false
+        // The manifest matters as much as the files. An app made before icons
+        // existed got the PNGs written into it and still installed blank,
+        // because nothing pointed at them: the files were in the APK and no
+        // line of XML referred to them.
+        val declared = declareIconInManifest(project)
+
+        if (File(project, "res/mipmap-anydpi-v26/ic_launcher.xml").isFile) return declared
         return runCatching { write(project, drawDefault(name, colour), colour) }.isSuccess
+    }
+
+    /**
+     * Point an existing manifest at the icon, if it does not already.
+     *
+     * Inserts one attribute and touches nothing else. Rewriting somebody's
+     * manifest to a template would throw away whatever they or the model had
+     * changed in it, to fix a line that is missing.
+     */
+    private fun declareIconInManifest(project: File): Boolean {
+        val manifest = File(project, "AndroidManifest.xml")
+        if (!manifest.isFile) return false
+
+        val text = runCatching { manifest.readText() }.getOrNull() ?: return false
+        if ("android:icon" in text) return false
+        if ("<application" !in text) return false
+
+        val addition = buildString {
+            append("<application")
+            appendLine()
+            append("        android:icon=\"@mipmap/ic_launcher\"")
+            appendLine()
+            append("        android:roundIcon=\"@mipmap/ic_launcher_round\"")
+        }
+        val patched = text.replaceFirst("<application", addition)
+        return runCatching { manifest.writeText(patched); true }.getOrDefault(false)
     }
 
     /**
