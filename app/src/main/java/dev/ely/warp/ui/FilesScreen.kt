@@ -151,7 +151,7 @@ private fun AppList(apps: List<Projects.App>, onPick: (Projects.App) -> Unit) {
                     modifier = Modifier
                         .size(38.dp)
                         .clip(RoundedCornerShape(11.dp))
-                        .background(appTileColour(app.applicationId)),
+                        .background(Color(app.colour)),
                 ) {
                     Text(
                         app.name.trim().firstOrNull()?.uppercase() ?: "?",

@@ -23,7 +23,18 @@ import java.io.File
 object NewProject {
 
     /** What Warp remembers about a project, kept beside it. */
-    data class Meta(val name: String, val applicationId: String)
+    data class Meta(
+        val name: String,
+        val applicationId: String,
+        /**
+         * The app's colour, taken from its icon.
+         *
+         * Stored rather than recomputed, because reading and averaging a PNG to
+         * draw one tile is work the shelf would repeat for every app, every time
+         * it is shown.
+         */
+        val colour: Int,
+    )
 
     private const val META_FILE = "warp.json"
 
@@ -40,7 +51,13 @@ object NewProject {
         val json = runCatching { JSONObject(File(dir, META_FILE).readText()) }.getOrNull()
             ?: return null
         val id = json.optString("applicationId").takeIf { it.isNotBlank() } ?: return null
-        return Meta(json.optString("name").ifBlank { id.substringAfterLast('.') }, id)
+        return Meta(
+            name = json.optString("name").ifBlank { id.substringAfterLast('.') },
+            applicationId = id,
+            // Older projects predate icons, so they fall back to the same seed
+            // the shelf used before rather than to a colour that means nothing.
+            colour = json.optInt("colour", 0).takeIf { it != 0 } ?: seedColour(id),
+        )
     }
 
     /**
@@ -97,11 +114,37 @@ object NewProject {
         File(dir, "res/values/strings.xml").writeText(strings(cleanName))
         File(dir, "src/MainActivity.kt").writeText(mainActivity(id))
         File(dir, "src/CrashReporter.kt").writeText(crashReporter(id))
+        // §9h asks for the icon to exist from the start rather than after
+        // the first successful build, so a project has a face — and therefore
+        // a colour — immediately. It is a placeholder and is meant to be
+        // replaced, but a placeholder that is a real file is worth far more than
+        // one that only exists inside Warp.
+        val colour = seedColour(id)
+        runCatching { Icons.write(dir, Icons.drawDefault(cleanName, colour), colour) }
+
         File(dir, META_FILE).writeText(
-            JSONObject().put("name", cleanName).put("applicationId", id).toString()
+            JSONObject()
+                .put("name", cleanName)
+                .put("applicationId", id)
+                .put("colour", colour)
+                .toString()
         )
 
         return null
+    }
+
+    /**
+     * A starting colour, from the application id.
+     *
+     * A stand-in until an icon is generated or chosen, and only a stand-in: it
+     * is derived from a hash, which §9h rejects as *decoration pretending to
+     * be meaning*. The difference now is that it goes into a real icon file, and
+     * the colour the app uses everywhere is read back **from that file** — so
+     * the day a real icon arrives, nothing downstream changes.
+     */
+    fun seedColour(applicationId: String): Int {
+        val hue = ((applicationId.hashCode() % 360) + 360) % 360
+        return android.graphics.Color.HSVToColor(floatArrayOf(hue.toFloat(), 0.55f, 0.55f))
     }
 
     /**
@@ -153,6 +196,8 @@ object NewProject {
             <application
                 android:name=".CrashReporter"
                 android:label="@string/app_name"
+                android:icon="@mipmap/ic_launcher"
+                android:roundIcon="@mipmap/ic_launcher_round"
                 android:allowBackup="false">
 
                 <activity
@@ -222,7 +267,7 @@ object NewProject {
      *
      * It writes through a ContentProvider rather than a file, because there is
      * no path on the phone that one app can write and another can read without a
-     * permission somebody has to grant \u2014 and the log permission this
+     * permission somebody has to grant — and the log permission this
      * replaces is exactly the one that kept expiring.
      *
      * The default handler is still called afterwards, so the app dies the way it

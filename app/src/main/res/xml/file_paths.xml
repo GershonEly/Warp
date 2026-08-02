@@ -8,4 +8,10 @@
 -->
 <paths>
     <files-path name="builds" path="work/" />
+    <!--
+      Each app keeps its own APK beside its source now, so this is where an
+      install actually reads from. Without it FileProvider throws the moment
+      you press Install, which is a long way from where the mistake was made.
+    -->
+    <files-path name="apps" path="projects/" />
 </paths>

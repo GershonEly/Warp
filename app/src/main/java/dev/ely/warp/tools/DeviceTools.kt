@@ -53,6 +53,11 @@ object BuildProject : Tool {
             // is true and tells you nothing about what to do next.
             ?: return ToolResult.Failed("there is no project here yet — call new_project first")
 
+        // An app built before icons existed has none, and would keep
+        // installing as a blank grey square for ever. Writing them here means
+        // the next build fixes it, without a migration nobody would run.
+        dev.ely.warp.build.Icons.ensure(env.project, meta.name, meta.colour)
+
         val log = StringBuilder()
         // Announced before the work starts and closed in a finally, so a build
         // that throws cannot leave the room moving for ever.
@@ -122,18 +127,12 @@ object InstallProject : Tool {
         val apk = NewProject.lastApk(env.project)
             ?: return ToolResult.Failed("nothing built yet — call build first")
 
-        // A FileProvider, because Warp targets API 28 and since API 24 handing
-        // a file:// URI to another app throws FileUriExposedException.
-        val uri = FileProvider.getUriForFile(
-            env.context, "${env.context.packageName}.fileprovider", apk,
-        )
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            // Not started from an Activity, so it needs its own task.
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        runCatching { env.context.startActivity(intent) }
-            .getOrElse { return ToolResult.Failed(it.message ?: "could not open the installer") }
+        // Through Installer, not a second copy of the same intent. The copy
+        // here did not wrap the FileProvider call, so when the APK moved into
+        // the project folder this threw straight out of the tool and killed the
+        // request instead of reporting a failure.
+        dev.ely.warp.build.Installer.open(env.context, apk)
+            ?.let { return ToolResult.Failed(it) }
 
         // Says what actually happened, which is *not* "installed". Android's
         // installer is a separate screen somebody has to agree to, and claiming

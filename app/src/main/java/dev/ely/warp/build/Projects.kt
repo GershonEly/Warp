@@ -51,6 +51,8 @@ object Projects {
         val apkBytes: Long,
         /** When the folder was last touched, for ordering. */
         val updatedAt: Long,
+        /** Taken from the app's own icon. §9h's identity colour. */
+        val colour: Int,
     )
 
     /**
@@ -82,6 +84,7 @@ object Projects {
                     built = apk != null,
                     apkBytes = apk?.length() ?: 0L,
                     updatedAt = dir.lastModified(),
+                    colour = meta.colour,
                 )
             }
             .sortedByDescending { it.updatedAt }

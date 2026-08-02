@@ -134,7 +134,7 @@ private fun AppTile(app: Projects.App, onClick: () -> Unit) {
                 // Rounded like a launcher icon, because that is what it stands
                 // in for. A square would read as a file, not an app.
                 .clip(RoundedCornerShape(22.dp))
-                .background(appTileColour(app.applicationId)),
+                .background(Color(app.colour)),
         ) {
             Text(
                 app.name.trim().firstOrNull()?.uppercase() ?: "?",
@@ -191,7 +191,7 @@ private fun AppSheet(
                     modifier = Modifier
                         .size(56.dp)
                         .clip(RoundedCornerShape(16.dp))
-                        .background(appTileColour(app.applicationId)),
+                        .background(Color(app.colour)),
                 ) {
                     Text(
                         app.name.trim().firstOrNull()?.uppercase() ?: "?",

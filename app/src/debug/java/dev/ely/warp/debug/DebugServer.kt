@@ -138,7 +138,16 @@ object DebugServer {
             return@use respond(client, 401, error("bad or missing X-Warp-Key"))
         }
 
-        val (status, json) = route(context, method, path, query, body)
+        // Caught **inside** the socket's lifetime. It used to be caught by the
+        // caller, outside `client.use`, which meant the socket was already
+        // closed and the 500 went into a closed pipe: every route failure
+        // looked like the connection dropping for no reason.
+        val (status, json) = try {
+            route(context, method, path, query, body)
+        } catch (e: Throwable) {
+            Log.w(TAG, "route failed: $method $path", e)
+            500 to error("${e.javaClass.simpleName}: ${e.message}")
+        }
         respond(client, status, json)
     }
 
