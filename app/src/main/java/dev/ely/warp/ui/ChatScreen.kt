@@ -273,6 +273,7 @@ fun ChatScreen(
 ) {
     val messages by engine.messages.collectAsState()
     val busy by engine.busy.collectAsState()
+    val elsewhere by engine.elsewhere.collectAsState()
     val rules = LocalContext.current.let { remember(it) { Rules.get(it) } }
     var showRules by remember { mutableStateOf(false) }
 
@@ -383,6 +384,7 @@ fun ChatScreen(
                     if (ruleFeedback != null) ruleFeedback = null
                 },
                 busy = busy,
+                elsewhere = elsewhere,
                 modelLabel = modelLabel,
                 onPickModel = onPickModel,
                 onSend = {
@@ -1241,6 +1243,8 @@ private fun Composer(
     value: String,
     onValueChange: (String) -> Unit,
     busy: Boolean,
+    /** A turn is running in a chat other than this one. */
+    elsewhere: Boolean = false,
     modelLabel: String,
     onPickModel: () -> Unit,
     onSend: () -> Unit,
@@ -1356,6 +1360,21 @@ private fun Composer(
                 onPick = onPickCommand,
                 modifier = Modifier.padding(
                     horizontal = WarpSpace.medium,
+                    vertical = WarpSpace.small,
+                ),
+            )
+        }
+
+        if (elsewhere) {
+            // One turn at a time, said out loud. A composer that looks ready but
+            // silently drops what you send is worse than one that explains
+            // itself — and the work it is waiting on has already been paid for.
+            Text(
+                text = "Warp is working in another chat. It will be free in a moment.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(
+                    horizontal = WarpSpace.medium + WarpSpace.small,
                     vertical = WarpSpace.small,
                 ),
             )
@@ -1558,7 +1577,7 @@ private fun Composer(
             }
 
             ModelChip(label = modelLabel, onClick = onPickModel)
-            SendButton(busy = busy, enabled = busy || value.isNotBlank()) {
+            SendButton(busy = busy, enabled = busy || (value.isNotBlank() && !elsewhere)) {
                 if (busy) onStop() else onSend()
             }
         }

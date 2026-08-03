@@ -22,6 +22,16 @@ class WarpApplication : Application() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
+     * Where a turn actually runs.
+     *
+     * The engine used to run on `rememberCoroutineScope`, which dies with the
+     * screen — so leaving the app cancelled whatever was in flight, and the
+     * reply you had already paid for was thrown away. Main.immediate because the
+     * engine only mutates state; the work it waits on is on its own dispatchers.
+     */
+    val turnScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /**
      * The conversation store, opened once for the whole process.
      *
      * It lives here rather than in the composition because the database
@@ -50,6 +60,19 @@ class WarpApplication : Application() {
                 val orphans = dev.ely.warp.build.Projects.removeOrphans(this@WarpApplication, alive)
                 if (orphans > 0) Log.i(TAG, "removed $orphans orphaned project(s)")
             }.onFailure { Log.w(TAG, "could not sweep project folders", it) }
+        }
+
+        // Before anything needs it: this is what makes Android ask for the
+        // notification permission, and it can only ask while a screen is up.
+        dev.ely.warp.work.TurnService.ensureChannel(this)
+
+        // Whenever the engine says it is working, make sure Android has been
+        // asked to keep us. Started from here rather than from a screen,
+        // because the screen may be gone by then — which is the whole point.
+        scope.launch {
+            dev.ely.warp.work.Working.now.collect { line ->
+                if (line != null) dev.ely.warp.work.TurnService.start(this@WarpApplication)
+            }
         }
 
         // The debug surface follows the key rather than the launch. Typing a key

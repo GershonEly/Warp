@@ -63,6 +63,15 @@
             different app has to reach it; see CrashInbox for why it is not
             guarded by a permission or a signature.
         -->
+        <!--
+          Keeps the process alive while a turn or a build is running. Warp's
+          compiler runs on this phone, so a killed process is lost work rather
+          than a dropped connection.
+        -->
+        <service
+            android:name=".work.TurnService"
+            android:exported="false" />
+
         <provider
             android:name=".build.CrashInbox"
             android:authorities="dev.ely.warp.crashes"

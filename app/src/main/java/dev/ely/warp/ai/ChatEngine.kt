@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import dev.ely.warp.work.Working
 import java.util.UUID
 
 /**
@@ -57,6 +58,55 @@ class ChatEngine(
     private val _conversationId = MutableStateFlow<String?>(null)
     val conversationId: StateFlow<String?> = _conversationId.asStateFlow()
 
+    /**
+     * The conversation a running turn is writing into.
+     *
+     * The engine shows one conversation, but a turn can outlive the moment you
+     * are looking at it. Opening another chat used to call [stop], so switching
+     * chats threw away a reply that was already being paid for — the same loss
+     * the foreground service was built to prevent, arriving through a different
+     * door.
+     *
+     * So the turn stops reading the screen. It keeps its own copy of its
+     * conversation and its own id, writes to the database with that id, and
+     * mirrors into the visible list only while that conversation is the one on
+     * screen. Leaving is now a display change and nothing more.
+     */
+    private inner class Sheet(var id: String?, start: List<ChatMessage>) {
+
+        /** Every message here, whether or not anyone is looking at them. */
+        var messages: List<ChatMessage> = start
+            private set
+
+        /** True while the screen is showing this conversation. */
+        var onScreen: Boolean = true
+
+        private fun set(next: List<ChatMessage>) {
+            messages = next
+            if (onScreen) _messages.value = next
+        }
+
+        fun add(message: ChatMessage) = set(messages + message)
+
+        fun update(id: String, change: (ChatMessage) -> ChatMessage) =
+            set(messages.map { if (it.id == id) change(it) else it })
+
+        fun find(id: String): ChatMessage? = messages.firstOrNull { it.id == id }
+    }
+
+    private var sheet: Sheet? = null
+
+    private val _elsewhere = MutableStateFlow(false)
+
+    /**
+     * True when a turn is running in a conversation you are not looking at.
+     *
+     * Worth its own flag because the composer would otherwise sit there looking
+     * ready while nothing could be sent — one turn at a time is a real limit,
+     * and a limit you cannot see is indistinguishable from a bug.
+     */
+    val elsewhere: StateFlow<Boolean> = _elsewhere.asStateFlow()
+
     /** Last time the in-flight reply was written to disk. */
     private var lastPersist = 0L
 
@@ -93,9 +143,22 @@ class ChatEngine(
      * of bug that only shows up as someone's words appearing in the wrong chat.
      */
     fun open(id: String, loaded: List<ChatMessage>) {
-        stop()
+        val running = sheet?.takeIf { turn?.isActive == true }
         _conversationId.value = id
-        _messages.value = loaded
+
+        if (running != null && running.id == id) {
+            // Back in a chat that is still working. Show what it has now, not
+            // the snapshot the database happened to hold when you left.
+            running.onScreen = true
+            _messages.value = running.messages
+            _busy.value = true
+            _elsewhere.value = false
+        } else {
+            running?.onScreen = false
+            _messages.value = loaded
+            _busy.value = false
+            _elsewhere.value = running != null
+        }
     }
 
     /** Model id to use. Set from the model picker. */
@@ -213,7 +276,10 @@ class ChatEngine(
      */
     fun send(text: String, mode: Mode = Mode.NORMAL, condition: String? = null) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() || _busy.value) return
+        // `turn` as well as `busy`: busy now describes the visible chat, and a
+        // second turn started while another is still running would leave two
+        // coroutines writing through one [sheet].
+        if (trimmed.isEmpty() || _busy.value || turn?.isActive == true) return
         this.mode = mode
         if (mode == Mode.GOAL) {
             _goal.value = Goal(
@@ -235,10 +301,16 @@ class ChatEngine(
             text = "",
             streaming = true,
         )
-        _messages.value = _messages.value + userMessage + reply
+        sheet = Sheet(_conversationId.value, _messages.value + userMessage + reply)
+            .also { _messages.value = it.messages }
+        _elsewhere.value = false
         _busy.value = true
         activeReplyId = replyId
         val token = ++turnToken
+
+        // Announced before the work starts, so the service is up before the
+        // phone has any reason to reclaim the process.
+        Working.started(if (mode == Mode.GOAL) "Working toward your goal" else "Thinking")
 
         turn = scope.launch {
             try {
@@ -277,7 +349,12 @@ class ChatEngine(
                 // Only if nothing has started since. See [turnToken].
                 if (token == turnToken) {
                     _busy.value = false
+                    _elsewhere.value = false
+                    sheet = null
                     activeReplyId = null
+                    // Same guard: a turn that has been superseded must not tell
+                    // the service the newer one has finished.
+                    Working.finished()
                 }
             }
         }
@@ -318,7 +395,7 @@ class ChatEngine(
             // third ended on a permission he refused. The budget exists to stop
             // a model looping unattended; a dropped connection is not looping,
             // and neither is being told no.
-            val failed = _messages.value.firstOrNull { it.id == last }?.error != null
+            val failed = sheet?.find(last)?.error != null
             val spent = if (failed) current.turn else current.turn + 1
 
             if (spent > current.limit) {
@@ -340,13 +417,17 @@ class ChatEngine(
             }
 
             _goal.value = current.copy(turn = spent)
+            // The only progress visible once you have left the app.
+            Working.update("Goal \u00b7 turn $spent of ${current.limit}")
             replyId = UUID.randomUUID().toString()
             activeReplyId = replyId
-            _messages.value = _messages.value + ChatMessage(
-                id = replyId,
-                role = Role.ASSISTANT,
-                text = "",
-                streaming = true,
+            sheet?.add(
+                ChatMessage(
+                    id = replyId,
+                    role = Role.ASSISTANT,
+                    text = "",
+                    streaming = true,
+                )
             )
         }
     }
@@ -387,7 +468,7 @@ class ChatEngine(
             // work — hit the cap after eight and stopped with an error that
             // read like a fault. Observed on a real model: eight questions, then
             // "Stopped after 8 rounds of tool calls".
-            val onlyAsked = _messages.value.firstOrNull { it.id == replyId }
+            val onlyAsked = sheet?.find(replyId)
                 ?.toolCalls
                 ?.let { calls -> calls.isNotEmpty() && calls.all { it.name == "ask" } } == true
 
@@ -419,18 +500,20 @@ class ChatEngine(
             if (!onlyAsked) round++
             replyId = UUID.randomUUID().toString()
             activeReplyId = replyId
-            _messages.value = _messages.value + ChatMessage(
-                id = replyId,
-                role = Role.ASSISTANT,
-                text = "",
-                streaming = true,
+            sheet?.add(
+                ChatMessage(
+                    id = replyId,
+                    role = Role.ASSISTANT,
+                    text = "",
+                    streaming = true,
+                )
             )
         }
     }
 
     /** Did this message end with the goal declared reached? */
     private fun goalDoneIn(messageId: String): Boolean =
-        _messages.value.firstOrNull { it.id == messageId }
+        sheet?.find(messageId)
             ?.toolCalls
             ?.any { it.name == "goal_done" && it.status == ToolCall.Status.DONE } == true
 
@@ -447,7 +530,7 @@ class ChatEngine(
             model = model,
             // The placeholder reply is excluded: sending an empty assistant
             // turn back to a provider is meaningless and some reject it.
-            messages = _messages.value.filter { it.id != replyId },
+            messages = (sheet?.messages ?: _messages.value).filter { it.id != replyId },
             systemPrompt = listOfNotNull(
                 systemPrompt(),
                 when (mode) {
@@ -561,12 +644,19 @@ class ChatEngine(
      * opens a new conversation rather than appending to the one just left.
      */
     fun clear() {
-        stop()
+        // Detached, not stopped. Tapping New chat is saying what you want to
+        // look at, not asking to throw away a reply you have already paid for.
+        val running = sheet?.takeIf { turn?.isActive == true }
+        running?.onScreen = false
+        _elsewhere.value = running != null
+        _busy.value = false
         _conversationId.value = null
         _messages.value = emptyList()
     }
 
     private fun update(id: String, change: (ChatMessage) -> ChatMessage) {
+        // A running turn owns its messages; anything else edits what is shown.
+        sheet?.let { return it.update(id, change) }
         _messages.value = _messages.value.map { if (it.id == id) change(it) else it }
     }
 
@@ -581,10 +671,14 @@ class ChatEngine(
      */
     private suspend fun ensureConversation(question: String): String? {
         val target = store ?: return null
-        _conversationId.value?.let { return it }
+        val current = sheet
+        (current?.id ?: _conversationId.value)?.let { return it }
 
         val id = target.create()
-        _conversationId.value = id
+        current?.id = id
+        // Only if you are still here. Naming the screen's conversation after a
+        // question asked in a different one is how transcripts get crossed.
+        if (current == null || current.onScreen) _conversationId.value = id
         // Named here, from the question alone, before a single token of the
         // answer exists. The drawer must never show a row with no name on it,
         // and waiting for a model to supply one would mean exactly that for as
@@ -612,9 +706,12 @@ class ChatEngine(
      * instead of at whatever length it was when the write was scheduled.
      */
     private suspend fun persistNow(messageId: String) {
-        val id = _conversationId.value ?: return
+        val current = sheet
+        val id = current?.id ?: _conversationId.value ?: return
         val target = store ?: return
-        val message = _messages.value.firstOrNull { it.id == messageId } ?: return
+        val message = current?.find(messageId)
+            ?: _messages.value.firstOrNull { it.id == messageId }
+            ?: return
         target.save(id, message)
     }
 
@@ -629,8 +726,10 @@ class ChatEngine(
         val question = awaitingTitle ?: return
         awaitingTitle = null
 
-        val id = _conversationId.value ?: return
-        val reply = _messages.value.firstOrNull { it.id == replyId } ?: return
+        val id = sheet?.id ?: _conversationId.value ?: return
+        val reply = sheet?.find(replyId)
+            ?: _messages.value.firstOrNull { it.id == replyId }
+            ?: return
         if (reply.error != null) return
 
         titler?.refine(id, question, reply.text)

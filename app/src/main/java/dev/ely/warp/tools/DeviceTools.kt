@@ -62,11 +62,16 @@ object BuildProject : Tool {
         // Announced before the work starts and closed in a finally, so a build
         // that throws cannot leave the room moving for ever.
         BuildStatus.started()
+        // Thirty seconds of silence is where somebody puts the phone down, so
+        // the notification names the app being compiled rather than "working" —
+        // and `during` protects the build even when no turn started it.
         val outcome = runCatching {
-            engineFor(env.context).build(
-                BuildEngine.Request(projectDir = env.project, applicationId = meta.applicationId),
-                onLine = { log.appendLine(it.text) },
-            )
+            dev.ely.warp.work.Working.during("Compiling ${meta.name}") {
+                engineFor(env.context).build(
+                    BuildEngine.Request(projectDir = env.project, applicationId = meta.applicationId),
+                    onLine = { log.appendLine(it.text) },
+                )
+            }
         }.getOrElse {
             BuildStatus.finished(ok = false)
             return ToolResult.Failed(it.message ?: "the build could not start")

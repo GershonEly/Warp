@@ -130,9 +130,15 @@ private fun WarpApp() {
     val rules = remember { Rules.get(context) }
     val questions = remember { QuestionDesk() }
     val toolRunner = remember { ToolRunner(context, permission, questions) }
+    // The application's scope, not the screen's. A turn that outlives the
+    // activity is the entire point of the service, and it cannot outlive a
+    // scope that the activity owns.
+    val turnScope = remember(context) {
+        (context.applicationContext as WarpApplication).turnScope
+    }
     val engine = remember {
         ChatEngine(
-            scope,
+            turnScope,
             registry.selected,
             store = conversations,
             titler = titler,
