@@ -247,9 +247,7 @@ abstract class OpenAiCompatibleProvider(
                             .put("tool_call_id", call.id)
                             .put(
                                 "content",
-                                call.body?.takeIf { it.isNotBlank() }
-                                    ?: call.result
-                                    ?: "no output",
+                                call.forModel?.takeIf { it.isNotBlank() } ?: "no output",
                             )
                     )
                 }

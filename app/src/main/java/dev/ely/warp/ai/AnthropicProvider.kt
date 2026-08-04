@@ -286,9 +286,7 @@ class AnthropicProvider(
                             // no matching result is rejected outright.
                             .put(
                                 "content",
-                                call.body?.takeIf { it.isNotBlank() }
-                                    ?: call.result
-                                    ?: "no output",
+                                call.forModel?.takeIf { it.isNotBlank() } ?: "no output",
                             )
                     )
                 }

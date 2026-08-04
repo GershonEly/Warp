@@ -264,7 +264,11 @@ object WriteFile : Tool {
 
         val lines = content.count { it == '\n' } + 1
         val what = if (existed) "replaced ($before → ${file.length()} bytes)" else "created"
-        return ToolResult.Ok("$what · $lines lines", content)
+        // The read-back is said out loud, because this line is now the
+        // whole of what the model is told. Without it the only way to be
+        // sure the write landed is to read the file again, which costs
+        // more than the four words do.
+        return ToolResult.Ok("$what · $lines lines · read back and matched", content)
     }
 }
 
@@ -315,7 +319,7 @@ object EditFile : Tool {
         val removed = old.count { it == '\n' } + 1
         val added = new.count { it == '\n' } + 1
         return ToolResult.Ok(
-            "-$removed +$added lines",
+            "replaced 1 match · -$removed +$added lines",
             // A diff rather than the whole file. It is what you look at before
             // saying yes, and what the model needs to see it landed.
             buildString {

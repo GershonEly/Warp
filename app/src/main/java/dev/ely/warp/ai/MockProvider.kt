@@ -371,7 +371,7 @@ class MockProvider(
         val last = request.messages.lastOrNull { it.role == Role.ASSISTANT } ?: return null
         if (last.toolCalls.isEmpty()) return null
         return last.toolCalls.joinToString("\n\n") { call ->
-            val outcome = call.body?.takeIf { it.isNotBlank() } ?: call.result ?: "no output"
+            val outcome = call.forModel?.takeIf { it.isNotBlank() } ?: "no output"
             "${call.name} → $outcome"
         }
     }

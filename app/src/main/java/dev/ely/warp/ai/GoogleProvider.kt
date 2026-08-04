@@ -220,9 +220,7 @@ class GoogleProvider(private val context: Context) : AiProvider {
                                     "response",
                                     JSONObject().put(
                                         "result",
-                                        call.body?.takeIf { it.isNotBlank() }
-                                            ?: call.result
-                                            ?: "no output",
+                                        call.forModel?.takeIf { it.isNotBlank() } ?: "no output",
                                     )
                                 )
                         )

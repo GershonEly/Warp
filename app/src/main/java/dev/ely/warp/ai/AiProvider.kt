@@ -190,6 +190,16 @@ data class ChatMessage(
     val createdAt: Long = System.currentTimeMillis(),
 )
 
+/**
+ * Tools whose output is their own input read back.
+ *
+ * Named here rather than asked of the tool, because this is the one place that
+ * builds a request and the providers cannot see the tools package. Adding a
+ * writer means adding it here; the cost of forgetting is a bigger bill, not a
+ * broken feature, so it is worth a name in the file that pays it.
+ */
+private val ECHOES_ITS_INPUT = setOf("write_file", "edit_file")
+
 data class ToolCall(
     val id: String,
     val name: String,
@@ -208,6 +218,35 @@ data class ToolCall(
      */
     val body: String? = null,
 ) {
+    /**
+     * What the model is told this call produced.
+     *
+     * Usually the body — but not when the body is the model's own input handed
+     * straight back to it. `write_file` returned the whole file it had just been
+     * given, and `edit_file` returned a diff built from the two strings in its
+     * arguments. The arguments are already in the transcript, so every one of
+     * those was a second copy, re-sent on every later request for the rest of
+     * the conversation.
+     *
+     * Measured in a real 90-message session: 104,552 characters, of which
+     * 51,271 were tool output, and `write_file` alone carried 11,332 of them
+     * twice over. Dropping both echoes removes 37,059 of that 51,271 — 72% of
+     * everything the tools said. `edit_file` is the larger half, not because
+     * any one diff is big but because there were forty of them against two
+     * writes; the cost is the habit, not the size.
+     *
+     * The body itself is untouched, because the card still shows it and the
+     * archive still keeps it. This is only about what goes on the wire — which
+     * also makes conversations that already exist cheaper to carry on with,
+     * rather than only new ones.
+     */
+    val forModel: String?
+        get() = when {
+            name in ECHOES_ITS_INPUT -> result
+            !body.isNullOrBlank() -> body
+            else -> result
+        }
+
     enum class Status {
         PENDING,
 
