@@ -69,6 +69,18 @@ object DebugBridge {
     var questions: dev.ely.warp.tools.QuestionDesk? = null
 
     /**
+     * Who runs a helper — see §5c.
+     *
+     * Here for the same reason as the desks: `POST /tool` builds its own
+     * [dev.ely.warp.tools.ToolEnv] rather than borrowing the chat's runner, so
+     * anything the runner is handed has to be reachable from here too.
+     * Otherwise `delegate` answers *no helper available* on the one path built
+     * to test it, and every boundary check passes for the wrong reason.
+     */
+    @Volatile
+    var subagents: dev.ely.warp.tools.RunsSubagents? = null
+
+    /**
      * The running goal as (condition, turn, limit), or null.
      *
      * The engine's own type here, unlike the other hooks: it grew a field, the

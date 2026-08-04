@@ -192,6 +192,52 @@ class MockProvider(
             return@flow
         }
 
+        // A helper, under §5c — and it has to be able to actually read.
+        //
+        // **Before the branch below**, and that ordering is load-bearing for the
+        // same reason the grilling branch is above it. A helper that reads once
+        // and is then answered by "here is what came back" can never be driven
+        // past a single step, so the two rules worth having — the window and the
+        // budget — would stay code nobody has run. The first version of this
+        // returned a greeting after zero reads and every boundary check passed
+        // without being tried.
+        //
+        // Driven by the job text, so one mock plays both sides: `read <path>`
+        // asks for exactly that path, which is how a read *outside* the window
+        // is provoked on purpose, and `keep reading` never stops, which is how
+        // the step budget gets to fire.
+        if (request.systemPrompt?.contains(HELPER_MARK) == true) {
+            val wants = Regex("""read (\S+)""").find(prompt)?.groupValues?.get(1)
+            val readAlready = request.messages.lastOrNull { it.role == Role.ASSISTANT }
+                ?.toolCalls?.isNotEmpty() == true
+            val endless = "keep reading" in prompt.lowercase()
+
+            // Only if it was actually handed the tool. A mock that calls what it
+            // was not given cannot be used to test a budget that works by taking
+            // the tool away — and it would be testing a thing no real model can
+            // do, which is worse than testing nothing.
+            val mayRead = request.tools.any { it.name == "read_file" }
+
+            if (mayRead && wants != null && (endless || !readAlready)) {
+                emit(
+                    AiEvent.ToolCallRequested(
+                        ToolCall(
+                            id = UUID.randomUUID().toString(),
+                            name = "read_file",
+                            argumentsJson = JSONObject().put("path", wants).toString(),
+                        )
+                    )
+                )
+                emit(AiEvent.Completed())
+                return@flow
+            }
+
+            emitWords("Helper reporting.")
+            emit(AiEvent.TextDelta(BREAK + (toolResults(request) ?: "nothing was read")))
+            emit(AiEvent.Completed())
+            return@flow
+        }
+
         // A tool has just run: say what it found and stop.
         //
         // **After the grilling branch**, and that ordering is load-bearing: this

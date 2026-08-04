@@ -550,7 +550,10 @@ object DebugServer {
                     context, DebugBridge.conversation?.invoke()
                 )
 
-                when (val r = tool.run(dev.ely.warp.tools.ToolEnv(project, context), args)) {
+                val env = dev.ely.warp.tools.ToolEnv(
+                    project, context, DebugBridge.subagents,
+                )
+                when (val r = tool.run(env, args)) {
                     is dev.ely.warp.tools.ToolResult.Ok -> 200 to JSONObject()
                         .put("summary", r.summary)
                         .put("body", r.body ?: JSONObject.NULL)

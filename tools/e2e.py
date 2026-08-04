@@ -209,7 +209,7 @@ def watch_build(seconds=140):
 # section 2 creates, so offering them apart would be offering a broken choice.
 WANTED = {a.lower() for a in sys.argv[1:]}
 GROUP_NAMES = ["surface", "chat", "tools", "permissions", "commands", "grill",
-               "goal", "project", "build", "room", "settings"]
+               "goal", "project", "build", "room", "subagent", "settings"]
 
 
 def want(group):
@@ -920,6 +920,86 @@ if want("room"):
     roomy = [a for a in call("GET", "/apps")[1]["apps"] if a["name"] == "Roomy"]
     check("the app keeps its own APK", bool(roomy) and roomy[0]["built"] is True,
           f"{roomy[:1]}")
+
+
+if want("subagent"):
+    print("\n14b. A HELPER, AND THE FENCE IT WORKS INSIDE")
+    # §5c. Every check here is about a boundary, because a boundary written into
+    # a prompt is a suggestion — the helper is held by what it is *given*.
+    #
+    # The mock plays the helper as well as the agent, so this costs nothing. It
+    # reads when the job says `read <path>`, and never stops when the job says
+    # `keep reading` — which is the only way the window and the budget can be
+    # fired on purpose rather than hoped about. Without that the whole loop
+    # returned a greeting after zero reads and every check below passed untried.
+
+    call("POST", "/chat/new")
+    call("POST", "/chat/send", {"text": "hello"})
+    settle()
+    new_project("Helper")
+    call("POST", "/tool", {"name": "write_file", "args": {
+        "path": "src/Thing.kt",
+        "content": 'package app\n\nfun broken(): Int {\n    return "not an int"\n}\n'}})
+    call("POST", "/tool", {"name": "write_file", "args": {
+        "path": "secret.txt", "content": "a helper must never read this\n"}})
+
+    def errand(args, timeout=180):
+        return call("POST", "/tool", {"name": "delegate", "args": args}, timeout=timeout)[1]
+
+    # Refused before a single token is spent. These are the cheap structural
+    # faults, and they are checked ahead of whether a helper even exists — the
+    # first version asked for the helper first, which made every one of them
+    # unreachable and green.
+    check("a helper with no declared output shape is refused",
+          "return" in (errand({"job": "why", "files": ["src/Thing.kt"]}).get("failed") or ""))
+    check("a helper with no window is refused",
+          "no files" in (errand({"job": "why", "files": [], "returns": "the cause"})
+                         .get("failed") or ""))
+    check("a window wider than the cap is refused",
+          "at most" in (errand({"job": "why", "returns": "the cause",
+                                "files": [f"src/f{i}.kt" for i in range(6)]})
+                        .get("failed") or ""))
+    check("a window reaching outside the project is refused",
+          "outside" in (errand({"job": "why", "returns": "the cause",
+                                "files": ["../../etc/hosts"]}).get("failed") or ""))
+    check("a window naming a file that is not there is refused",
+          "not a file" in (errand({"job": "why", "returns": "the cause",
+                                   "files": ["src/Nope.kt"]}).get("failed") or ""))
+
+    r = errand({"job": "read src/Thing.kt and say what is wrong",
+                "files": ["src/Thing.kt"], "returns": "the cause"})
+    check("a read inside the window happens for real",
+          "1 step" in (r.get("summary") or ""), f"summary={r.get('summary')!r}")
+    check("and what it read reached it", "not an int" in (r.get("body") or ""),
+          f"{(r.get('body') or '')[:90]!r}")
+
+    # The one that matters most. A helper is handed a segment, not the rules —
+    # so the only thing stopping it reading your secrets is that the path is
+    # checked against the window before anything is opened.
+    r = errand({"job": "read secret.txt and say what is wrong",
+                "files": ["src/Thing.kt"], "returns": "the cause"})
+    check("a read OUTSIDE the window is refused",
+          "not in your window" in (r.get("body") or ""), f"{(r.get('body') or '')[:110]!r}")
+    check("and the secret never reached it",
+          "never read this" not in (r.get("body") or ""), f"{(r.get('body') or '')[:110]!r}")
+
+    r = errand({"job": "keep reading. read src/Thing.kt again and again",
+                "files": ["src/Thing.kt"], "returns": "the cause", "max_steps": 2})
+    check("the step budget stops it", "2 steps" in (r.get("summary") or ""),
+          f"summary={r.get('summary')!r}")
+    # Said on the card, not buried. A partial answer read as a whole one is
+    # worse than no answer, and the agent reading this is the one that must know.
+    check("and the card says it was cut off, not that it finished",
+          "stopped at its budget" in (r.get("summary") or ""),
+          f"summary={r.get('summary')!r}")
+
+    call("POST", "/chat/new")
+    call("POST", "/chat/command", {"text": "/plan build me a thing"})
+    settle()
+    plan = call("GET", "/messages?id=" + call("GET", "/state")[1]["conversationId"]
+                )[1]["messages"][-1]["text"] or ""
+    check("a plan turn is not offered a helper — it spends money",
+          "delegate" not in plan, repr(plan[-140:]))
 
 
 if want("settings"):

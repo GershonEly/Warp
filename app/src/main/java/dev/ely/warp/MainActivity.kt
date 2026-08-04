@@ -129,7 +129,17 @@ private fun WarpApp() {
     val permission = remember { PermissionDesk(store = conversations) }
     val rules = remember { Rules.get(context) }
     val questions = remember { QuestionDesk() }
-    val toolRunner = remember { ToolRunner(context, permission, questions) }
+    // A helper runs on whatever the chat is running on, read fresh each time
+    // rather than captured — switching model mid-conversation should change who
+    // answers the next errand, not only the next message.
+    val subagents = remember {
+        dev.ely.warp.ai.SubagentRunner(
+            context = context,
+            provider = { registry.providerFor(registry.choice.providerId) },
+            model = { registry.choice.modelId },
+        )
+    }
+    val toolRunner = remember { ToolRunner(context, permission, questions, subagents) }
     // The application's scope, not the screen's. A turn that outlives the
     // activity is the entire point of the service, and it cannot outlive a
     // scope that the activity owns.
@@ -246,6 +256,7 @@ private fun WarpApp() {
             // returned.
             engine.messages.value.lastOrNull { it.role == dev.ely.warp.ai.Role.USER }?.id
         }
+        DebugBridge.subagents = subagents
         DebugBridge.navigate = { name ->
             val target = WarpDestination.entries.firstOrNull { it.name == name }
             if (target != null) { destination = target; true } else false

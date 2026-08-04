@@ -22,6 +22,14 @@ class ToolRunner(
     private val context: Context,
     private val permission: AsksPermission? = null,
     private val questions: AsksQuestions? = null,
+    /**
+     * Who can send a helper — see §5c and [Delegate].
+     *
+     * Set from outside like the two desks above, and for the same reason: a
+     * helper is a model call, and nothing in this package is allowed to know
+     * what a model is.
+     */
+    private val subagents: RunsSubagents? = null,
 ) {
 
     /**
@@ -141,7 +149,9 @@ class ToolRunner(
 
         report(call.copy(status = ToolCall.Status.RUNNING))
 
-        return when (val result = runCatching { tool.run(ToolEnv(project, context), args) }.getOrElse {
+        return when (val result = runCatching {
+            tool.run(ToolEnv(project, context, subagents), args)
+        }.getOrElse {
             Log.w(TAG, "${call.name} threw", it)
             ToolResult.Failed(it.message ?: it.javaClass.simpleName)
         }) {

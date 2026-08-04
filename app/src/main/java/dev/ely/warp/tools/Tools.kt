@@ -62,7 +62,18 @@ enum class Risk {
  * A single object rather than two parameters so the next thing a tool needs can
  * be added here instead of in every signature.
  */
-data class ToolEnv(val project: File, val context: Context)
+data class ToolEnv(
+    val project: File,
+    val context: Context,
+    /**
+     * Who can send a helper, or null where nobody can — see [Delegate].
+     *
+     * Nullable rather than assumed, for the same reason the permission desk is:
+     * the runner exists in places the chat engine does not, and a tool that
+     * needs something absent should say so rather than pretend it worked.
+     */
+    val subagents: RunsSubagents? = null,
+)
 
 interface Tool {
     val name: String
@@ -494,7 +505,7 @@ val READ_TOOLS: Map<String, Tool> =
 
 /** Everything the model can be offered, by name. */
 val ALL_TOOLS: Map<String, Tool> =
-    (READ_TOOLS.values + listOf(NewProjectTool, WriteFile, EditFile, AskUser, GoalDone) +
+    (READ_TOOLS.values + listOf(NewProjectTool, WriteFile, EditFile, AskUser, GoalDone, Delegate) +
         DEVICE_TOOLS).associateBy { it.name }
 
 /** Everything, plus the way out. What a `/goal` turn is given. */
