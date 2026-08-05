@@ -2,6 +2,8 @@ package dev.ely.warp.ai
 
 import android.content.Context
 import android.util.Log
+import dev.ely.warp.tools.AsksQuestions
+import dev.ely.warp.tools.Question
 import dev.ely.warp.tools.READ_TOOLS
 import dev.ely.warp.tools.RunsSubagents
 import dev.ely.warp.tools.SubResult
@@ -10,6 +12,7 @@ import dev.ely.warp.tools.ToolEnv
 import dev.ely.warp.tools.ToolResult
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.io.File
 import java.util.UUID
@@ -25,6 +28,14 @@ private const val TAG = "WarpSubagent"
  * stops recognising helpers and boundary checks that pass by never firing.
  */
 internal const val HELPER_MARK = "You are a helper working for another agent"
+
+/**
+ * How long the "which model?" question waits before answering itself.
+ *
+ * Long enough to read and tap, short enough that an unattended `/goal` loses a
+ * minute and a half once per chat rather than stopping for ever.
+ */
+private const val ASK_MS = 90_000L
 
 /**
  * The thing behind [dev.ely.warp.tools.Delegate] — §5c.
@@ -45,10 +56,28 @@ class SubagentRunner(
     private val context: Context,
     private val provider: () -> AiProvider,
     private val model: () -> String,
+    /** Where the "which model?" question goes. Null means don't ask. */
+    private val questions: AsksQuestions? = null,
+    /** What there is to choose from. Suspends — it may go and look. */
+    private val choices: suspend () -> List<ModelChoice> = { emptyList() },
 ) : RunsSubagents {
 
+    /** Which chat this is, set from outside exactly like the runner's. */
+    @Volatile
+    var conversation: () -> String? = { null }
+
+    /**
+     * The model picked for helpers, per chat.
+     *
+     * Asked once and then remembered, the same shape as Always on a write
+     * permission — and for the same reason. A question on every errand is a
+     * question people learn to dismiss without reading, which is how a prompt
+     * stops being a decision.
+     */
+    private val picked = mutableMapOf<String, String>()
+
     override suspend fun run(task: SubTask, project: File): SubResult {
-        val modelId = model()
+        val modelId = chooseModel()
         val reader = READ_TOOLS["read_file"]
             ?: return SubResult("read_file is missing", 0, false, modelId)
 
@@ -118,6 +147,69 @@ class SubagentRunner(
         // stop rather than as success with an empty report, because the two
         // are different facts and only one of them is worth acting on.
         return SubResult(report, steps, true, modelId)
+    }
+
+    /**
+     * Which model answers this errand — asked once per chat, then remembered.
+     *
+     * A helper mostly reads and summarises, so it is often the one place a
+     * smaller model is plainly enough, and on BYOK that difference is the
+     * person's own money. It is theirs to decide, so it is put to them rather
+     * than guessed.
+     *
+     * **It never blocks.** `/goal` exists to keep working while nobody is
+     * watching, and a question with nobody there would freeze exactly the run
+     * the foreground service was built to protect. So the wait is bounded, and
+     * running out of it is not a failure — it is the answer "whatever the chat
+     * is using", remembered like any other, so it is asked once and never again.
+     */
+    private suspend fun chooseModel(): String {
+        val mine = model()
+        val here = conversation() ?: return mine
+        picked[here]?.let { return it }
+
+        val desk = questions ?: return keep(here, mine)
+
+        val available = runCatching { choices() }.getOrNull().orEmpty()
+            .filter { it.available }
+            .distinctBy { it.modelId }
+
+        val current = available.firstOrNull { it.modelId == mine }
+        val others = available.filter { it.modelId != mine && it.recommended }.take(3)
+
+        // Nothing to choose between is not a question. Asking anyway would
+        // teach people that the prompt means nothing, which is what makes the
+        // prompts that matter invisible.
+        if (others.isEmpty()) return keep(here, mine)
+
+        val labels = listOf(current?.label ?: mine) + others.map { it.label }
+
+        val answer = withTimeoutOrNull(ASK_MS) {
+            desk.ask(
+                Question(
+                    callId = "helper-model-$here",
+                    text = "Which model should the helper use?",
+                    options = labels,
+                    // A recommendation, not a default — nothing is chosen until
+                    // it is chosen. The same one as the chat is the safe answer
+                    // for somebody with no opinion.
+                    recommended = 0,
+                    because = "A helper only reads a few files and reports back, " +
+                        "so a smaller model is often enough. It is charged to you either way.",
+                )
+            )
+        } ?: run {
+            Log.i(TAG, "nobody answered which model; using $mine for $here")
+            return keep(here, mine)
+        }
+
+        val chosen = others.firstOrNull { it.label == answer }?.modelId ?: mine
+        return keep(here, chosen)
+    }
+
+    private fun keep(conversation: String, modelId: String): String {
+        picked[conversation] = modelId
+        return modelId
     }
 
     /**

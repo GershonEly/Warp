@@ -6,6 +6,7 @@ place.
 """
 import json
 import sys
+import threading
 import time
 import urllib.request
 import subprocess
@@ -943,6 +944,25 @@ if want("subagent"):
     call("POST", "/tool", {"name": "write_file", "args": {
         "path": "secret.txt", "content": "a helper must never read this\n"}})
 
+    # Somebody has to be there to answer "which model should the helper use?",
+    # and it cannot be this thread: the /tool request blocks until the tool
+    # returns, and the tool is waiting for the answer. So a watcher answers from
+    # the side, which is also the only way to check it is asked exactly once.
+    asked = []
+
+    def answerer():
+        end = time.time() + 240
+        while time.time() < end:
+            q = call("GET", "/question")[1]
+            if q.get("asking"):
+                asked.append(q.get("question") or "")
+                options = q.get("options") or []
+                call("POST", "/question/answer",
+                     {"text": options[0] if options else "ok"})
+            time.sleep(0.3)
+
+    threading.Thread(target=answerer, daemon=True).start()
+
     def errand(args, timeout=180):
         return call("POST", "/tool", {"name": "delegate", "args": args}, timeout=timeout)[1]
 
@@ -972,6 +992,21 @@ if want("subagent"):
           "1 step" in (r.get("summary") or ""), f"summary={r.get('summary')!r}")
     check("and what it read reached it", "not an int" in (r.get("body") or ""),
           f"{(r.get('body') or '')[:90]!r}")
+
+    # Asked once, then remembered for the chat — the same shape as Always on a
+    # write. Skipped rather than failed when this phone has only one model
+    # available, because then there is nothing to choose between and asking
+    # anyway is the behaviour worth *not* having.
+    if asked:
+        check("it asked which model the helper should use",
+              any("model" in q.lower() for q in asked), f"{asked}")
+        before = len(asked)
+        errand({"job": "read src/Thing.kt again", "files": ["src/Thing.kt"],
+                "returns": "the cause"})
+        check("and it does not ask a second time in the same chat",
+              len(asked) == before, f"asked {len(asked) - before} more time(s)")
+    else:
+        print("  ....  only one model available — nothing to ask about, skipped")
 
     # The one that matters most. A helper is handed a segment, not the rules —
     # so the only thing stopping it reading your secrets is that the path is

@@ -137,6 +137,10 @@ private fun WarpApp() {
             context = context,
             provider = { registry.providerFor(registry.choice.providerId) },
             model = { registry.choice.modelId },
+            // The same desk `/grill-me` uses, so choosing who does the reading
+            // is one tap in the conversation rather than a trip to Settings.
+            questions = questions,
+            choices = { registry.modelChoices() },
         )
     }
     val toolRunner = remember { ToolRunner(context, permission, questions, subagents) }
@@ -181,6 +185,9 @@ private fun WarpApp() {
         // The same supplier for the runner, so the folder a tool writes into and
         // the chat that granted permission to write are always the same chat.
         toolRunner.conversation = { engine.conversationId.value }
+        // And the helper, so "which model" is remembered per chat like a write
+        // permission is, rather than once for the whole app.
+        subagents.conversation = { engine.conversationId.value }
     }
 
     /**
