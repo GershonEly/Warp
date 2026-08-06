@@ -210,7 +210,7 @@ def watch_build(seconds=140):
 # section 2 creates, so offering them apart would be offering a broken choice.
 WANTED = {a.lower() for a in sys.argv[1:]}
 GROUP_NAMES = ["surface", "chat", "tools", "permissions", "commands", "grill",
-               "goal", "project", "build", "room", "subagent", "settings"]
+               "goal", "project", "build", "room", "budget", "subagent", "settings"]
 
 
 def want(group):
@@ -921,6 +921,55 @@ if want("room"):
     roomy = [a for a in call("GET", "/apps")[1]["apps"] if a["name"] == "Roomy"]
     check("the app keeps its own APK", bool(roomy) and roomy[0]["built"] is True,
           f"{roomy[:1]}")
+
+
+if want("budget"):
+    print("\n14c. THE ROUND BUDGET COUNTS LOOKING, NOT WORKING")
+    # §5g. "Stopped after 8 rounds of tool calls" fired six times in one real
+    # 108-message build - 32 edits, 18 writes, 6 builds - so the word continue
+    # had to be typed six times to finish an app. A budget cannot tell looping
+    # from working by counting, so it stops counting and looks at what came back.
+
+    call("POST", "/permission/revoke")
+    call("POST", "/chat/new")
+    call("POST", "/chat/send", {"text": "hello"})
+    settle()
+    new_project("Budget")
+    call("POST", "/tool", {"name": "write_file", "args": {
+        "path": "src/Thing.kt", "content": "package app\n\nval x = 1\n"}})
+
+    # Always, once, so the writes below are not forty permission prompts.
+    call("POST", "/chat/send", {"text": "create a new file for me"})
+    settle()
+    call("POST", "/permission", {"decision": "ALWAYS"})
+    settle()
+
+    call("POST", "/chat/send", {"text": "keep writing files please"})
+    settle(180)
+    cid = call("GET", "/state")[1]["conversationId"]
+    msgs = call("GET", "/messages?id=" + cid)[1]["messages"]
+    writes = [c for m in msgs for c in m.get("toolCalls", []) if c["name"] == "write_file"]
+    cut = [m for m in msgs if "rounds of looking" in (m.get("error") or "")]
+
+    # The whole point: more rounds than the old cap allowed, and none of them
+    # spent it, because every one of them changed a file.
+    check("work runs past the old eight-round cap", len(writes) > 8,
+          f"{len(writes)} write_file calls")
+    check("and it was not cut off for looking", not cut, f"{len(cut)} cut-off message(s)")
+
+    call("POST", "/chat/new")
+    call("POST", "/chat/send", {"text": "keep looking at the same file"})
+    settle(120)
+    cid = call("GET", "/state")[1]["conversationId"]
+    msgs = call("GET", "/messages?id=" + cid)[1]["messages"]
+    reads = [c for m in msgs for c in m.get("toolCalls", []) if c["name"] == "read_file"]
+    said = " ".join((m.get("error") or "") for m in msgs)
+
+    # And the thing the cap was always for is now caught by name rather than by
+    # a counter that could not see the difference.
+    check("a real loop is stopped", "same tool" in said, repr(said[:130]))
+    check("and stopped early, not at the ceiling", len(reads) <= 6,
+          f"{len(reads)} read_file calls before it stopped")
 
 
 if want("subagent"):

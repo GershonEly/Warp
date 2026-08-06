@@ -448,6 +448,9 @@ class ChatEngine(
     private suspend fun runTurn(firstReplyId: String): String {
         var replyId = firstReplyId
         var round = 0
+        var total = 0
+        var repeats = 0
+        var lastSignature: String? = null
 
         while (true) {
             val ranTools = streamInto(replyId)
@@ -468,11 +471,55 @@ class ChatEngine(
             // work — hit the cap after eight and stopped with an error that
             // read like a fault. Observed on a real model: eight questions, then
             // "Stopped after 8 rounds of tool calls".
-            val onlyAsked = sheet?.find(replyId)
-                ?.toolCalls
-                ?.let { calls -> calls.isNotEmpty() && calls.all { it.name == "ask" } } == true
+            val calls = sheet?.find(replyId)?.toolCalls.orEmpty()
+            val onlyAsked = calls.isNotEmpty() && calls.all { it.name == "ask" }
 
-            if (round >= MAX_TOOL_ROUNDS) {
+            // And neither does a round that changed something.
+            //
+            // The same argument, carried where it should have gone the first
+            // time. `/grill-me` was fixed and an ordinary chat was not — which
+            // is where the work actually happens. Building a call recorder on
+            // 2026-08-05 hit this **six times in one session**: 32 edits, 18
+            // writes, 6 builds, and the word "continue" typed six times to get
+            // an app finished. That is a session going well being charged for
+            // the model's good behaviour.
+            //
+            // A budget cannot tell looping from working by counting, so it stops
+            // counting and starts looking at what came back. A write that landed
+            // or a build that ran is work; the two are not the same event and
+            // only one of them needs a brake.
+            val worked = calls.any {
+                it.status == ToolCall.Status.DONE && it.name in CHANGED_SOMETHING
+            }
+
+            // Looping is the same call coming back again — which is a thing you
+            // can see, rather than a thing a counter guesses at. Reading one
+            // file eight times is a loop; reading eight files is a morning's
+            // work, and the old cap could not tell them apart.
+            val signature = calls.joinToString("|") { "${it.name} ${it.argumentsJson}" }
+            if (signature.isNotEmpty() && signature == lastSignature) repeats++ else repeats = 0
+            lastSignature = signature
+
+            total++
+
+            // Work is free, but not infinite. The ceiling is far above any real
+            // turn and exists so a model that writes for ever is still bounded —
+            // §5c asks for a hard budget on anything that can call itself, and
+            // "unless it is being productive" is not a budget.
+            val stop = when {
+                repeats >= MAX_REPEATS ->
+                    "Stopped: it called the same tool $MAX_REPEATS times in a row " +
+                        "with the same arguments, which is a loop rather than progress."
+                round >= MAX_TOOL_ROUNDS ->
+                    "Stopped after $MAX_TOOL_ROUNDS rounds of looking without changing " +
+                        "anything. Say “continue” to let it keep going."
+                total >= MAX_ROUNDS_EVER ->
+                    "Stopped after $MAX_ROUNDS_EVER rounds in one turn. " +
+                        "Say “continue” to let it keep going."
+                else -> null
+            }
+
+            if (stop != null) {
                 // Inside a goal this is not an error, it is a turn boundary.
                 //
                 // It fired twice during a real run of eight `edit_file`s and
@@ -485,19 +532,13 @@ class ChatEngine(
                 // said out loud. A budget that ends a turn silently is
                 // indistinguishable from a model that decided it was done.
                 update(replyId) {
-                    it.copy(
-                        streaming = false,
-                        error = AiError.Unknown(
-                            "Stopped after $MAX_TOOL_ROUNDS rounds of tool calls. " +
-                                "Say “continue” to let it keep going."
-                        ),
-                    )
+                    it.copy(streaming = false, error = AiError.Unknown(stop))
                 }
                 persistNow(replyId)
                 return replyId
             }
 
-            if (!onlyAsked) round++
+            if (!onlyAsked && !worked) round++
             replyId = UUID.randomUUID().toString()
             activeReplyId = replyId
             sheet?.add(
@@ -804,13 +845,47 @@ class ChatEngine(
         private const val PERSIST_EVERY_MS = 1_000L
 
         /**
-         * How many times a single turn may go and look before it must speak.
+         * How many times a turn may go and **look** before it must speak.
          *
-         * A ceiling, not a target — §5c calls for a hard budget on anything
-         * that can call itself, and a model in a loop reading the same file is
-         * a loop that spends your money at full speed.
+         * Looking, not working. A round that wrote a file or ran a build does
+         * not spend this, because the budget exists to stop a model wandering
+         * and a model that is changing things is not wandering. Counting every
+         * round instead cut a real 108-message build into six pieces — see
+         * §5g.
          */
         private const val MAX_TOOL_ROUNDS = 8
+
+        /**
+         * The same call, with the same arguments, this many times over.
+         *
+         * The thing the budget was always trying to catch, now caught by name.
+         * Three rather than two: a model that reads a file, writes it, and reads
+         * it back to check has a legitimate reason to repeat itself once.
+         */
+        private const val MAX_REPEATS = 3
+
+        /**
+         * Rounds in one turn, whatever they were doing.
+         *
+         * Work is free but not infinite. Far above any real turn — the longest
+         * observed was well under twenty — and here only so that "unless it is
+         * being productive" does not quietly become "for ever". §5c asks for a
+         * hard budget on anything that can call itself, and this is it.
+         */
+        private const val MAX_ROUNDS_EVER = 60
+
+        /**
+         * Tool names that mean the turn is working rather than looking.
+         *
+         * Named here, in the file that pays for it, rather than asked of the
+         * tool — the engine deliberately knows nothing about what a tool *is*,
+         * and it already makes the same exception for `ask` and `goal_done` by
+         * name. Adding a tool that changes something means adding it here; the
+         * cost of forgetting is a turn cut short, not a broken feature.
+         */
+        private val CHANGED_SOMETHING = setOf(
+            "write_file", "edit_file", "new_project", "build", "install", "launch",
+        )
 
         /**
          * How many turns a goal gets before it must stop and say so.

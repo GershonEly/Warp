@@ -192,6 +192,43 @@ class MockProvider(
             return@flow
         }
 
+        // Two scripted runaways, because a budget that cannot be driven cannot
+        // be tested — and this one was wrong for weeks without anything failing.
+        //
+        // "keep writing" changes a **different** file every round: that is work,
+        // and work must not spend the budget. "keep looking" asks for the **same**
+        // file every round: that is a loop, and a loop must be stopped. The old
+        // cap could not tell them apart, and cut a real 108-message build into
+        // six pieces — §5g.
+        if (request.tools.isNotEmpty()) {
+            val soFar = request.messages.count {
+                it.role == Role.ASSISTANT && it.toolCalls.isNotEmpty()
+            }
+            val runaway = when {
+                "keep writing" in prompt.lowercase() -> "write_file" to JSONObject()
+                    .put("path", "src/Gen$soFar.kt")
+                    .put("content", "package app\n\nval gen$soFar = $soFar\n")
+                // Identical every round on purpose: the signature the engine
+                // compares is the name and the arguments, never the call id.
+                "keep looking" in prompt.lowercase() -> "read_file" to JSONObject()
+                    .put("path", "src/Thing.kt")
+                else -> null
+            }
+            if (runaway != null && request.tools.any { it.name == runaway.first }) {
+                emit(
+                    AiEvent.ToolCallRequested(
+                        ToolCall(
+                            id = UUID.randomUUID().toString(),
+                            name = runaway.first,
+                            argumentsJson = runaway.second.toString(),
+                        )
+                    )
+                )
+                emit(AiEvent.Completed())
+                return@flow
+            }
+        }
+
         // A helper, under §5c — and it has to be able to actually read.
         //
         // **Before the branch below**, and that ordering is load-bearing for the
