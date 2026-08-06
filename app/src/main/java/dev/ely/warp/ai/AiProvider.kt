@@ -176,6 +176,14 @@ data class ChatMessage(
     val thinking: String = "",
     /** Tool calls the assistant asked for in this message. */
     val toolCalls: List<ToolCall> = emptyList(),
+    /**
+     * What you showed it — §5h. Yours, never the model's.
+     *
+     * On the message rather than on the request, because it is part of what was
+     * said and has to still be there when the conversation is read back a week
+     * later. The bytes are on disk; this holds the path.
+     */
+    val attachments: List<Attachment> = emptyList(),
     /** True while text is still streaming in. */
     val streaming: Boolean = false,
     val error: AiError? = null,

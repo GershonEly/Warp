@@ -274,12 +274,26 @@ class ChatEngine(
      * the front of it, the status bar read "Working toward: /goal the file
      * exists", which is not a condition, it is a keystroke log.
      */
-    fun send(text: String, mode: Mode = Mode.NORMAL, condition: String? = null) {
+    fun send(
+        text: String,
+        mode: Mode = Mode.NORMAL,
+        condition: String? = null,
+        /**
+         * What was attached to this message — §5h.
+         *
+         * Enough on its own: a message that is only a screenshot is exactly how
+         * somebody shows you a bug, so the empty-text guard below has to let it
+         * through.
+         */
+        attachments: List<Attachment> = emptyList(),
+    ) {
         val trimmed = text.trim()
         // `turn` as well as `busy`: busy now describes the visible chat, and a
         // second turn started while another is still running would leave two
         // coroutines writing through one [sheet].
-        if (trimmed.isEmpty() || _busy.value || turn?.isActive == true) return
+        if ((trimmed.isEmpty() && attachments.isEmpty()) ||
+            _busy.value || turn?.isActive == true
+        ) return
         this.mode = mode
         if (mode == Mode.GOAL) {
             _goal.value = Goal(
@@ -293,6 +307,7 @@ class ChatEngine(
             id = UUID.randomUUID().toString(),
             role = Role.USER,
             text = trimmed,
+            attachments = attachments,
         )
         val replyId = UUID.randomUUID().toString()
         val reply = ChatMessage(
@@ -496,7 +511,7 @@ class ChatEngine(
             // can see, rather than a thing a counter guesses at. Reading one
             // file eight times is a loop; reading eight files is a morning's
             // work, and the old cap could not tell them apart.
-            val signature = calls.joinToString("|") { "${it.name} ${it.argumentsJson}" }
+            val signature = calls.joinToString("|") { "${it.name} ${it.argumentsJson}" }
             if (signature.isNotEmpty() && signature == lastSignature) repeats++ else repeats = 0
             lastSignature = signature
 

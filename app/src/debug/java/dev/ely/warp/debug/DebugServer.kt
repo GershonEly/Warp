@@ -171,6 +171,22 @@ object DebugServer {
             }
 
             "POST /chat/send" -> {
+                // Files first: a message that is only a screenshot is legal, so
+                // the text guard below must not fire on one.
+                val files = json.optJSONArray("attach")?.let { array ->
+                    (0 until array.length()).mapNotNull {
+                        array.optString(it).takeIf(String::isNotBlank)
+                    }
+                }.orEmpty()
+
+                if (files.isNotEmpty()) {
+                    val withFiles = DebugBridge.sendWithFiles
+                        ?: return 503 to error("no chat on screen")
+                    val id = withFiles(json.optString("text"), files)
+                        ?: return 500 to error("the message was not accepted")
+                    return 200 to JSONObject().put("messageId", id)
+                }
+
                 val text = json.optString("text").takeIf { it.isNotBlank() }
                     ?: return 400 to error("expected {\"text\": \"...\"}")
                 val send = DebugBridge.send ?: return 503 to error("no chat on screen")
@@ -249,6 +265,15 @@ object DebugServer {
                             // is a check rather than a squint at the screen.
                             .put("thinking", message.thinking)
                             .put("toolCalls", calls)
+                            // Same reasoning as tool calls: a message that says
+                            // it carried a screenshot and did not would look
+                            // identical from outside without this.
+                            .put(
+                                "attachments",
+                                JSONArray().apply {
+                                    message.attachments.forEach { put(it.toJson()) }
+                                },
+                            )
                             .put("error", message.error?.message ?: JSONObject.NULL)
                             .put("createdAt", message.createdAt)
                     )

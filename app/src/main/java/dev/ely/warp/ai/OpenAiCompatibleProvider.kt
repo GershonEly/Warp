@@ -192,6 +192,38 @@ abstract class OpenAiCompatibleProvider(
         }
     }.flowOn(Dispatchers.IO)
 
+    /**
+     * A plain string, or parts when there is a picture — §5h.
+     *
+     * A string whenever it can be, because that is what this dialect looked like
+     * before attachments existed and every model on it accepts it; the array
+     * form is only reached by a message that actually carries an image. Text
+     * attachments never reach here as parts at all — they are already inside
+     * the text, which is what makes a log work on a model that cannot see.
+     */
+    private fun contentFor(message: ChatMessage): Any {
+        val text = Attachments.textFor(message)
+        val images = Attachments.imagesFor(message)
+        if (images.isEmpty()) return text
+
+        val parts = JSONArray()
+        images.forEach { image ->
+            parts.put(
+                JSONObject()
+                    .put("type", "image_url")
+                    .put(
+                        "image_url",
+                        JSONObject().put("url", "data:${image.mimeType};base64,${image.base64}"),
+                    )
+            )
+        }
+        // After the pictures, so the question is the last thing read.
+        if (text.isNotBlank()) {
+            parts.put(JSONObject().put("type", "text").put("text", text))
+        }
+        return parts
+    }
+
     private fun buildBody(request: AiRequest): JSONObject {
         val messages = JSONArray()
 
@@ -204,13 +236,19 @@ abstract class OpenAiCompatibleProvider(
         request.messages
             // Tool calls count as content. Filtering on text alone would drop
             // the turn where the model went and looked at something.
-            .filter { (it.text.isNotBlank() || it.toolCalls.isNotEmpty()) && it.role != Role.SYSTEM }
+            // An attachment counts as content too. Without it a message that is
+            // only a screenshot — which is exactly how someone shows you a bug —
+            // is dropped before it is ever sent.
+            .filter {
+                (it.text.isNotBlank() || it.toolCalls.isNotEmpty() || Attachments.any(it)) &&
+                    it.role != Role.SYSTEM
+            }
             .forEach { message ->
                 if (message.role == Role.USER || message.toolCalls.isEmpty()) {
                     messages.put(
                         JSONObject()
                             .put("role", if (message.role == Role.USER) "user" else "assistant")
-                            .put("content", message.text)
+                            .put("content", contentFor(message))
                     )
                     return@forEach
                 }

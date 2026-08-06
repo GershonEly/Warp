@@ -264,6 +264,23 @@ private fun WarpApp() {
             engine.messages.value.lastOrNull { it.role == dev.ely.warp.ai.Role.USER }?.id
         }
         DebugBridge.subagents = subagents
+        DebugBridge.sendWithFiles = { text, paths ->
+            val id = engine.conversationId.value ?: "_scratch"
+            val taken = paths.mapNotNull { path ->
+                // Relative paths are resolved against the app's data directory,
+                // because that is how every other path in the suite is written
+                // — `run-as` starts there, so `files/projects/...` is the shape
+                // the tests already speak.
+                val file = java.io.File(path).let {
+                    if (it.isAbsolute) it else java.io.File(context.dataDir, path)
+                }
+                dev.ely.warp.data.AttachmentStore
+                    .take(context, id, android.net.Uri.fromFile(file))
+                    .getOrNull()
+            }
+            engine.send(text, attachments = taken)
+            engine.messages.value.lastOrNull { it.role == dev.ely.warp.ai.Role.USER }?.id
+        }
         DebugBridge.navigate = { name ->
             val target = WarpDestination.entries.firstOrNull { it.name == name }
             if (target != null) { destination = target; true } else false

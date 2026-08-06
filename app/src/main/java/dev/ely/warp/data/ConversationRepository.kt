@@ -193,6 +193,7 @@ class ConversationRepository(context: Context) :
                 text = message.text,
                 toolCallsJson = message.toolCalls.toJsonOrNull(),
                 thinking = message.thinking.takeIf { it.isNotBlank() },
+                attachments = dev.ely.warp.ai.Attachment.listToJson(message.attachments),
                 errorKind = message.error?.storageKind(),
                 errorDetail = message.error?.storageDetail(),
                 createdAt = message.createdAt,
@@ -287,6 +288,7 @@ class ConversationRepository(context: Context) :
         text = text,
         toolCalls = toolCallsJson.toToolCalls(),
         thinking = thinking.orEmpty(),
+        attachments = dev.ely.warp.ai.Attachment.listFromJson(attachments),
         error = readError(errorKind, errorDetail),
         createdAt = createdAt,
     )

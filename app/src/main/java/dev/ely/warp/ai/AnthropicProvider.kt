@@ -231,6 +231,39 @@ class AnthropicProvider(
 
     // ── request body ─────────────────────────────────────────────────────
 
+    /**
+     * A plain string, or blocks when there is a picture — §5h.
+     *
+     * This API takes an image as a base64 `source` block rather than a data
+     * URL, which is the one real difference from the OpenAI dialect and the
+     * reason the two mappings are written out separately instead of shared.
+     * Text attachments never appear here: they are already in the text.
+     */
+    private fun contentFor(message: ChatMessage): Any {
+        val text = Attachments.textFor(message)
+        val images = Attachments.imagesFor(message)
+        if (images.isEmpty()) return text
+
+        val blocks = JSONArray()
+        images.forEach { image ->
+            blocks.put(
+                JSONObject()
+                    .put("type", "image")
+                    .put(
+                        "source",
+                        JSONObject()
+                            .put("type", "base64")
+                            .put("media_type", image.mimeType)
+                            .put("data", image.base64),
+                    )
+            )
+        }
+        if (text.isNotBlank()) {
+            blocks.put(JSONObject().put("type", "text").put("text", text))
+        }
+        return blocks
+    }
+
     private fun buildBody(request: AiRequest): JSONObject {
         val messages = JSONArray()
         request.messages
@@ -238,13 +271,18 @@ class AnthropicProvider(
             // carries no meaning to the model. A message with tool calls and no
             // text is not empty, though — dropping it would delete the half of
             // the conversation where anything actually happened.
-            .filter { (it.text.isNotBlank() || it.toolCalls.isNotEmpty()) && it.role != Role.SYSTEM }
+            // An attachment is content too — a message that is only a screenshot
+            // is exactly how somebody shows you a bug, and this used to drop it.
+            .filter {
+                (it.text.isNotBlank() || it.toolCalls.isNotEmpty() || Attachments.any(it)) &&
+                    it.role != Role.SYSTEM
+            }
             .forEach { message ->
                 if (message.role == Role.USER || message.toolCalls.isEmpty()) {
                     messages.put(
                         JSONObject()
                             .put("role", if (message.role == Role.USER) "user" else "assistant")
-                            .put("content", message.text)
+                            .put("content", contentFor(message))
                     )
                     return@forEach
                 }

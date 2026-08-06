@@ -192,6 +192,38 @@ class MockProvider(
             return@flow
         }
 
+        // What arrived with the message — §5h.
+        //
+        // Reported rather than acknowledged, and this is the only way to tell
+        // "the picture reached the provider" from "a card said it did". The
+        // decoded count is the load-bearing number: a file that was attached,
+        // stored and shown but never encoded would look identical everywhere
+        // else, which is the failure this project keeps producing.
+        request.messages.lastOrNull { it.role == Role.USER }
+            ?.takeIf { Attachments.any(it) }
+            ?.let { message ->
+                val listed = message.attachments.joinToString("\n") {
+                    "${it.name} · ${it.mimeType} · ${it.bytes} bytes"
+                }
+                val images = Attachments.imagesFor(message)
+                val folded = Attachments.textFor(message)
+
+                emitWords("You attached:")
+                emit(AiEvent.TextDelta("\n\n```\n$listed\n```"))
+                emit(AiEvent.TextDelta("\n\nDecoded ${images.size} image(s)."))
+                // Text arrives inside the message rather than beside it, so a
+                // longer text than was typed is the proof it was folded in.
+                if (folded.length > message.text.length) {
+                    emit(
+                        AiEvent.TextDelta(
+                            "\n\nRead ${folded.length - message.text.length} characters of text."
+                        )
+                    )
+                }
+                emit(AiEvent.Completed())
+                return@flow
+            }
+
         // Two scripted runaways, because a budget that cannot be driven cannot
         // be tested — and this one was wrong for weeks without anything failing.
         //

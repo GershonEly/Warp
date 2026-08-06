@@ -21,7 +21,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MessageFts::class,
         ToolGrantEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 abstract class WarpDatabase : RoomDatabase() {
@@ -68,6 +68,19 @@ abstract class WarpDatabase : RoomDatabase() {
          * reasoning" and "it reasoned about nothing" are different facts and an
          * empty string cannot hold both.
          */
+        /**
+         * Somewhere to keep what you showed it — §5h.
+         *
+         * Paths and names, never bytes. A screenshot in a database row is a
+         * database that doubles in size the first time somebody debugs a
+         * layout, and Room reads a row whole.
+         */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN attachments TEXT")
+            }
+        }
+
         private val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE messages ADD COLUMN thinking TEXT")
@@ -117,7 +130,7 @@ abstract class WarpDatabase : RoomDatabase() {
                     WarpDatabase::class.java,
                     "warp.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     // Deliberately no fallbackToDestructiveMigration. Losing
                     // someone's conversations because a column moved is not an
                     // acceptable failure mode; a missing migration should break

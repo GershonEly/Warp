@@ -210,7 +210,8 @@ def watch_build(seconds=140):
 # section 2 creates, so offering them apart would be offering a broken choice.
 WANTED = {a.lower() for a in sys.argv[1:]}
 GROUP_NAMES = ["surface", "chat", "tools", "permissions", "commands", "grill",
-               "goal", "project", "build", "room", "budget", "subagent", "settings"]
+               "goal", "project", "build", "room", "attach", "budget", "subagent",
+               "settings"]
 
 
 def want(group):
@@ -921,6 +922,63 @@ if want("room"):
     roomy = [a for a in call("GET", "/apps")[1]["apps"] if a["name"] == "Roomy"]
     check("the app keeps its own APK", bool(roomy) and roomy[0]["built"] is True,
           f"{roomy[:1]}")
+
+
+if want("attach"):
+    print("\n14a. SHOWING IT SOMETHING")
+    # §5h. Warp could always be told what was wrong and never shown, which cost
+    # forty messages of blind debugging in the CallVault session. Driven by file
+    # path rather than the picker, because Android's file chooser cannot be
+    # driven from outside and an attachment feature nothing can test is one that
+    # quietly stops working.
+
+    call("POST", "/chat/new")
+    call("POST", "/chat/send", {"text": "hello"})
+    settle()
+    new_project("Shown")
+    call("POST", "/tool", {"name": "write_file", "args": {
+        "path": "src/Broken.kt",
+        "content": "package app\n\nfun oops(): Int {\n    return \"not an int\"\n}\n"}})
+
+    # A text file. Needs no vision model at all, works on every provider, and is
+    # the cheapest half of the whole feature.
+    call("POST", "/chat/send", {"text": "what is wrong here",
+                                "attach": [project_path("src/Broken.kt")]})
+    settle(60)
+    cid = call("GET", "/state")[1]["conversationId"]
+    msgs = call("GET", "/messages?id=" + cid)[1]["messages"]
+    mine = [m for m in msgs if m["role"] == "USER" and m.get("attachments")]
+
+    check("the file is attached to the message", bool(mine),
+          f"{[m.get('attachments') for m in msgs if m['role'] == 'USER']}")
+    check("and it says what it is", bool(mine) and "Broken.kt" in json.dumps(mine[-1]),
+          json.dumps(mine[-1])[:140] if mine else "")
+    reply = msgs[-1]["text"] or ""
+    check("the provider was told about it", "You attached" in reply, repr(reply[:120]))
+    # The load-bearing one: a file stored and shown but never folded into the
+    # message would look identical everywhere except here.
+    check("and the text was really read into the message",
+          "characters of text" in reply, repr(reply[:200]))
+
+    # An image, which needs decoding and encoding rather than reading. Every new
+    # project ships launcher PNGs, so there is always one to hand.
+    call("POST", "/chat/send", {"text": "and this one",
+                                "attach": [project_path("res/mipmap-hdpi/ic_launcher.png")]})
+    settle(60)
+    msgs = call("GET", "/messages?id=" + cid)[1]["messages"]
+    reply = msgs[-1]["text"] or ""
+    check("a picture is decoded, not just carried", "Decoded 1 image" in reply,
+          repr(reply[:160]))
+
+    # Survives being read back off disk. Bytes live in a file and the row holds
+    # a path, so a broken round-trip loses the attachment and nothing else.
+    call("POST", "/chat/new")
+    call("POST", "/chat/open", {"id": cid})
+    time.sleep(1)
+    again = call("GET", "/messages?id=" + cid)[1]["messages"]
+    kept = [m for m in again if m["role"] == "USER" and m.get("attachments")]
+    check("attachments survive reopening the chat", len(kept) >= 2,
+          f"{len(kept)} message(s) still carry one")
 
 
 if want("budget"):

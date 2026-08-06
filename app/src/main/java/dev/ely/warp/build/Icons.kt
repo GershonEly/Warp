@@ -27,6 +27,42 @@ import kotlin.math.min
  */
 object Icons {
 
+    /** What a picked photo is decoded down to before anything else touches it. */
+    private const val SOURCE = 1024
+
+    /**
+     * A photo off the phone, decoded small enough to be an icon and no larger.
+     *
+     * Two passes on purpose. The first reads only the dimensions —
+     * `inJustDecodeBounds` allocates nothing — and the second decodes at a
+     * power-of-two reduction chosen from them. A modern phone camera produces
+     * twelve megapixels, which is 48 MB as ARGB_8888, and decoding that whole
+     * bitmap to throw away 99% of it is how a picker becomes an out-of-memory
+     * crash on the one phone that matters.
+     *
+     * Returns null rather than throwing: a file that is not really an image is
+     * a thing a person did, not an exceptional condition, and the caller has a
+     * line of text to put it in.
+     */
+    fun decode(context: android.content.Context, uri: android.net.Uri): Bitmap? {
+        val bounds = android.graphics.BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        context.contentResolver.openInputStream(uri)?.use {
+            android.graphics.BitmapFactory.decodeStream(it, null, bounds)
+        } ?: return null
+
+        val longest = maxOf(bounds.outWidth, bounds.outHeight)
+        if (longest <= 0) return null
+
+        val options = android.graphics.BitmapFactory.Options().apply {
+            inSampleSize = generateSequence(1) { it * 2 }.first { longest / it <= SOURCE }
+        }
+        return context.contentResolver.openInputStream(uri)?.use {
+            android.graphics.BitmapFactory.decodeStream(it, null, options)
+        }
+    }
+
     /**
      * Density buckets, as multiples of mdpi.
      *

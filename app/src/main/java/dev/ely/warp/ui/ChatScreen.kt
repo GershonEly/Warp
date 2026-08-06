@@ -285,6 +285,14 @@ fun ChatScreen(
         .collectAsState()
     val goal by engine.goal.collectAsState()
     var input by remember { mutableStateOf("") }
+    /**
+     * What is attached to the message not yet sent — §5h.
+     *
+     * Held beside the text and cleared with it, because an attachment left
+     * behind after a send is one that quietly rides along with the next
+     * question — and pictures are the most expensive thing in a conversation.
+     */
+    var pending by remember { mutableStateOf<List<dev.ely.warp.ai.Attachment>>(emptyList()) }
     val listState = rememberLazyListState()
     val haptics = LocalHapticFeedback.current
 
@@ -393,9 +401,24 @@ fun ChatScreen(
                     // stops meaning anything.
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     val sent = input
+                    val files = pending
                     input = ""
-                    ruleFeedback = runComposed(sent, engine, rules) { showRules = true }
+                    pending = emptyList()
+                    ruleFeedback = if (files.isEmpty()) {
+                        runComposed(sent, engine, rules) { showRules = true }
+                    } else {
+                        // Straight to the engine when something is attached.
+                        // Slash commands are about how a turn behaves and a
+                        // picture is about what it is looking at; pretending
+                        // "/plan" and a screenshot compose would mean deciding
+                        // what that means, and nobody has asked for it.
+                        engine.send(sent, attachments = files)
+                        null
+                    }
                 },
+                attachments = pending,
+                onAttach = { pending = pending + it },
+                onRemoveAttachment = { gone -> pending = pending.filterNot { it.id == gone.id } },
                 onStop = { engine.stop() },
                 voice = voice,
                 note = ruleFeedback,
@@ -882,11 +905,19 @@ private fun UserMessage(message: ChatMessage) {
                 )
                 .padding(horizontal = 16.dp, vertical = 10.dp),
         ) {
-            Text(
-                message.text,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
+            // A column now, because a message can be a picture with nothing
+            // typed — and an attachment that disappears the moment you send it
+            // looks exactly like one that was never attached.
+            Column {
+                if (message.text.isNotBlank()) {
+                    Text(
+                        message.text,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                }
+                SentAttachments(message.attachments)
+            }
         }
     }
 }
@@ -1260,6 +1291,10 @@ private fun Composer(
     /** Commands matching what is typed, or null when this is not a command. */
     matches: List<SlashCommand>? = null,
     onPickCommand: (SlashCommand) -> Unit = {},
+    /** Attached to the message not yet sent — §5h. */
+    attachments: List<dev.ely.warp.ai.Attachment> = emptyList(),
+    onAttach: (dev.ely.warp.ai.Attachment) -> Unit = {},
+    onRemoveAttachment: (dev.ely.warp.ai.Attachment) -> Unit = {},
 ) {
     var focused by remember { mutableStateOf(false) }
 
@@ -1379,6 +1414,14 @@ private fun Composer(
                 ),
             )
         }
+
+        // Above the card with the command menu and the note, because all three
+        // belong to the message being written rather than to the conversation.
+        PendingAttachments(
+            attachments = attachments,
+            onRemove = onRemoveAttachment,
+            modifier = Modifier.padding(horizontal = WarpSpace.medium),
+        )
 
         goal?.let {
             GoalBar(
@@ -1576,8 +1619,16 @@ private fun Composer(
                 )
             }
 
+            AttachButton(onAttach = onAttach)
+
             ModelChip(label = modelLabel, onClick = onPickModel)
-            SendButton(busy = busy, enabled = busy || (value.isNotBlank() && !elsewhere)) {
+            // A picture is a message. Send has to light up for one even with
+            // nothing typed, or showing it a screenshot means typing a word
+            // first to unlock the button.
+            SendButton(
+                busy = busy,
+                enabled = busy || ((value.isNotBlank() || attachments.isNotEmpty()) && !elsewhere),
+            ) {
                 if (busy) onStop() else onSend()
             }
         }
@@ -1771,4 +1822,22 @@ private fun SendButton(busy: Boolean, enabled: Boolean, onClick: () -> Unit) {
     }
 }
 
-private val SUGGESTIONS = listOf("Weather app", "Todo app")
+/**
+ * What to tap when you have never used it.
+ *
+ * "Weather app" and "Todo app" were written when Warp was a chat with a build
+ * button. They name a category and promise nothing — and worse, they suggest
+ * the answer is a description rather than an installed app.
+ *
+ * These three are the product instead. The first ends with an APK on the phone,
+ * which is the whole claim and the fastest way to see it is true. The second
+ * goes through `/plan`, because planning-then-building **is** the loop rather
+ * than a feature beside it. The third is for the person who has no idea what
+ * this is, and it is a question rather than an order, which is the only pill
+ * here that costs nothing to tap.
+ */
+private val SUGGESTIONS = listOf(
+    "Build me a dice game",
+    "/plan a habit tracker",
+    "What can you build?",
+)

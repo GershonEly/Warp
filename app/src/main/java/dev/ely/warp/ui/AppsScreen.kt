@@ -37,6 +37,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import dev.ely.warp.build.Installer
 import dev.ely.warp.build.Projects
 import dev.ely.warp.ui.theme.WarpMono
@@ -178,6 +180,36 @@ private fun AppSheet(
     var note by remember { mutableStateOf<String?>(null) }
     val installed = Installer.isInstalled(context, app.applicationId)
 
+    // `GetContent` rather than the photo picker: it needs no runtime permission
+    // on any version, which matters because `targetSdk 28` puts Warp on the old
+    // storage model, where the modern picker's guarantees do not apply and
+    // asking for READ_EXTERNAL_STORAGE would be far broader than "one image".
+    //
+    // Everything downstream of the bitmap already exists — every density, the
+    // adaptive pair, and the manifest line that points at them. Only the source
+    // was missing, which is why this is a button and not a feature.
+    val pickIcon = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            val artwork = dev.ely.warp.build.Icons.decode(context, uri)
+            note = if (artwork == null) {
+                "could not read that image"
+            } else {
+                val files = dev.ely.warp.build.Icons.write(
+                    Projects.forConversation(context, app.conversationId),
+                    artwork,
+                    app.colour,
+                )
+                // Says the next step out loud. The files land in the project,
+                // not in the APK on the phone — so the icon only becomes real
+                // at the next build, and a message that stopped at "done" would
+                // leave you looking at the old icon wondering what broke.
+                "icon set · ${files.size} files written · build again to see it"
+            }
+        }
+    }
+
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -241,6 +273,8 @@ private fun AppSheet(
                     },
                     enabled = app.built,
                 ) { Text(if (installed) "Reinstall" else "Install") }
+
+                TextButton(onClick = { pickIcon.launch("image/*") }) { Text("Icon") }
 
                 if (installed) {
                     TextButton(onClick = {

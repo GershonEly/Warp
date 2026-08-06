@@ -173,14 +173,36 @@ class GoogleProvider(private val context: Context) : AiProvider {
         request.messages
             // A turn that only called tools still has to be sent, or the model
             // is asked to carry on from a conversation it never had.
-            .filter { (it.text.isNotBlank() || it.toolCalls.isNotEmpty()) && it.role != Role.SYSTEM }
+            // An attachment is content too, or a message that is only a
+            // screenshot never leaves the phone.
+            .filter {
+                (it.text.isNotBlank() || it.toolCalls.isNotEmpty() || Attachments.any(it)) &&
+                    it.role != Role.SYSTEM
+            }
             .forEach { message ->
                 if (message.role == Role.USER || message.toolCalls.isEmpty()) {
+                    // A third shape for the same thing: `inlineData` with the
+                    // base64 under `data`, no data URL and no source wrapper.
+                    val parts = JSONArray()
+                    Attachments.imagesFor(message).forEach { image ->
+                        parts.put(
+                            JSONObject().put(
+                                "inlineData",
+                                JSONObject()
+                                    .put("mimeType", image.mimeType)
+                                    .put("data", image.base64),
+                            )
+                        )
+                    }
+                    val text = Attachments.textFor(message)
+                    if (text.isNotBlank() || parts.length() == 0) {
+                        parts.put(JSONObject().put("text", text))
+                    }
                     contents.put(
                         JSONObject()
                             // Gemini calls the assistant "model", not "assistant".
                             .put("role", if (message.role == Role.USER) "user" else "model")
-                            .put("parts", JSONArray().put(JSONObject().put("text", message.text)))
+                            .put("parts", parts)
                     )
                     return@forEach
                 }

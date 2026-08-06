@@ -64,6 +64,17 @@ object DebugBridge {
     @Volatile
     var command: ((String) -> String)? = null
 
+    /**
+     * Send with files attached — §5h.
+     *
+     * Paths on the device rather than a picker, because there is no way to
+     * drive Android's file chooser from outside and an attachment feature
+     * nothing can test is an attachment feature that quietly stops working.
+     * Separate from [send] so the ordinary path keeps its ordinary shape.
+     */
+    @Volatile
+    var sendWithFiles: ((String, List<String>) -> String?)? = null
+
     /** Where `/grill-me` puts its questions, so a test can answer them. */
     @Volatile
     var questions: dev.ely.warp.tools.QuestionDesk? = null

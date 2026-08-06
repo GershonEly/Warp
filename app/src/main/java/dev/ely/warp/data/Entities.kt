@@ -131,6 +131,14 @@ data class MessageEntity(
     val toolCallsJson: String? = null,
     /** The model's reasoning, if it exposed any. Null for almost every model. */
     val thinking: String? = null,
+    /**
+     * What was attached, as JSON — §5h. Paths, never bytes.
+     *
+     * JSON in one column rather than a table of its own: attachments are only
+     * ever read with their message and never queried across, so a join would
+     * buy nothing and cost a migration.
+     */
+    val attachments: String? = null,
     /** The name of the [dev.ely.warp.ai.AiError] subclass, or null if it worked. */
     val errorKind: String? = null,
     /** Provider text for the kinds that carry any. */
