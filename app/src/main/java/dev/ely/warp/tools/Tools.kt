@@ -1,6 +1,7 @@
 package dev.ely.warp.tools
 
 import android.content.Context
+import dev.ely.warp.brain.AndroidBrain
 import org.json.JSONObject
 import java.io.File
 
@@ -386,6 +387,51 @@ object AskUser : Tool {
  * moment a project acquires an application id, which is effectively permanent
  * once the app is installed anywhere — worth one prompt.
  */
+/**
+ * Looking something up instead of asking you — §7.
+ *
+ * `FREE`, and it is the purest example of what that risk level is for: it reads
+ * nothing on disk, changes nothing, leaves nothing behind, and cannot cost
+ * anything but the tokens of the answer. A prompt asking permission to consult
+ * its own memory would be a prompt people learn to ignore.
+ *
+ * The reason this is a tool at all rather than a longer system prompt is the
+ * bill. Everything here would otherwise be re-sent with every message for the
+ * rest of the conversation — the same waste taken out of tool output in
+ * `7c93b98`, put back deliberately and permanently. As a tool it costs nothing
+ * until the moment it is needed.
+ */
+object AndroidDocs : Tool {
+    override val name = "android_docs"
+    override val risk = Risk.FREE
+    override val description =
+        "Read what Warp already knows about Android — project layout, icon " +
+            "sizes, Compose, Material 3, permissions and the things that fail " +
+            "quietly. Use this instead of asking the user, and instead of " +
+            "guessing. Topics: " + AndroidBrain.names.joinToString(", ")
+
+    override val schemaJson = """
+        {"type":"object","properties":{
+          "topic":{"type":"string","enum":[${AndroidBrain.names.joinToString(",") { "\"$it\"" }}],
+                   "description":"Which section to read."}},
+         "required":["topic"]}
+    """.trimIndent()
+
+    override fun describe(args: JSONObject): String = args.optString("topic")
+
+    override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult {
+        val topic = args.optString("topic").trim().lowercase()
+        // Names what it does have rather than only what it does not. A model
+        // told "no such topic" guesses again; a model handed the list picks.
+        val text = AndroidBrain.topics[topic]
+            ?: return ToolResult.Failed(
+                "no topic called \"$topic\" — there is: ${AndroidBrain.names.joinToString(", ")}"
+            )
+
+        return ToolResult.Ok("$topic · ${text.lines().size} lines", text)
+    }
+}
+
 object NewProjectTool : Tool {
     override val name = "new_project"
     override val risk = Risk.WRITES
@@ -501,7 +547,11 @@ private const val LIMIT = 200
 
 /** The tools that only look. Kept named because "never asks" is a promise. */
 val READ_TOOLS: Map<String, Tool> =
-    listOf(ReadFile, ListDir, Glob, Grep).associateBy { it.name }
+    // `android_docs` belongs here rather than beside the writing tools: it only
+    // looks, and a `/plan` turn is exactly when knowing the real icon sizes
+    // matters most. A planner that has to guess writes a plan that has to be
+    // corrected.
+    listOf(ReadFile, ListDir, Glob, Grep, AndroidDocs).associateBy { it.name }
 
 /** Everything the model can be offered, by name. */
 val ALL_TOOLS: Map<String, Tool> =

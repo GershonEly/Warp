@@ -952,6 +952,8 @@ class ChatEngine(
             after you have stated it. Offline versions of those features — a local
             two-player mode, an on-device high-score table, a bot opponent — are
             usually what the person actually wants, so offer one and carry on.
+
+            ${dev.ely.warp.brain.AndroidBrain.SUMMARY}
         """.trimIndent()
     }
 }

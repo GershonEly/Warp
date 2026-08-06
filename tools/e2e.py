@@ -210,8 +210,8 @@ def watch_build(seconds=140):
 # section 2 creates, so offering them apart would be offering a broken choice.
 WANTED = {a.lower() for a in sys.argv[1:]}
 GROUP_NAMES = ["surface", "chat", "tools", "permissions", "commands", "grill",
-               "goal", "project", "build", "room", "attach", "budget", "subagent",
-               "settings"]
+               "goal", "project", "build", "room", "brain", "attach", "budget",
+               "subagent", "settings"]
 
 
 def want(group):
@@ -922,6 +922,41 @@ if want("room"):
     roomy = [a for a in call("GET", "/apps")[1]["apps"] if a["name"] == "Roomy"]
     check("the app keeps its own APK", bool(roomy) and roomy[0]["built"] is True,
           f"{roomy[:1]}")
+
+
+if want("brain"):
+    print("\n14d. THE ANDROID BRAIN")
+    # §7. The promise is "you never explain any of that" - not icon densities,
+    # not manifest boilerplate. It is a tool rather than a longer system prompt
+    # on purpose: everything in it would otherwise be re-sent with every message
+    # for the rest of the conversation, which is the waste 7c93b98 removed.
+
+    s, r = call("POST", "/tool", {"name": "android_docs", "args": {"topic": "icons"}})
+    check("it knows the icon sizes without being told",
+          "192" in (r.get("body") or "") and "mipmap-xxxhdpi" in (r.get("body") or ""),
+          json.dumps(r)[:110])
+    check("and the card says which topic, not 'ok'",
+          "icons" in (r.get("summary") or ""), f"summary={r.get('summary')!r}")
+
+    s, r = call("POST", "/tool", {"name": "android_docs", "args": {"topic": "compose"}})
+    check("it knows the Compose traps",
+          "rememberSaveable" in (r.get("body") or ""), json.dumps(r)[:110])
+
+    # Names what it has rather than only what it lacks. A model told "no such
+    # topic" guesses again; a model handed the list picks.
+    s, r = call("POST", "/tool", {"name": "android_docs", "args": {"topic": "nonsense"}})
+    check("an unknown topic lists the real ones",
+          "icons" in (r.get("failed") or ""), json.dumps(r)[:120])
+
+    # The summary is what is actually paid for on every message, so it has to be
+    # there - and it has to be short.
+    call("POST", "/chat/new")
+    call("POST", "/chat/command", {"text": "/plan build me a thing"})
+    settle()
+    plan = call("GET", "/messages?id=" + call("GET", "/state")[1]["conversationId"]
+                )[1]["messages"][-1]["text"] or ""
+    check("a planning turn can look things up too", "android_docs" in plan,
+          repr(plan[-140:]))
 
 
 if want("attach"):
