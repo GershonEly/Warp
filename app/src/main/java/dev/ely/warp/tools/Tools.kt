@@ -555,7 +555,12 @@ val READ_TOOLS: Map<String, Tool> =
 
 /** Everything the model can be offered, by name. */
 val ALL_TOOLS: Map<String, Tool> =
-    (READ_TOOLS.values + listOf(NewProjectTool, WriteFile, EditFile, AskUser, GoalDone, Delegate) +
+    // `fetch_url` deliberately not in READ_TOOLS: a subagent is handed the
+    // files it may read and nothing else, and §5c's whole argument is that it
+    // cannot wander because there is nowhere to wander to. A URL is somewhere
+    // to wander to. The main agent fetches; the helper reads what it was given.
+    (READ_TOOLS.values +
+        listOf(NewProjectTool, WriteFile, EditFile, AskUser, GoalDone, Delegate, FetchUrl) +
         DEVICE_TOOLS).associateBy { it.name }
 
 /** Everything, plus the way out. What a `/goal` turn is given. */

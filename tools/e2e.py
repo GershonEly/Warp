@@ -210,7 +210,7 @@ def watch_build(seconds=140):
 # section 2 creates, so offering them apart would be offering a broken choice.
 WANTED = {a.lower() for a in sys.argv[1:]}
 GROUP_NAMES = ["surface", "chat", "tools", "permissions", "commands", "grill",
-               "goal", "project", "build", "room", "brain", "attach", "budget",
+               "goal", "project", "build", "room", "web", "brain", "attach", "budget",
                "subagent", "settings"]
 
 
@@ -922,6 +922,49 @@ if want("room"):
     roomy = [a for a in call("GET", "/apps")[1]["apps"] if a["name"] == "Roomy"]
     check("the app keeps its own APK", bool(roomy) and roomy[0]["built"] is True,
           f"{roomy[:1]}")
+
+
+if want("web"):
+    print("\n14e. READING A PAGE")
+    # Task M, §5g. Asked for three times in one session - do research, check
+    # properly, search Google - and answered "I have no internet access" while
+    # still being right. What was missing was evidence, not accuracy.
+
+    s, r = call("POST", "/tool", {"name": "fetch_url",
+                                  "args": {"url": "http://example.com"}}, timeout=60)
+    check("plain http is refused, not quietly upgraded",
+          "https" in (r.get("failed") or ""), json.dumps(r)[:110])
+
+    s, r = call("POST", "/tool", {"name": "fetch_url",
+                                  "args": {"url": "not a url"}}, timeout=60)
+    check("a thing that is not an address is refused",
+          bool(r.get("failed")), json.dumps(r)[:110])
+
+    # A real page. example.com exists precisely to be fetched, is tiny, and has
+    # been stable for as long as the web has.
+    s, r = call("POST", "/tool", {"name": "fetch_url",
+                                  "args": {"url": "https://example.com"}}, timeout=120)
+    if r.get("failed") and "resolve" in json.dumps(r).lower():
+        print("  ....  the phone has no network - skipped the live fetch")
+    else:
+        check("a real page comes back as text",
+              "Example Domain" in (r.get("body") or ""), json.dumps(r)[:140])
+        # The load-bearing one: markup stripped rather than carried. A page sent
+        # as raw HTML is mostly script and style, billed as tokens.
+        check("and the markup is gone",
+              "<html" not in (r.get("body") or "").lower() and
+              "<div" not in (r.get("body") or "").lower(),
+              repr((r.get("body") or "")[:110]))
+        check("the card names the host and the size",
+              "example.com" in (r.get("summary") or "") and
+              "chars" in (r.get("summary") or ""),
+              f"summary={r.get('summary')!r}")
+
+    s, r = call("POST", "/tool", {"name": "fetch_url",
+                                  "args": {"url": "https://example.com/nope"}}, timeout=60)
+    check("a missing page says which code, not 'failed'",
+          any(c in (r.get("failed") or "") for c in ("404", "answered")),
+          json.dumps(r)[:110])
 
 
 if want("brain"):
