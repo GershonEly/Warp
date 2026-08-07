@@ -31,6 +31,19 @@ abstract class OpenAiCompatibleProvider(
     /** Some services list models without authentication; OpenRouter does. */
     protected open val modelsNeedKey: Boolean = true
 
+    /**
+     * Whether this service runs a web search of its own.
+     *
+     * A property rather than a check on [id], so a service that gains it later
+     * says so here instead of somewhere in the body builder. Default false: a
+     * `plugins` field sent to something that does not understand it is a 400 on
+     * every single message.
+     */
+    protected open val supportsWebPlugin: Boolean = false
+
+    /** How many results a search may return. Each one past ten costs extra. */
+    protected open val WEB_RESULTS: Int = 5
+
     private fun key(): String? = KeyVault.load(context, id)
 
     private fun headers(key: String?): Map<String, String> = buildMap {
@@ -297,6 +310,25 @@ abstract class OpenAiCompatibleProvider(
             put("stream", true)
             put("max_tokens", MAX_TOKENS)
 
+            // Search, when this service has it and the user has switched it on.
+            //
+            // OpenRouter runs the search itself and bills it to the same key
+            // that pays for the conversation — about half a cent — so there is
+            // no second account and no separate API key. `:online` on the model
+            // slug is exactly equivalent; the plugin form is used because it can
+            // say how many results, and because a model id is a thing the user
+            // chose and Warp should not be rewriting behind them.
+            if (supportsWebPlugin && dev.ely.warp.data.WebSearch.isOn(context)) {
+                put(
+                    "plugins",
+                    JSONArray().put(
+                        JSONObject()
+                            .put("id", "web")
+                            .put("max_results", WEB_RESULTS)
+                    )
+                )
+            }
+
             // Ask for the reasoning, or none comes back.
             //
             // Tested: GPT-5.6 answered a reasoning question correctly through
@@ -388,6 +420,9 @@ class OpenAiProvider(context: Context) :
     override val id = "openai"
     override val displayName = "OpenAI (GPT)"
     override val requiresKey = true
+    // No `plugins` field here. OpenAI has its own search mechanism on a
+    // different endpoint, and sending OpenRouter's shape to it would be a 400
+    // on every message rather than a feature that quietly does nothing.
 }
 
 /**
@@ -402,6 +437,7 @@ class OpenRouterProvider(context: Context) :
     override val displayName = "OpenRouter (many models)"
     override val requiresKey = true
     override val modelsNeedKey = false
+    override val supportsWebPlugin = true
     override val extraHeaders = mapOf(
         // OpenRouter uses these for attribution in its dashboards.
         "HTTP-Referer" to "https://github.com/GershonEly/Warp",

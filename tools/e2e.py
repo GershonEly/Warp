@@ -966,6 +966,14 @@ if want("web"):
           any(c in (r.get("failed") or "") for c in ("404", "answered")),
           json.dumps(r)[:110])
 
+    # Searching is the half that spends money, so it is a switch and it starts
+    # off. The line the model is told about that switch travels in the same
+    # lambda as the rules, which section 9 already proves reaches the provider.
+    s, r = call("POST", "/settings", {"name": "search", "value": "true"})
+    check("web search can be switched on", r.get("value") == "true", json.dumps(r)[:90])
+    s, r = call("POST", "/settings", {"name": "search", "value": "false"})
+    check("and back off again", r.get("value") == "false", json.dumps(r)[:90])
+
 
 if want("brain"):
     print("\n14d. THE ANDROID BRAIN")

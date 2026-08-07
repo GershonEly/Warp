@@ -53,6 +53,7 @@ import dev.ely.warp.data.Appearance
 import dev.ely.warp.debug.DebugBridge
 import dev.ely.warp.debug.DebugServer
 import dev.ely.warp.data.Identity
+import dev.ely.warp.data.WebSearch
 import dev.ely.warp.ui.theme.HairlineWidth
 import dev.ely.warp.ui.theme.WarpMono
 import dev.ely.warp.ui.theme.WarpRadius
@@ -111,6 +112,9 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
 
         Spacer(Modifier.size(WarpSpace.section))
         NamingSection(registry)
+
+        Spacer(Modifier.size(WarpSpace.section))
+        WebSearchSection(registry.choice.providerId)
 
         Spacer(Modifier.size(WarpSpace.section))
         AmbientSection()
@@ -250,6 +254,72 @@ private fun DebugSection() {
                 "curl -H \"X-Warp-Key: $key\" localhost:$port/state"
         }
     )
+}
+
+/**
+ * Whether the model may search the web.
+ *
+ * **Off by default, and for the same reason naming is:** it spends the account
+ * holder's money, and *"it only costs a little"* is a judgement only they get to
+ * make. So the price is on the screen rather than in a bill — half a cent a
+ * search, on the OpenRouter key already paying for the conversation.
+ *
+ * Only OpenRouter runs a search of its own, so the row says so instead of
+ * offering a switch that would change nothing. And when it is off the model is
+ * *told* it is off: the failure this replaces is a model answering "I have no
+ * internet access" — true, unhelpful, and said three times in one session while
+ * somebody kept asking for it.
+ */
+@Composable
+private fun WebSearchSection(providerId: String) {
+    val context = LocalContext.current
+    var on by remember { mutableStateOf(WebSearch.isOn(context)) }
+    val supported = providerId == "openrouter"
+
+    Text("Web search", style = MaterialTheme.typography.headlineMedium)
+    Spacer(Modifier.size(WarpSpace.tiny))
+    Text(
+        if (supported) {
+            "Lets the model look something up when it is not sure. About half a " +
+                "cent a search, on the same OpenRouter key as the conversation — " +
+                "no second account. Reading a page you paste the address of is " +
+                "always free and needs none of this."
+        } else {
+            "Only available on OpenRouter, which runs the search itself and bills " +
+                "it to the key you already have. Reading a page you paste the " +
+                "address of works on every provider and costs nothing extra."
+        },
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    Spacer(Modifier.size(WarpSpace.medium))
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(WarpRadius.small))
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .then(
+                if (!supported) Modifier
+                else Modifier.clickable { on = !on; WebSearch.set(context, on) }
+            )
+            .padding(WarpSpace.medium),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "Let the model search",
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (supported) MaterialTheme.colorScheme.onSurface
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(
+            checked = on && supported,
+            enabled = supported,
+            onCheckedChange = { on = it; WebSearch.set(context, it) },
+        )
+    }
 }
 
 /**

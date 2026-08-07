@@ -159,8 +159,20 @@ private fun WarpApp() {
             // Composed every turn, so a rule added mid-conversation applies to
             // the very next message rather than the next launch.
             systemPrompt = {
-                listOfNotNull(ChatEngine.DEFAULT_SYSTEM_PROMPT, rules.asPrompt())
-                    .joinToString(separator = System.lineSeparator() + System.lineSeparator())
+                listOfNotNull(
+                    ChatEngine.DEFAULT_SYSTEM_PROMPT,
+                    // Composed every turn like the rules, so flipping the switch
+                    // reaches the very next message. And told even when it is
+                    // off, which is the entire point: a model that only knows it
+                    // cannot search says "I have no internet access", which is
+                    // true, unhelpful, and was said three times in one session
+                    // while the user kept asking.
+                    dev.ely.warp.data.WebSearch.promptLine(
+                        context,
+                        canSearch = registry.choice.providerId == "openrouter",
+                    ),
+                    rules.asPrompt(),
+                ).joinToString(separator = System.lineSeparator() + System.lineSeparator())
             },
             // The engine still knows nothing about files — it is handed something
             // that can execute a call and hands back the outcome.
@@ -338,6 +350,10 @@ private fun WarpApp() {
                 "name" -> {
                     Identity.get(context).setName(value)
                     Identity.get(context).name.value ?: ""
+                }
+                "search" -> {
+                    dev.ely.warp.data.WebSearch.set(context, value.toBoolean())
+                    dev.ely.warp.data.WebSearch.isOn(context).toString()
                 }
                 else -> null
             }
