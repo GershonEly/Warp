@@ -30,6 +30,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
@@ -156,20 +160,72 @@ private fun parse(markdown: String): List<Block> {
 private val ORDERED = Regex("""^\d+\.\s+.*""")
 
 /**
- * Bold, italic and inline code, within one paragraph.
+ * A bare address in the middle of prose.
+ *
+ * Stops at the characters that end a sentence rather than a URL — a trailing
+ * full stop or closing bracket belongs to the sentence, and swallowing it gives
+ * you a link that 404s.
+ */
+private val BARE_URL = Regex("""https?://[^\s<>"']+[^\s<>"'.,;:!?)\]}]""")
+
+/**
+ * Bold, italic, inline code and links, within one paragraph.
  *
  * Inline code is **tinted rather than boxed**. A box inside a sentence breaks
  * the line rhythm — the text stops being a line of prose and becomes a row of
  * containers.
+ *
+ * **Links are tappable, and that is not decoration.** Once the model can search,
+ * every answer it looks up comes back with its sources attached — and a source
+ * you cannot open is not a source, it is a claim with a URL printed next to it.
+ * The whole argument for search was that it buys *evidence* rather than
+ * accuracy; evidence nobody can check buys nothing.
+ *
+ * Both shapes are handled: `[label](url)`, which is what a model writes when it
+ * cites something, and a bare address typed on its own.
  */
 @Composable
 private fun inline(text: String): AnnotatedString {
     val code = MaterialTheme.colorScheme.primary
-    return remember(text, code) {
+    val link = MaterialTheme.colorScheme.primary
+    return remember(text, code, link) {
+        val linkStyles = TextLinkStyles(
+            style = SpanStyle(color = link, textDecoration = TextDecoration.Underline)
+        )
         buildAnnotatedString {
             var i = 0
             while (i < text.length) {
                 val rest = text.substring(i)
+
+                // [label](url) — what a model writes when it cites a page.
+                if (rest.startsWith("[")) {
+                    val closeLabel = rest.indexOf("](")
+                    val closeUrl = if (closeLabel < 0) -1 else rest.indexOf(')', closeLabel)
+                    if (closeLabel > 0 && closeUrl > closeLabel) {
+                        val label = rest.substring(1, closeLabel)
+                        val url = rest.substring(closeLabel + 2, closeUrl).trim()
+                        if (url.startsWith("http")) {
+                            withLink(LinkAnnotation.Url(url, styles = linkStyles)) {
+                                append(label)
+                            }
+                            i += closeUrl + 1
+                            continue
+                        }
+                    }
+                }
+
+                // A bare address, matched only where one starts.
+                if (rest.startsWith("http")) {
+                    val found = BARE_URL.find(rest)
+                    if (found != null && found.range.first == 0) {
+                        withLink(LinkAnnotation.Url(found.value, styles = linkStyles)) {
+                            append(found.value)
+                        }
+                        i += found.value.length
+                        continue
+                    }
+                }
+
                 val bold = rest.startsWith("**")
                 val tick = rest.startsWith("`")
                 val italic = rest.startsWith("*") && !bold
