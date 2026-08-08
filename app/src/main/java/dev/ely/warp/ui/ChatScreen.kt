@@ -58,6 +58,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -886,10 +889,62 @@ private fun MessageItem(
     asking: Question? = null,
     onAnswerQuestion: (String) -> Unit = {},
 ) {
-    if (message.role == Role.USER) {
-        UserMessage(message)
-    } else {
-        AssistantMessage(message, markModifier, permission, onDecide, asking, onAnswerQuestion)
+    // Long-press to copy, on either side — §9f.
+    //
+    // A code block already has its own button, because copying a whole answer to
+    // get four lines of Kotlin means deleting the prose by hand. This is the
+    // other direction: the prose itself could not be got out of the app at all,
+    // so an explanation worth keeping had to be retyped.
+    val clipboard = LocalClipboardManager.current
+    val haptics = LocalHapticFeedback.current
+    var copied by remember(message.id) { mutableStateOf(false) }
+
+    // Says it happened. A silent copy is indistinguishable from a long-press
+    // that missed, which is the failure mode this project keeps producing —
+    // and there is no other feedback, since nothing on screen changes.
+    LaunchedEffect(copied) {
+        if (copied) {
+            kotlinx.coroutines.delay(1_400)
+            copied = false
+        }
+    }
+
+    Column(
+        modifier = Modifier.combinedClickable(
+            // No ripple and no click action: a tap on a message should do
+            // nothing, and a control that lights up under every tap teaches
+            // people it is a button.
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null,
+            onClick = {},
+            onLongClick = {
+                val text = message.text.trim()
+                if (text.isNotEmpty()) {
+                    clipboard.setText(AnnotatedString(text))
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    copied = true
+                }
+            },
+        )
+    ) {
+        if (message.role == Role.USER) {
+            UserMessage(message)
+        } else {
+            AssistantMessage(message, markModifier, permission, onDecide, asking, onAnswerQuestion)
+        }
+
+        if (copied) {
+            Text(
+                "Copied",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .align(
+                        if (message.role == Role.USER) Alignment.End else Alignment.Start
+                    )
+                    .padding(top = WarpSpace.tiny),
+            )
+        }
     }
 }
 
