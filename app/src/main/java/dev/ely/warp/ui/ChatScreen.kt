@@ -59,6 +59,9 @@ import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.material3.SuggestionChip
@@ -296,6 +299,10 @@ fun ChatScreen(
      * question — and pictures are the most expensive thing in a conversation.
      */
     var pending by remember { mutableStateOf<List<dev.ely.warp.ai.Attachment>>(emptyList()) }
+
+    /** The message being pressed and held, or null — §9f. */
+    var held by remember { mutableStateOf<HeldMessage?>(null) }
+    val clipboard = LocalClipboardManager.current
     val listState = rememberLazyListState()
     val haptics = LocalHapticFeedback.current
 
@@ -381,6 +388,7 @@ fun ChatScreen(
                                     onDecide = { permission?.answer(it) },
                                     asking = pendingQuestion,
                                     onAnswerQuestion = { questions?.answer(it) },
+                                    onHold = { held = it },
                                 )
                             }
                         }
@@ -438,6 +446,29 @@ fun ChatScreen(
             if (showRules) {
                 RulesSheet(rules = rules, onDismiss = { showRules = false })
             }
+        }
+
+        // Above the whole screen, outside the Column, so the scrim covers the
+        // composer and the conversation alike. A held message with a live text
+        // field still glowing underneath it would not read as held.
+        held?.let { holding ->
+            MessageMenu(
+                held = holding,
+                onDismiss = { held = null },
+                onCopy = {
+                    clipboard.setText(AnnotatedString(holding.message.text.trim()))
+                    held = null
+                },
+                // Only your own. You cannot rewind to before the AI said
+                // something, because that is not a moment you were ever in.
+                onEdit = if (holding.message.role != Role.USER) null else {
+                    {
+                        input = holding.message.text
+                        engine.rewindTo(holding.message.id)
+                        held = null
+                    }
+                },
+            )
         }
     }
 }
@@ -888,62 +919,36 @@ private fun MessageItem(
     onDecide: (Decision) -> Unit = {},
     asking: Question? = null,
     onAnswerQuestion: (String) -> Unit = {},
+    onHold: (HeldMessage) -> Unit = {},
 ) {
-    // Long-press to copy, on either side — §9f.
+    // Press and hold to open the menu — §9f.
     //
-    // A code block already has its own button, because copying a whole answer to
-    // get four lines of Kotlin means deleting the prose by hand. This is the
-    // other direction: the prose itself could not be got out of the app at all,
-    // so an explanation worth keeping had to be retyped.
-    val clipboard = LocalClipboardManager.current
+    // The bounds are captured here rather than worked out by the menu, because
+    // only this composable knows where it ended up, and the list can scroll
+    // afterwards. The lifted copy must stay where the message *was* when you
+    // pressed it, not follow the one underneath.
     val haptics = LocalHapticFeedback.current
-    var copied by remember(message.id) { mutableStateOf(false) }
-
-    // Says it happened. A silent copy is indistinguishable from a long-press
-    // that missed, which is the failure mode this project keeps producing —
-    // and there is no other feedback, since nothing on screen changes.
-    LaunchedEffect(copied) {
-        if (copied) {
-            kotlinx.coroutines.delay(1_400)
-            copied = false
-        }
-    }
+    var bounds by remember(message.id) { mutableStateOf(Rect.Zero) }
 
     Column(
-        modifier = Modifier.combinedClickable(
-            // No ripple and no click action: a tap on a message should do
-            // nothing, and a control that lights up under every tap teaches
-            // people it is a button.
-            interactionSource = remember { MutableInteractionSource() },
-            indication = null,
-            onClick = {},
-            onLongClick = {
-                val text = message.text.trim()
-                if (text.isNotEmpty()) {
-                    clipboard.setText(AnnotatedString(text))
+        modifier = Modifier
+            .onGloballyPositioned { bounds = it.boundsInRoot() }
+            .combinedClickable(
+                // No ripple and no tap action: a message is not a button, and a
+                // thing that lights up under every tap teaches people it is one.
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {},
+                onLongClick = {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    copied = true
-                }
-            },
-        )
+                    onHold(HeldMessage(message, bounds))
+                },
+            )
     ) {
         if (message.role == Role.USER) {
             UserMessage(message)
         } else {
             AssistantMessage(message, markModifier, permission, onDecide, asking, onAnswerQuestion)
-        }
-
-        if (copied) {
-            Text(
-                "Copied",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .align(
-                        if (message.role == Role.USER) Alignment.End else Alignment.Start
-                    )
-                    .padding(top = WarpSpace.tiny),
-            )
         }
     }
 }

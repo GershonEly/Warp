@@ -159,6 +159,11 @@ class ConversationRepository(context: Context) :
 
     override suspend fun create(): String = createConversation(System.currentTimeMillis())
 
+    override suspend fun deleteFrom(conversationId: String, messageId: String) {
+        messages.deleteFrom(conversationId, messageId)
+        conversations.touch(conversationId, System.currentTimeMillis())
+    }
+
     override suspend fun save(conversationId: String, message: ChatMessage) =
         saveMessage(conversationId, message, System.currentTimeMillis())
 

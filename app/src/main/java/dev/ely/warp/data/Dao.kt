@@ -130,6 +130,28 @@ interface ConversationDao {
 @Dao
 interface MessageDao {
 
+    /**
+     * A message and everything after it, gone — §9f's rewind.
+     *
+     * Compared on `(createdAt, rowid)` because that is exactly how the reads
+     * above order them, and a delete that used a different order than the list
+     * would remove a different set than the one shown. `rowid` is the tiebreak
+     * that already exists for messages written in the same millisecond, which
+     * during streaming is normal rather than rare.
+     */
+    @Query(
+        """
+        DELETE FROM messages
+        WHERE conversationId = :conversationId
+          AND (
+            createdAt > (SELECT createdAt FROM messages WHERE id = :messageId)
+            OR (createdAt = (SELECT createdAt FROM messages WHERE id = :messageId)
+                AND rowid >= (SELECT rowid FROM messages WHERE id = :messageId))
+          )
+        """
+    )
+    suspend fun deleteFrom(conversationId: String, messageId: String)
+
     @Query(
         """
         SELECT * FROM messages WHERE conversationId = :conversationId

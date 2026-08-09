@@ -161,6 +161,38 @@ class ChatEngine(
         }
     }
 
+    /**
+     * Put the conversation back to just before a message was sent — §9f.
+     *
+     * Not an edit in place. A conversation with a model is a chain: every
+     * answer after your message was written knowing that message, so changing
+     * one link and keeping the rest is a transcript that never happened and a
+     * model answering a question nobody asked.
+     *
+     * Refuses while a turn is running. Rewinding underneath a reply that is
+     * still being written would leave that reply arriving into a conversation
+     * it no longer belongs to.
+     *
+     * @return true when it happened.
+     */
+    fun rewindTo(messageId: String): Boolean {
+        if (_busy.value || turn?.isActive == true) return false
+
+        val all = _messages.value
+        val index = all.indexOfFirst { it.id == messageId }
+        if (index < 0) return false
+
+        _messages.value = all.take(index)
+        sheet = null
+
+        val conversation = _conversationId.value ?: return true
+        scope.launch {
+            runCatching { store?.deleteFrom(conversation, messageId) }
+                .onFailure { Log.w(TAG, "could not rewind $conversation", it) }
+        }
+        return true
+    }
+
     /** Model id to use. Set from the model picker. */
     @Volatile
     var model: String = "mock-fast"
@@ -804,6 +836,16 @@ class ChatEngine(
         suspend fun create(): String
 
         suspend fun save(conversationId: String, message: ChatMessage)
+
+        /**
+         * Throw away a message and everything after it — §9f's rewind.
+         *
+         * By id rather than by timestamp: two messages written in the same
+         * millisecond are ordinary during streaming, and a rewind that removed
+         * one of them and kept the other would leave a question with no answer
+         * or an answer with no question.
+         */
+        suspend fun deleteFrom(conversationId: String, messageId: String)
     }
 
     /**
