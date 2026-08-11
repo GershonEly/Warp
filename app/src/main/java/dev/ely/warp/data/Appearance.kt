@@ -39,8 +39,40 @@ class Appearance private constructor(context: Context) {
         _ambient.value = on
     }
 
+    private val _theme = MutableStateFlow(
+        runCatching { Theme.valueOf(prefs.getString(KEY_THEME, null) ?: "") }
+            .getOrDefault(Theme.SYSTEM)
+    )
+
+    /**
+     * Dark, light, or whatever the phone is doing.
+     *
+     * **Follow was the only behaviour until now, and it was wrong** — the app
+     * turned white one morning because the phone did, and nobody had asked for
+     * that. Following the system is a good default and a bad rule: people have
+     * a preference about this one, and it is not always the phone's.
+     *
+     * Kept here rather than in the theme, because a value the theme reads has
+     * to outlive the composition that reads it, and Settings has to be able to
+     * change the screen behind itself.
+     */
+    val theme: StateFlow<Theme> = _theme.asStateFlow()
+
+    fun setTheme(choice: Theme) {
+        prefs.edit().putString(KEY_THEME, choice.name).apply()
+        _theme.value = choice
+    }
+
+    /** Stored by name, so reordering this cannot silently change somebody's app. */
+    enum class Theme(val label: String) {
+        SYSTEM("Follow the phone"),
+        DARK("Always dark"),
+        LIGHT("Always light"),
+    }
+
     companion object {
         private const val KEY_AMBIENT = "ambient_glow"
+        private const val KEY_THEME = "theme"
 
         @Volatile
         private var instance: Appearance? = null

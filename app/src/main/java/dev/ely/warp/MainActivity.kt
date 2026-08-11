@@ -50,6 +50,7 @@ import kotlinx.coroutines.delay
 import androidx.compose.runtime.DisposableEffect
 import dev.ely.warp.data.Appearance
 import dev.ely.warp.data.Identity
+import androidx.compose.foundation.isSystemInDarkTheme
 import dev.ely.warp.debug.DebugBridge
 import dev.ely.warp.data.DrawerPrefs
 import dev.ely.warp.data.Rules
@@ -85,7 +86,16 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            WarpTheme {
+            // Read here rather than inside the theme, so changing it in
+            // Settings repaints the screen underneath the switch.
+            val choice by Appearance.get(this).theme.collectAsState()
+            WarpTheme(
+                darkTheme = when (choice) {
+                    Appearance.Theme.DARK -> true
+                    Appearance.Theme.LIGHT -> false
+                    Appearance.Theme.SYSTEM -> isSystemInDarkTheme()
+                }
+            ) {
                 // Grain over everything, once, at the root. Applied here rather
                 // than per surface so nothing can be missed and nothing gets it
                 // twice — and because it must sit over the text as well as the

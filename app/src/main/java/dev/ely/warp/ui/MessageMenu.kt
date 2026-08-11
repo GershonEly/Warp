@@ -8,25 +8,34 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.Undo
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
@@ -70,23 +79,43 @@ fun MessageMenu(
 ) {
     val density = LocalDensity.current
     val config = LocalConfiguration.current
-    val grow by animateFloatAsState(1f, warpTween(WarpMotion.QUICK), label = "held")
+
+    // Starts at zero and is flipped on after the first frame.
+    //
+    // `animateFloatAsState(1f)` alone does nothing at all: its initial value is
+    // its target, so there is no distance to travel and the menu simply appears.
+    // The first version did exactly that and looked like a screenshot.
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+
+    val grow by animateFloatAsState(
+        targetValue = if (shown) 1f else 0f,
+        animationSpec = warpTween(WarpMotion.NORMAL),
+        label = "held",
+    )
 
     val screenHeight = with(density) { config.screenHeightDp.dp.toPx() }
-    val menuHeight = with(density) { MENU_HEIGHT.toPx() }
-    val gap = with(density) { WarpSpace.small.toPx() }
-    val edge = with(density) { WarpSpace.screen.toPx() }
+    val groupHeight = with(density) { (MENU_HEIGHT + LIFT_MAX).toPx() }
+    val mine = held.message.role == Role.USER
 
-    // Below the bubble when there is room, above it when there is not. A menu
-    // that opens off the bottom of the screen is a menu whose last row nobody
-    // can reach — and the last row is the one that destroys work.
-    val openBelow = held.bounds.bottom + menuHeight + gap < screenHeight
-    val menuY = if (openBelow) held.bounds.bottom + gap
-    else (held.bounds.top - menuHeight - gap).coerceAtLeast(gap)
+    // Where the overlay itself sits in the window.
+    //
+    // The bounds arrive in *root* coordinates and this Box does not start at the
+    // root — it lives under a top bar. Offsetting by the raw value put the
+    // lifted copy a bar's height too low, over the message below the one being
+    // held, which is exactly what the first version did.
+    var origin by remember { mutableStateOf(Offset.Zero) }
+
+    // Kept on screen rather than pinned to the bubble. Anchoring to the message
+    // alone let the group run off the bottom, and the row that runs off is the
+    // one that destroys work.
+    val top = (held.bounds.top - origin.y)
+        .coerceIn(0f, (screenHeight - groupHeight).coerceAtLeast(0f))
 
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .onGloballyPositioned { origin = it.boundsInRoot().topLeft }
             // Tap anywhere else to put it away. No ripple: the whole screen is
             // not a button, it is the way out.
             .clickable(
@@ -94,44 +123,62 @@ fun MessageMenu(
                 indication = null,
                 onClick = onDismiss,
             )
-            .background(Color.Black.copy(alpha = 0.55f * grow))
+            // Heavier than it looks it needs to be. Over an already dark theme a
+            // light scrim is indistinguishable from no scrim, which is what the
+            // first version produced — the screen simply had a menu on it.
+            .background(Color.Black.copy(alpha = 0.78f * grow))
     ) {
-        Box(
+        // Laid out by side rather than by coordinate. A user's bubble is
+        // right-aligned inside a full-width row, so the row's left edge is the
+        // screen's left edge — offsetting to it put the lifted copy on the
+        // wrong side of the screen. Compose already knows how to align these.
+        Column(
+            horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
             modifier = Modifier
-                .offset {
-                    IntOffset(held.bounds.left.roundToInt(), held.bounds.top.roundToInt())
-                }
-                .graphicsLayer {
-                    val scale = 1f + 0.035f * grow
+                .offset { IntOffset(0, top.roundToInt()) }
+                .fillMaxWidth()
+                .padding(horizontal = WarpSpace.screen),
+        ) {
+            Box(
+                modifier = Modifier.graphicsLayer {
+                    transformOrigin = TransformOrigin(if (mine) 1f else 0f, 0.5f)
+                    val scale = 0.96f + 0.075f * grow
                     scaleX = scale
                     scaleY = scale
                 }
-        ) {
-            LiftedBubble(held.message)
-        }
+            ) {
+                LiftedBubble(held.message)
+            }
 
-        Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            tonalElevation = 3.dp,
-            modifier = Modifier
-                .offset {
-                    IntOffset(
-                        held.bounds.left.coerceAtLeast(edge).roundToInt(),
-                        menuY.roundToInt(),
-                    )
-                }
-                .graphicsLayer { alpha = grow }
-                .widthIn(min = 168.dp),
-        ) {
-            Column {
-                MenuRow(Icons.Outlined.ContentCopy, "Copy", onCopy)
-                if (onEdit != null) {
-                    // "Edit" is what §9f calls it and what the gesture means to
-                    // a person: change what I said. What it *does* is rewind,
-                    // and the confirmation is where that gets explained — a menu
-                    // row is the wrong place to teach a concept.
-                    MenuRow(Icons.Outlined.Undo, "Edit", onEdit)
+            Spacer(Modifier.size(WarpSpace.small))
+
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 3.dp,
+                modifier = Modifier
+                    .graphicsLayer {
+                        alpha = grow
+                        // Grows out of the corner nearest the bubble, so it
+                        // reads as coming *from* the message rather than
+                        // arriving on top of it.
+                        transformOrigin = TransformOrigin(if (mine) 1f else 0f, 0f)
+                        val scale = 0.8f + 0.2f * grow
+                        scaleX = scale
+                        scaleY = scale
+                        translationY = (1f - grow) * -14f
+                    }
+                    .widthIn(min = 168.dp),
+            ) {
+                Column {
+                    MenuRow(Icons.Outlined.ContentCopy, "Copy", onCopy)
+                    if (onEdit != null) {
+                        // "Edit" is what §9f calls it and what the gesture means
+                        // to a person: change what I said. What it *does* is
+                        // rewind, and the confirmation is where that gets
+                        // explained — a menu row is the wrong place for that.
+                        MenuRow(Icons.AutoMirrored.Outlined.Undo, "Edit", onEdit)
+                    }
                 }
             }
         }
@@ -190,4 +237,7 @@ private fun LiftedBubble(message: ChatMessage) {
 }
 
 private val MENU_HEIGHT = 104.dp
+
+/** Roughly the tallest a lifted bubble gets, for keeping the group on screen. */
+private val LIFT_MAX = 220.dp
 private const val LIFTED_LINES = 8

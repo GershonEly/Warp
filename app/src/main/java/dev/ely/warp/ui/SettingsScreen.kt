@@ -114,6 +114,9 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
         NamingSection(registry)
 
         Spacer(Modifier.size(WarpSpace.section))
+        ThemeSection()
+
+        Spacer(Modifier.size(WarpSpace.section))
         WebSearchSection(registry.choice.providerId)
 
         Spacer(Modifier.size(WarpSpace.section))
@@ -319,6 +322,68 @@ private fun WebSearchSection(providerId: String) {
             enabled = supported,
             onCheckedChange = { on = it; WebSearch.set(context, it) },
         )
+    }
+}
+
+/**
+ * Dark, light, or the phone's choice.
+ *
+ * Warp followed the system and nothing else, which turned the whole app white
+ * one morning because the phone had changed — and nobody had asked for that.
+ * Following is a good default and a bad rule: people have an opinion about this
+ * one, and it is not always their phone's.
+ *
+ * Three rows rather than a switch, because "off" is not the opposite of "dark"
+ * — the third option is the one that was the only option, and it has to stay
+ * reachable.
+ */
+@Composable
+private fun ThemeSection() {
+    val context = LocalContext.current
+    val appearance = remember { Appearance.get(context) }
+    val choice by appearance.theme.collectAsState()
+
+    Text("Theme", style = MaterialTheme.typography.headlineMedium)
+    Spacer(Modifier.size(WarpSpace.tiny))
+    Text(
+        "Warp follows your phone unless you tell it otherwise.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    Spacer(Modifier.size(WarpSpace.medium))
+
+    Appearance.Theme.entries.forEach { option ->
+        val picked = option == choice
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = WarpSpace.tiny)
+                .clip(RoundedCornerShape(WarpRadius.small))
+                .background(
+                    if (picked) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surfaceContainer
+                )
+                .clickable { appearance.setTheme(option) }
+                .padding(WarpSpace.medium),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                option.label,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (picked) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            if (picked) {
+                Icon(
+                    Icons.Outlined.Check,
+                    contentDescription = "Chosen",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            }
+        }
     }
 }
 
