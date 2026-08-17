@@ -193,6 +193,30 @@ class ChatEngine(
         return true
     }
 
+    /**
+     * How much the AI changed your files after a message — §9f's confirmation.
+     *
+     * What is at stake decides what the dialog says. Offering a choice about
+     * code when no code was written is a dialog asking somebody to decide
+     * something meaningless, and every one of those makes the next real
+     * question easier to tap past.
+     *
+     * Counts calls that **finished**. A write that was refused or failed
+     * changed nothing, and counting it would warn about work that does not
+     * exist. And it counts [WROTE_FILES] rather than [CHANGED_SOMETHING] — a
+     * build is work, but it is not a file you would want back.
+     */
+    fun changesAfter(messageId: String): Int {
+        val all = _messages.value
+        val index = all.indexOfFirst { it.id == messageId }
+        if (index < 0) return 0
+        return all.drop(index).sumOf { message ->
+            message.toolCalls.count {
+                it.status == ToolCall.Status.DONE && it.name in WROTE_FILES
+            }
+        }
+    }
+
     /** Model id to use. Set from the model picker. */
     @Volatile
     var model: String = "mock-fast"
@@ -943,6 +967,18 @@ class ChatEngine(
         private val CHANGED_SOMETHING = setOf(
             "write_file", "edit_file", "new_project", "build", "install", "launch",
         )
+
+        /**
+         * Tool names that put something on disk.
+         *
+         * Narrower than [CHANGED_SOMETHING], and the difference is the point.
+         * That set answers "is this turn working", where building and
+         * installing both count. This one answers "what would I lose", and a
+         * build writes nothing you wrote — counting it would have the rewind
+         * dialog warn about files nobody touched, which is the one thing §9f
+         * says that dialog must never do.
+         */
+        private val WROTE_FILES = setOf("write_file", "edit_file", "new_project")
 
         /**
          * How many turns a goal gets before it must stop and say so.

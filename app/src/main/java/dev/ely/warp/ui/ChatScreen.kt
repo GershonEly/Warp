@@ -50,6 +50,7 @@ import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.CircularProgressIndicator
@@ -302,6 +303,9 @@ fun ChatScreen(
 
     /** The message being pressed and held, or null — §9f. */
     var held by remember { mutableStateOf<HeldMessage?>(null) }
+
+    /** The message a rewind is being confirmed for, or null — §9f. */
+    var rewinding by remember { mutableStateOf<ChatMessage?>(null) }
     val clipboard = LocalClipboardManager.current
     val listState = rememberLazyListState()
     val haptics = LocalHapticFeedback.current
@@ -461,12 +465,53 @@ fun ChatScreen(
                 },
                 // Only your own. You cannot rewind to before the AI said
                 // something, because that is not a moment you were ever in.
+                //
+                // And it only opens the question. This is the one gesture in
+                // the app that throws work away, so the tap that starts it is
+                // not the tap that does it.
                 onEdit = if (holding.message.role != Role.USER) null else {
-                    {
-                        input = holding.message.text
-                        engine.rewindTo(holding.message.id)
-                        held = null
-                    }
+                    { rewinding = holding.message; held = null }
+                },
+            )
+        }
+
+        // What it asks depends on what is at stake — §9f.
+        //
+        // A dialog that mentions code when no code was written is a dialog
+        // asking somebody to decide something meaningless, and every one of
+        // those makes the next real question easier to tap past without
+        // reading. So the two cases say different things.
+        rewinding?.let { message ->
+            val changed = engine.changesAfter(message.id)
+            AlertDialog(
+                onDismissRequest = { rewinding = null },
+                title = { Text("Go back to before this?") },
+                text = {
+                    Text(
+                        if (changed > 0) {
+                            // "changes" rather than "files": one new_project
+                            // writes a whole project, so counting calls and
+                            // calling them files would understate it.
+                            "This message and everything after it will leave the " +
+                                "conversation, and its text goes back in the box.\n\n" +
+                                "Warp made $changed change${if (changed == 1) "" else "s"} " +
+                                "to your files after this point. Those stay as they " +
+                                "are — rewinding the chat does not undo them."
+                        } else {
+                            "This message and everything after it will leave the " +
+                                "conversation, and its text goes back in the box."
+                        }
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        input = message.text
+                        engine.rewindTo(message.id)
+                        rewinding = null
+                    }) { Text("Go back") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { rewinding = null }) { Text("Keep it") }
                 },
             )
         }
