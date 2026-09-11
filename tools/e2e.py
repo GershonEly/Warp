@@ -211,7 +211,7 @@ def watch_build(seconds=140):
 WANTED = {a.lower() for a in sys.argv[1:]}
 GROUP_NAMES = ["surface", "chat", "tools", "permissions", "commands", "grill",
                "goal", "project", "build", "room", "web", "brain", "attach", "budget",
-               "subagent", "settings"]
+               "subagent", "settings", "tasks"]
 
 
 def want(group):
@@ -1251,21 +1251,124 @@ if want("settings"):
     check("a destination that does not exist is refused", s == 400)
 
 
-    # Put the phone back as it was found.
+if want("tasks"):
+    # The checklist — §5j.
     #
-    # Before the summary rather than after, so a run that is read and forgotten
-    # still leaves nothing behind. Deleting a conversation takes its project folder
-    # with it on the next start, so the shelf is cleaned by the same act.
-    made = [c for c in call("GET", "/conversations")[1]["conversations"]
-            if c["id"] not in BEFORE]
-    for c in made:
-        call("POST", "/conversation/delete", {"id": c["id"]})
-    if made:
-        print(f"\n  tidied up {len(made)} conversations this run created")
-
-    # Back to the mock, since a real model may have been selected by hand before
-    # this ran and leaving it selected is how the next run spends money.
+    # Last on purpose: the persistence check force-stops the app, and a group
+    # running after that would inherit a cold screen and fail for a reason
+    # nothing on its line names.
+    print("\n17. THE TASK LIST")
+    call("POST", "/chat/new")
     call("POST", "/model", {"provider": "mock", "model": "mock-fast"})
+
+    s, t = call("GET", "/tasks")
+    check("a new chat has no steps in it", s == 200 and t["count"] == 0)
+
+    call("POST", "/chat/send", {"text": "plan it out for me"})
+    settle()
+
+    s, t = call("GET", "/tasks")
+    check("the steps arrive as data rather than as prose", t["count"] == 3,
+          f"got {t['count']}")
+    check("the tick landed on the step it was given",
+          t["count"] == 3 and t["tasks"][1]["done"] is True)
+    check("and carries the evidence that came with it",
+          t["count"] == 3 and bool(t["tasks"][1]["note"]))
+
+    # The one a tidier implementation would quietly break. The mock ticks step 1
+    # while step 0 is open, and both neighbours must still read as open.
+    check("an out-of-order tick is recorded as given, not tidied up",
+          t["count"] == 3 and t["tasks"][0]["done"] is False
+          and t["tasks"][2]["done"] is False)
+
+    call("POST", "/tool", {"name": "set_tasks", "args": {"tasks": [
+        "Make the lobby screen", "Add three fighters",
+        "Best-of-three rounds", "Add cover"]}})
+    s, t = call("GET", "/tasks")
+    check("re-stating the list keeps a tick that was earned",
+          t["count"] == 4 and t["tasks"][1]["done"] is True)
+    check("and keeps the note under it",
+          t["count"] == 4 and bool(t["tasks"][1]["note"]))
+    check("while the new step arrives unticked",
+          t["count"] == 4 and t["tasks"][3]["done"] is False)
+
+    before = call("GET", "/tasks")[1]
+    s, r = call("POST", "/tool", {"name": "task_done", "args": {"task": 9}})
+    check("a step number that does not exist is refused", "failed" in r)
+    check("and the refusal changed nothing", call("GET", "/tasks")[1] == before)
+
+    # 0 is a real step number, so a missing argument must not read as one.
+    s, r = call("POST", "/tool", {"name": "task_done", "args": {}})
+    check("a tick with no step number is refused, not applied to the first",
+          "failed" in r and call("GET", "/tasks")[1]["tasks"][0]["done"] is False)
+
+    s, r = call("POST", "/tool", {"name": "set_tasks", "args": {"tasks": []}})
+    check("a list with no steps in it is refused", "failed" in r)
+
+    s, r = call("POST", "/tool",
+                {"name": "goal_done", "args": {"how_you_know": "it compiles"}})
+    check("goal_done is refused while steps are open", "failed" in r)
+    check("and the refusal names what is still left",
+          "Make the lobby screen" in r.get("failed", ""))
+    check("and names the way out rather than leaving a trap",
+          "set_tasks" in r.get("failed", ""))
+
+    for i in (0, 2, 3):
+        call("POST", "/tool",
+             {"name": "task_done", "args": {"task": i, "note": "checked by the suite"}})
+    s, t = call("GET", "/tasks")
+    check("every step can be ticked", t["open"] == 0 and t["done"] == 4)
+
+    s, r = call("POST", "/tool",
+                {"name": "goal_done", "args": {"how_you_know": "every step is done"}})
+    check("goal_done goes through once nothing is open", "summary" in r)
+
+    # The whole reason the list is stored rather than held in memory.
+    cid = call("GET", "/state")[1]["conversationId"]
+    subprocess.run([ADB, "shell", "am", "force-stop", "dev.ely.warp"],
+                   capture_output=True)
+    time.sleep(1)
+    subprocess.run([ADB, "shell", "am", "start", "-n", "dev.ely.warp/.MainActivity"],
+                   capture_output=True)
+    subprocess.run([ADB, "forward", "tcp:8099", "tcp:8099"], capture_output=True)
+    for _ in range(60):
+        try:
+            if call("GET", "/state", timeout=5)[0] == 200:
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+    check("a fresh start shows no steps until a chat is opened",
+          call("GET", "/tasks")[1]["count"] == 0)
+    call("POST", "/chat/open", {"id": cid})
+    s, t = call("GET", "/tasks")
+    check("the list survives the app being force-stopped",
+          t["count"] == 4 and t["done"] == 4)
+    check("including the notes",
+          t["count"] == 4 and bool(t["tasks"][1]["note"]))
+
+
+# Put the phone back as it was found.
+#
+# Before the summary rather than after, so a run that is read and forgotten
+# still leaves nothing behind. Deleting a conversation takes its project folder
+# with it on the next start, so the shelf is cleaned by the same act.
+#
+# At the top level rather than inside the last group, which is where it had ended
+# up. Nested, it only ran when that group ran — so `e2e.py surface` created
+# conversations and left every one of them behind, quietly, which is the pile
+# this block was written to stop.
+made = [c for c in call("GET", "/conversations")[1]["conversations"]
+        if c["id"] not in BEFORE]
+for c in made:
+    call("POST", "/conversation/delete", {"id": c["id"]})
+if made:
+    print(f"\n  tidied up {len(made)} conversations this run created")
+
+# Back to the mock, since a real model may have been selected by hand before
+# this ran and leaving it selected is how the next run spends money.
+call("POST", "/model", {"provider": "mock", "model": "mock-fast"})
 
 print("\n" + "=" * 52)
 print(f"  {len(passed)} passed, {len(failed)} failed")

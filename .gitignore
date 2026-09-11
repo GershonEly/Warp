@@ -84,3 +84,7 @@ desktop.ini
 *.hprof
 tmp/
 temp/
+
+# Python bytecode, from running the checks in tools/
+__pycache__/
+*.pyc

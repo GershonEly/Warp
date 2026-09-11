@@ -516,8 +516,32 @@ object GoalDone : Tool {
 
     override fun describe(args: JSONObject) = args.optString("how_you_know")
 
-    override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult =
-        ToolResult.Ok("goal reached", args.optString("how_you_know"))
+    override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult {
+        // Refused while steps are still open — §5j.
+        //
+        // This is the concrete thing the checklist buys. `goal_done` already
+        // demands evidence, but evidence of *what* was left to the model, and it
+        // answered "I built the first playable prototype only" when asked
+        // whether it had coded everything on the plan. A list it wrote itself is
+        // something the answer can be measured against.
+        //
+        // **Not the goal giving up**, which §6 says it must never do. The
+        // opposite: it is told there is work left and sent back to it, which is
+        // exactly what the nine ordinary messages that finished the job by hand
+        // did. And the way out is named in the refusal rather than left to be
+        // guessed at — a step that turns out to be wrong is corrected with
+        // `set_tasks`, not by pretending it is done.
+        val open = env.tasks?.open().orEmpty()
+        if (open.isNotEmpty()) {
+            return ToolResult.Failed(
+                "not finished — ${open.size} step${if (open.size == 1) "" else "s"} " +
+                    "still open: " + open.joinToString("; ") { it.text } +
+                    ". Finish them. If the plan itself was wrong, call set_tasks " +
+                    "with the corrected list and carry on."
+            )
+        }
+        return ToolResult.Ok("goal reached", args.optString("how_you_know"))
+    }
 }
 
 // A shell glob, as a regex.
