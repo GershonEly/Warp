@@ -199,6 +199,10 @@ private fun WarpApp() {
                     ChatEngine.Mode.GRILL -> dev.ely.warp.tools.GRILL_TOOL_SPECS
                     ChatEngine.Mode.GOAL -> dev.ely.warp.tools.GOAL_TOOL_SPECS
                 }
+                // A tool you refused is not asked about again until you say
+                // something new — the desk holds that, and this is the boundary.
+                override fun startTurn() = permission.startTurn()
+
                 override suspend fun execute(
                     call: dev.ely.warp.ai.ToolCall,
                     report: suspend (dev.ely.warp.ai.ToolCall) -> Unit,
@@ -286,7 +290,12 @@ private fun WarpApp() {
             )
         }
         DebugBridge.send = { text ->
-            engine.send(text)
+            // Steer first, exactly as the composer does — §5i item 7. Sending
+            // while a turn runs is a correction, and a surface that called
+            // `send` here would test a path the app does not take: `send`
+            // refuses while busy, so the message would vanish and the route
+            // would answer with the *previous* message's id.
+            if (!engine.steer(text)) engine.send(text)
             // The id of the message that was actually stored, so a caller can
             // read it back. Returning "ok" would prove only that the call
             // returned.

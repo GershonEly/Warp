@@ -128,6 +128,17 @@ class ChatEngine(
 
     private var sheet: Sheet? = null
 
+    /**
+     * You said something while it was working — §5i item 7.
+     *
+     * Set by [steer] and read by the round loop. The round already in flight is
+     * allowed to finish, because cancelling a write halfway is worse than one
+     * more file, and then the turn stops: what you just said is answered next,
+     * rather than after everything it was already planning to do.
+     */
+    @Volatile
+    private var steered = false
+
     private val _elsewhere = MutableStateFlow(false)
 
     /**
@@ -388,6 +399,11 @@ class ChatEngine(
             _busy.value || turn?.isActive == true
         ) return
         this.mode = mode
+        steered = false
+        // Said once, here, because this is the only place that knows a turn is
+        // beginning. A refusal you gave in the last turn does not follow you
+        // into this one: you have just said something new.
+        tools?.startTurn()
         if (mode == Mode.GOAL) {
             _goal.value = Goal(
                 condition = condition?.trim()?.ifBlank { null } ?: trimmed,
@@ -431,6 +447,28 @@ class ChatEngine(
                 persistNow(userMessage.id)
 
                 runGoal(replyId)
+
+                // Answer anything you said while it was working — §5i item 7.
+                //
+                // A loop rather than one pass, because you can correct it again
+                // while it answers your first correction, and a reply that
+                // arrives after the last thing you said would be answering the
+                // wrong question. Bounded, because everything that can repeat
+                // here is bounded.
+                var corrections = 0
+                while (steered && corrections++ < MAX_STEERS) {
+                    steered = false
+                    val answer = ChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        role = Role.ASSISTANT,
+                        text = "",
+                        streaming = true,
+                    )
+                    sheet?.add(answer)
+                    activeReplyId = answer.id
+                    runGoal(answer.id)
+                }
+
                 refineTitle(replyId)
             } catch (e: CancellationException) {
                 // Stopped by the user: keep whatever text already arrived
@@ -569,6 +607,11 @@ class ChatEngine(
             // calling goal_done again on every one of them: nine extra turns
             // after the goal was already reached, each one paid for.
             if (goalDoneIn(replyId)) return replyId
+
+            // Your correction ends the rounds — §5i item 7. Steering that waited
+            // for the model to finish its plan would not be steering; it would
+            // be a message in a queue.
+            if (steered) return replyId
 
             // A round that stopped and waited for a person does not count.
             //
@@ -816,6 +859,40 @@ class ChatEngine(
         board?.clear()
     }
 
+    /**
+     * Say something while it is still working — §5i item 7.
+     *
+     * Until now the only way to correct a turn going the wrong way was to stop
+     * it and explain the whole thing again from the start. The work already done
+     * was thrown away with it, including files that were right.
+     *
+     * Your words go into the transcript **now**, so they are never lost to a
+     * process being killed, and the running turn stops after its current round.
+     * What it has already written stays written — see [steered] on why the round
+     * in flight is allowed to finish.
+     *
+     * @return true when it was taken. False when nothing is running, in which
+     *   case the caller should send it as an ordinary message instead.
+     */
+    fun steer(text: String): Boolean {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return false
+        val current = sheet ?: return false
+        if (turn?.isActive != true) return false
+
+        val message = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            role = Role.USER,
+            text = trimmed,
+        )
+        current.add(message)
+        steered = true
+        // Written before anything answers it, for the same reason the first
+        // question is: losing your own words is worse than losing a reply.
+        scope.launch { runCatching { persistNow(message.id) } }
+        return true
+    }
+
     private fun update(id: String, change: (ChatMessage) -> ChatMessage) {
         // A running turn owns its messages; anything else edits what is shown.
         sheet?.let { return it.update(id, change) }
@@ -974,6 +1051,20 @@ class ChatEngine(
         fun specs(mode: Mode): List<ToolSpec>
 
         /**
+         * A new turn is starting.
+         *
+         * The engine knows where a turn begins and nothing else does, so it says
+         * so — without learning what anyone does with the fact. What sits behind
+         * this today is that a tool you refused is not asked about again until
+         * you say something new, and "until you say something new" is exactly
+         * this boundary.
+         *
+         * Default empty, so an executor that does not care stays a one-method
+         * interface.
+         */
+        fun startTurn() {}
+
+        /**
          * Do it, and return the call with its outcome filled in.
          *
          * @param report progress, so a call that stops to ask a person can say
@@ -1071,6 +1162,15 @@ class ChatEngine(
          * this is his money, but it should be reached rarely and never quietly.
          */
         private const val MAX_GOAL_TURNS = 25
+
+        /**
+         * How many corrections one turn will answer before it stops — §5i item 7.
+         *
+         * Far above any real exchange, and here for the same reason every other
+         * budget is: correcting a correction is ordinary, and a turn that can
+         * always be extended by one more message is a turn with no end.
+         */
+        private const val MAX_STEERS = 12
 
         /** What a resumed goal says, so the model knows nothing else changed. */
         const val CONTINUE_MESSAGE = "Continue with the goal. Do not start again."

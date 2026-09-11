@@ -98,8 +98,39 @@ class PermissionDesk(
 
     private var answer: CompletableDeferred<Decision>? = null
 
+    /**
+     * Tools you have already refused in this turn.
+     *
+     * **Always is remembered for the conversation; no is remembered for the
+     * turn**, and the asymmetry is deliberate. Always is a standing decision you
+     * made once. No is an answer to *this* request, and a later message from you
+     * may well want that tool — so it must not become permanent — but inside one
+     * turn the model has no new information, and asking again is badgering.
+     *
+     * Measured before it was fixed: a model refused a write asked again **nine
+     * times** before its round budget stopped it. Nine taps to refuse one thing,
+     * which teaches you to stop reading the prompt.
+     */
+    private val refused = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+    /**
+     * A new turn begins. Nothing carries over but what you granted.
+     *
+     * Called by whatever drives turns rather than measured here, because a desk
+     * that decided for itself when a turn had ended would be a desk guessing at
+     * something the engine simply knows.
+     */
+    fun startTurn() {
+        refused.clear()
+    }
+
     override suspend fun ask(call: PermissionRequest): Decision {
         val chat = conversation()
+
+        // Asked once, answered once. The model is told no again, which is what
+        // lets it change course, but you are not asked again to say the same
+        // thing you already said.
+        if (call.toolName in refused) return Decision.DENY
 
         // Anything this conversation has already blessed goes straight through —
         // that is the entire point of Always, and asking again would teach you
@@ -138,6 +169,7 @@ class PermissionDesk(
         if (decision == Decision.ALWAYS && chat != null && call.risk != Risk.RUNS) {
             store?.grant(chat, call.toolName)
         }
+        if (decision == Decision.DENY) refused.add(call.toolName)
         return decision
     }
 

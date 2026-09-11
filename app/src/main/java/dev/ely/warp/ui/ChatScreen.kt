@@ -459,16 +459,28 @@ fun ChatScreen(
                     val files = pending
                     input = ""
                     pending = emptyList()
-                    ruleFeedback = if (files.isEmpty()) {
-                        runComposed(sent, engine, rules) { showRules = true }
-                    } else {
-                        // Straight to the engine when something is attached.
-                        // Slash commands are about how a turn behaves and a
-                        // picture is about what it is looking at; pretending
-                        // "/plan" and a screenshot compose would mean deciding
-                        // what that means, and nobody has asked for it.
-                        engine.send(sent, attachments = files)
-                        null
+
+                    // Sent while it is working is a correction, not a new
+                    // question — §5i item 7. It goes into the transcript now and
+                    // the running turn stops after its current round.
+                    //
+                    // Asked first, and only taken if it was taken: `steer`
+                    // refuses when nothing is running, which is the same moment
+                    // the button is Send for the ordinary reason.
+                    val corrected = files.isEmpty() && engine.steer(sent)
+
+                    ruleFeedback = when {
+                        corrected -> null
+                        files.isEmpty() -> runComposed(sent, engine, rules) { showRules = true }
+                        else -> {
+                            // Straight to the engine when something is attached.
+                            // Slash commands are about how a turn behaves and a
+                            // picture is about what it is looking at; pretending
+                            // "/plan" and a screenshot compose would mean
+                            // deciding what that means, and nobody has asked.
+                            engine.send(sent, attachments = files)
+                            null
+                        }
                     }
                 },
                 attachments = pending,
@@ -1973,11 +1985,19 @@ private fun Composer(
             // A picture is a message. Send has to light up for one even with
             // nothing typed, or showing it a screenshot means typing a word
             // first to unlock the button.
+            // Stop, until you start typing — then it is Send again — §5i item 7.
+            //
+            // While it works, the one thing you can do is stop it. The moment
+            // there is something to say, saying it is the better answer to "this
+            // is going wrong", and a Stop button sitting over a written
+            // correction offers you the destructive option for work you were
+            // about to save.
+            val correcting = value.isNotBlank() || attachments.isNotEmpty()
             SendButton(
-                busy = busy,
-                enabled = busy || ((value.isNotBlank() || attachments.isNotEmpty()) && !elsewhere),
+                busy = busy && !correcting,
+                enabled = busy || (correcting && !elsewhere),
             ) {
-                if (busy) onStop() else onSend()
+                if (busy && !correcting) onStop() else onSend()
             }
         }
         }
