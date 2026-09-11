@@ -284,6 +284,29 @@ fun ChatScreen(
     val messages by engine.messages.collectAsState()
     val steps by engine.steps.collectAsState()
 
+    // A reply that would draw nothing is not drawn at all — §5j.
+    //
+    // A tick's card is hidden, because the list already says which steps are
+    // done. But hiding the card is not the same as hiding the message: the reply
+    // that carried it was still in the list, costing a mark and a gap, and a mark
+    // floating beside empty space reads as an answer that failed to load. Seen in
+    // a screenshot, which is the only way it could have been seen.
+    //
+    // Narrow on purpose. Only a reply with tool calls, all of them ticks, and
+    // nothing else in it — a message that is empty for any other reason is a
+    // different bug and should stay visible enough to notice.
+    val visible = remember(messages) {
+        messages.filterNot { message ->
+            message.role != Role.USER &&
+                message.text.isEmpty() &&
+                message.thinking.isBlank() &&
+                message.error == null &&
+                !message.streaming &&
+                message.toolCalls.isNotEmpty() &&
+                message.toolCalls.all { it.name == "task_done" }
+        }
+    }
+
     // Which `set_tasks` card is the live one — §5j.
     //
     // The newest, because there is one checklist and drawing it against two
@@ -334,8 +357,8 @@ fun ChatScreen(
     }
 
     // Follow the newest text as it streams in.
-    LaunchedEffect(messages.size, messages.lastOrNull()?.text?.length) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+    LaunchedEffect(visible.size, visible.lastOrNull()?.text?.length) {
+        if (visible.isNotEmpty()) listState.animateScrollToItem(visible.lastIndex)
     }
 
     // The mark is one continuous object across both states. When the first
@@ -356,7 +379,7 @@ fun ChatScreen(
 
         Column(modifier = Modifier.fillMaxSize()) {
             AnimatedContent(
-                targetState = messages.isEmpty(),
+                targetState = visible.isEmpty(),
                 modifier = Modifier.weight(1f),
                 transitionSpec = {
                     fadeIn(tween(bodyIn)) togetherWith fadeOut(tween(bodyOut))
@@ -382,7 +405,7 @@ fun ChatScreen(
                         ),
                         verticalArrangement = Arrangement.spacedBy(WarpSpace.message),
                     ) {
-                        itemsIndexed(messages, key = { _, m -> m.id }) { index, message ->
+                        itemsIndexed(visible, key = { _, m -> m.id }) { index, message ->
                             // animateItem moves neighbours smoothly as the list
                             // grows; Appear handles each message's own entrance.
                             //
