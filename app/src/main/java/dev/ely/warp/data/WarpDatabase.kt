@@ -21,7 +21,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MessageFts::class,
         ToolGrantEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 abstract class WarpDatabase : RoomDatabase() {
@@ -75,6 +75,22 @@ abstract class WarpDatabase : RoomDatabase() {
          * database that doubles in size the first time somebody debugs a
          * layout, and Room reads a row whole.
          */
+        /**
+         * Which messages Warp wrote in your turn — §5l.
+         *
+         * NOT NULL with a default, unlike the nullable columns above, and the
+         * difference is the point: "nobody recorded this" and "a person typed
+         * it" are the same fact for every row that already exists, so the
+         * default states it rather than leaving it to be guessed at each read.
+         */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE messages ADD COLUMN byApp INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
         /**
          * Somewhere to keep the steps — §5j.
          *
@@ -149,6 +165,7 @@ abstract class WarpDatabase : RoomDatabase() {
                         MIGRATION_3_4,
                         MIGRATION_4_5,
                         MIGRATION_5_6,
+                        MIGRATION_6_7,
                     )
                     // Deliberately no fallbackToDestructiveMigration. Losing
                     // someone's conversations because a column moved is not an

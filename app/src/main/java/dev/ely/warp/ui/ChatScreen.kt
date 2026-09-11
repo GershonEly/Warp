@@ -509,7 +509,10 @@ fun ChatScreen(
                 // And it only opens the question. This is the one gesture in
                 // the app that throws work away, so the tap that starts it is
                 // not the tap that does it.
-                onEdit = if (holding.message.role != Role.USER) null else {
+                // Nor to one Warp wrote in your turn — §5l. A screenshot it took
+                // is sent as your turn because that is the only turn a provider
+                // accepts an image in, but it is not a moment you were in either.
+                onEdit = if (holding.message.role != Role.USER || holding.message.byApp) null else {
                     { rewinding = holding.message; held = null }
                 },
             )
@@ -1032,7 +1035,10 @@ private fun MessageItem(
                 },
             )
     ) {
-        if (message.role == Role.USER) {
+        if (message.byApp) {
+            // Sent in your turn, but not by you — §5l.
+            AppMessage(message)
+        } else if (message.role == Role.USER) {
             UserMessage(message)
         } else {
             AssistantMessage(
@@ -1064,6 +1070,46 @@ private fun UserMessage(message: ChatMessage) {
                         message.text,
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                }
+                SentAttachments(message.attachments)
+            }
+        }
+    }
+}
+
+/**
+ * Something Warp put into your turn — §5l.
+ *
+ * A screenshot it took of the app it built. It travels in the user's turn
+ * because that is the only turn a provider accepts an image in, and it is drawn
+ * nothing like one: left, not right; the surface colour, not yours; and it says
+ * whose it is out loud.
+ *
+ * The label is not decoration. A transcript read a week later has to say who did
+ * what, and a picture sitting in a blue bubble is a picture you appear to have
+ * sent — which would make the model's reasoning about it read as a reply to you.
+ */
+@Composable
+private fun AppMessage(message: ChatMessage) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceContainer,
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    "Warp",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (message.text.isNotBlank()) {
+                    Spacer(Modifier.size(4.dp))
+                    Text(
+                        message.text,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
                 }
                 SentAttachments(message.attachments)
@@ -1349,13 +1395,18 @@ private fun ToolCard(
     var open by remember(call.id) { mutableStateOf(false) }
     val body = call.body?.takeIf { it.isNotBlank() }
 
+    // §5k. Computed here rather than below, because a card showing a long diff
+    // has to be openable even when the tool returned no body to expand.
+    val change = remember(call.id, call.argumentsJson) { fileChange(call) }
+    val canOpen = body != null || (change != null && change.size > 14)
+
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
         modifier = Modifier
             .fillMaxWidth()
             .then(
-                if (body == null) Modifier
+                if (!canOpen) Modifier
                 else Modifier.clickable { open = !open }
             ),
     ) {
@@ -1398,14 +1449,22 @@ private fun ToolCard(
                 )
             }
             Spacer(Modifier.size(6.dp))
-            // Arguments are JSON, so they read left to right whatever the
-            // phone's language is.
+            // A change to a file shows the change — §5k. Everything else shows
+            // its arguments, because for a read or a search the arguments *are*
+            // the interesting part: which path, which pattern.
+            //
+            // Both read left to right whatever the phone's language is. Code and
+            // JSON do not flip.
             Ltr {
-                Text(
-                    call.argumentsJson,
-                    style = WarpMono,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                if (change != null) {
+                    DiffView(change, expanded = open)
+                } else {
+                    Text(
+                        call.argumentsJson,
+                        style = WarpMono,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             // What the tool actually did. A card that shows only what was asked
             // for stops halfway through the story.
@@ -1423,7 +1482,11 @@ private fun ToolCard(
                     )
                 }
             }
-            body?.let { text ->
+            // Not when a diff is already above it — §5k. `write_file` hands back
+            // the content it wrote, which is the same text the diff just showed
+            // in green, and a card that prints a file twice is a card nobody
+            // reads to the bottom of.
+            body?.takeIf { change == null }?.let { text ->
                 Spacer(Modifier.size(8.dp))
                 if (open) {
                     // Scrolls sideways rather than wrapping, for the same reason

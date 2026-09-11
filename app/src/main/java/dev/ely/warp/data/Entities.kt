@@ -157,6 +157,17 @@ data class MessageEntity(
     val errorKind: String? = null,
     /** Provider text for the kinds that carry any. */
     val errorDetail: String? = null,
+    /**
+     * Sent in the user's turn, but written by Warp — §5l.
+     *
+     * A column rather than a convention on the text, because the UI draws it
+     * differently and §9f must refuse to rewind to it, and both of those are
+     * decisions that should not depend on parsing a sentence.
+     *
+     * Defaulted to 0 so every row that already exists is what it has always
+     * been: something a person typed.
+     */
+    @ColumnInfo(defaultValue = "0") val byApp: Boolean = false,
     val createdAt: Long,
 )
 

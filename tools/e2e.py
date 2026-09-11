@@ -211,7 +211,7 @@ def watch_build(seconds=140):
 WANTED = {a.lower() for a in sys.argv[1:]}
 GROUP_NAMES = ["surface", "chat", "tools", "permissions", "commands", "grill",
                "goal", "project", "build", "room", "web", "brain", "attach", "budget",
-               "subagent", "settings", "tasks"]
+               "subagent", "settings", "diff", "tasks"]
 
 
 def want(group):
@@ -1262,13 +1262,63 @@ if want("settings"):
     check("a destination that does not exist is refused", s == 400)
 
 
+if want("diff"):
+    # The diff — §5k.
+    #
+    # A pure function of two strings, and checked as one. Whether a changed line
+    # inside a block reads as one line or as the whole block is the difference
+    # between colour that means something and colour that is always on, and it is
+    # invisible in a screenshot of a small example.
+    print("\n17. THE DIFF")
+
+    def diff(old, new):
+        return call("POST", "/diff", {"old": old, "new": new})[1]
+
+    d = diff("a\nb\nc", "a\nB\nc")
+    check("one changed line in a block is one line, not the block",
+          d["added"] == 1 and d["removed"] == 1 and d["same"] == 2,
+          f"+{d['added']} -{d['removed']} ={d['same']}")
+    check("and it reads removed then added, the order it happened in",
+          [l["kind"] for l in d["lines"]] == ["SAME", "REMOVED", "ADDED", "SAME"],
+          str([l["kind"] for l in d["lines"]]))
+
+    d = diff("a\nc", "a\nb\nc")
+    check("a pure insertion removes nothing",
+          d["added"] == 1 and d["removed"] == 0, f"+{d['added']} -{d['removed']}")
+
+    d = diff("a\nb\nc", "a\nc")
+    check("a pure deletion adds nothing",
+          d["removed"] == 1 and d["added"] == 0, f"+{d['added']} -{d['removed']}")
+
+    d = diff("same\ntext", "same\ntext")
+    check("identical text is not a change",
+          d["added"] == 0 and d["removed"] == 0 and d["same"] == 2)
+
+    # A new file has no "before". The empty string splits into one blank line in
+    # Kotlin, which would draw a phantom removed line on every file created.
+    d = diff("", "hello\nworld")
+    check("a new file is all added, with no phantom removed line",
+          d["added"] == 2 and d["removed"] == 0, f"+{d['added']} -{d['removed']}")
+
+    d = diff("gone\naway", "")
+    check("emptying a file is all removed",
+          d["removed"] == 2 and d["added"] == 0, f"+{d['added']} -{d['removed']}")
+
+    # Moved rather than rewritten: the matcher should find the common run instead
+    # of calling every line new.
+    d = diff("one\ntwo\nthree\nfour", "one\ntwo\nthree\nfour\nfive")
+    check("appending to a file leaves the rest alone",
+          d["same"] == 4 and d["added"] == 1 and d["removed"] == 0,
+          f"+{d['added']} -{d['removed']} ={d['same']}")
+
+
 if want("tasks"):
     # The checklist — §5j.
     #
     # Last on purpose: the persistence check force-stops the app, and a group
     # running after that would inherit a cold screen and fail for a reason
     # nothing on its line names.
-    print("\n17. THE TASK LIST")
+    print("\n18. THE TASK LIST")
     call("POST", "/chat/new")
     call("POST", "/model", {"provider": "mock", "model": "mock-fast"})
 

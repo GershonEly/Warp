@@ -184,6 +184,19 @@ data class ChatMessage(
      * later. The bytes are on disk; this holds the path.
      */
     val attachments: List<Attachment> = emptyList(),
+    /**
+     * Sent in your turn, but not written by you — §5l.
+     *
+     * A screenshot Warp took is an image, and a provider only accepts an image
+     * in the user's turn, so that is the turn it goes in. It was still not typed
+     * by a person, and a transcript showing Warp's own capture as something you
+     * said is a transcript that lies about who did what.
+     *
+     * So it is marked, drawn as the app's, and **cannot be rewound to**: §9f
+     * gives Edit to your own messages because they are moments you were in, and
+     * this is not one of them.
+     */
+    val byApp: Boolean = false,
     /** True while text is still streaming in. */
     val streaming: Boolean = false,
     val error: AiError? = null,

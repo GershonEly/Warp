@@ -593,6 +593,38 @@ object DebugServer {
                     .put("open", steps.count { !it.done })
             }
 
+            // The diff, as data — §5k.
+            //
+            // A pure function of two strings, which is exactly the part a
+            // screenshot cannot check: whether one changed line in a block reads
+            // as one line or as the whole block. Needs no screen, so it does not
+            // go through the bridge.
+            "POST /diff" -> {
+                val lines = dev.ely.warp.ui.diffLines(
+                    json.optString("old"),
+                    json.optString("new"),
+                )
+                200 to JSONObject()
+                    .put(
+                        "lines",
+                        JSONArray().also { array ->
+                            lines.forEach {
+                                array.put(
+                                    JSONObject()
+                                        .put("kind", it.kind.name)
+                                        .put("text", it.text)
+                                )
+                            }
+                        }
+                    )
+                    .put("same", lines.count { it.kind == dev.ely.warp.ui.DiffLine.Kind.SAME })
+                    .put("added", lines.count { it.kind == dev.ely.warp.ui.DiffLine.Kind.ADDED })
+                    .put(
+                        "removed",
+                        lines.count { it.kind == dev.ely.warp.ui.DiffLine.Kind.REMOVED },
+                    )
+            }
+
             "POST /tool" -> runBlocking {
                 val name = json.optString("name")
                 val tool = dev.ely.warp.tools.ALL_TOOLS[name]

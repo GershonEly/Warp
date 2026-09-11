@@ -222,6 +222,7 @@ class ConversationRepository(context: Context) :
                 attachments = dev.ely.warp.ai.Attachment.listToJson(message.attachments),
                 errorKind = message.error?.storageKind(),
                 errorDetail = message.error?.storageDetail(),
+                byApp = message.byApp,
                 createdAt = message.createdAt,
             )
         )
@@ -316,6 +317,7 @@ class ConversationRepository(context: Context) :
         thinking = thinking.orEmpty(),
         attachments = dev.ely.warp.ai.Attachment.listFromJson(attachments),
         error = readError(errorKind, errorDetail),
+        byApp = byApp,
         createdAt = createdAt,
     )
 
