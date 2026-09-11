@@ -21,7 +21,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MessageFts::class,
         ToolGrantEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class WarpDatabase : RoomDatabase() {
@@ -75,6 +75,19 @@ abstract class WarpDatabase : RoomDatabase() {
          * database that doubles in size the first time somebody debugs a
          * layout, and Room reads a row whole.
          */
+        /**
+         * Somewhere to keep the steps — §5j.
+         *
+         * One nullable column with no default, matching what the entity declares.
+         * A mismatch here fails Room's identity check when the database opens,
+         * which is loud, rather than quietly the first time the column is read.
+         */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE conversations ADD COLUMN tasksJson TEXT")
+            }
+        }
+
         private val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE messages ADD COLUMN attachments TEXT")
@@ -130,7 +143,13 @@ abstract class WarpDatabase : RoomDatabase() {
                     WarpDatabase::class.java,
                     "warp.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(
+                        MIGRATION_1_2,
+                        MIGRATION_2_3,
+                        MIGRATION_3_4,
+                        MIGRATION_4_5,
+                        MIGRATION_5_6,
+                    )
                     // Deliberately no fallbackToDestructiveMigration. Losing
                     // someone's conversations because a column moved is not an
                     // acceptable failure mode; a missing migration should break

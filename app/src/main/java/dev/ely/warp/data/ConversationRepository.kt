@@ -6,6 +6,9 @@ import dev.ely.warp.ai.ChatEngine
 import dev.ely.warp.ai.ChatMessage
 import dev.ely.warp.ai.Role
 import dev.ely.warp.ai.ToolCall
+import dev.ely.warp.tools.WarpTask
+import dev.ely.warp.tools.tasksFromJson
+import dev.ely.warp.tools.toJson
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
@@ -166,6 +169,24 @@ class ConversationRepository(context: Context) :
 
     override suspend fun save(conversationId: String, message: ChatMessage) =
         saveMessage(conversationId, message, System.currentTimeMillis())
+
+    /**
+     * Keep the steps — §5j.
+     *
+     * An empty list is stored as null rather than as `[]`, so "no checklist" has
+     * one representation on disk instead of two that read back the same.
+     */
+    override suspend fun saveTasks(conversationId: String, tasks: List<WarpTask>) {
+        conversations.setTasks(
+            id = conversationId,
+            tasksJson = tasks.takeIf { it.isNotEmpty() }?.toJson(),
+            now = System.currentTimeMillis(),
+        )
+    }
+
+    /** The steps of a conversation, for the screen that is about to open it. */
+    suspend fun tasksFor(conversationId: String): List<WarpTask> =
+        tasksFromJson(conversations.tasksJson(conversationId))
 
     // ── writing ──────────────────────────────────────────────────────────
 

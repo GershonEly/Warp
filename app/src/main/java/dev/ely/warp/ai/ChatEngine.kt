@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import dev.ely.warp.tools.TaskBoard
+import dev.ely.warp.tools.WarpTask
 import dev.ely.warp.work.Working
 import java.util.UUID
 
@@ -38,6 +40,15 @@ class ChatEngine(
     private val titler: Titler? = null,
     /** What actually performs a tool call. Null shows the card and does nothing. */
     private val tools: ToolExecutor? = null,
+    /**
+     * Where the steps are kept — §5j. Null means no checklist anywhere.
+     *
+     * The same board the runner hands to the tools, so the engine can store what
+     * they changed and the screen can watch it. Named `board` rather than `tasks`
+     * only because [tools] already exists and two names one letter apart in the
+     * same constructor is a mistake waiting to happen.
+     */
+    private val board: TaskBoard? = null,
 ) {
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
@@ -45,6 +56,16 @@ class ChatEngine(
 
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
+
+    /**
+     * The steps, for the screen — §5j.
+     *
+     * A permanently empty flow where there is no board, rather than a nullable
+     * one. A screen asking "is there a checklist" would have to ask it in every
+     * place it draws, and the answer "no steps" already renders as nothing.
+     */
+    val steps: StateFlow<List<WarpTask>> =
+        board?.tasks ?: MutableStateFlow(emptyList<WarpTask>()).asStateFlow()
 
     private var turn: Job? = null
 
@@ -142,7 +163,7 @@ class ChatEngine(
      * a transcript, and half of one loaded over the tail of another is the kind
      * of bug that only shows up as someone's words appearing in the wrong chat.
      */
-    fun open(id: String, loaded: List<ChatMessage>) {
+    fun open(id: String, loaded: List<ChatMessage>, tasks: List<WarpTask> = emptyList()) {
         val running = sheet?.takeIf { turn?.isActive == true }
         _conversationId.value = id
 
@@ -153,11 +174,16 @@ class ChatEngine(
             _messages.value = running.messages
             _busy.value = true
             _elsewhere.value = false
+            // The board is deliberately left alone here, for the same reason the
+            // messages are: a turn still running has ticked steps since the row
+            // was written, and loading the stored list over it would put ticks
+            // back that have already been earned.
         } else {
             running?.onScreen = false
             _messages.value = loaded
             _busy.value = false
             _elsewhere.value = running != null
+            board?.load(tasks)
         }
     }
 
@@ -545,6 +571,14 @@ class ChatEngine(
             val calls = sheet?.find(replyId)?.toolCalls.orEmpty()
             val onlyAsked = calls.isNotEmpty() && calls.all { it.name == "ask" }
 
+            // The steps are saved the moment they change — §5j. Deliberately not
+            // added to CHANGED_SOMETHING below: ticking a box is not work that
+            // has earned the turn more rounds, and treating it as such would give
+            // a model an endless budget for saying it made progress.
+            if (calls.any { it.status == ToolCall.Status.DONE && it.name in TASK_TOOLS }) {
+                persistTasks()
+            }
+
             // And neither does a round that changed something.
             //
             // The same argument, carried where it should have gone the first
@@ -764,6 +798,10 @@ class ChatEngine(
         _busy.value = false
         _conversationId.value = null
         _messages.value = emptyList()
+        // Ordered after the id is dropped on purpose. Nothing writes the board
+        // without an id, so clearing it second cannot save an empty list over
+        // the steps belonging to the chat just left.
+        board?.clear()
     }
 
     private fun update(id: String, change: (ChatMessage) -> ChatMessage) {
@@ -828,6 +866,20 @@ class ChatEngine(
     }
 
     /**
+     * Write the steps as they now stand — §5j.
+     *
+     * Called when a task tool has run rather than when the turn ends, because a
+     * turn on this phone is not guaranteed to end: MIUI kills the app, and steps
+     * ticked an hour ago should not depend on the turn surviving to save them.
+     */
+    private suspend fun persistTasks() {
+        val current = board ?: return
+        val id = sheet?.id ?: _conversationId.value ?: return
+        val target = store ?: return
+        target.saveTasks(id, current.state())
+    }
+
+    /**
      * Ask for a better name, once, after the first reply has landed.
      *
      * Skipped when the reply failed. A name derived from an answer that never
@@ -870,6 +922,16 @@ class ChatEngine(
          * or an answer with no question.
          */
         suspend fun deleteFrom(conversationId: String, messageId: String)
+
+        /**
+         * Keep the steps — §5j.
+         *
+         * Takes the whole list rather than a change, because the list is small
+         * and the alternative is a second place that has to agree with the board
+         * about what changed. Serialising it is the store's business, the same
+         * way turning a [ChatMessage] into a row is.
+         */
+        suspend fun saveTasks(conversationId: String, tasks: List<WarpTask>)
     }
 
     /**
@@ -979,6 +1041,17 @@ class ChatEngine(
          * says that dialog must never do.
          */
         private val WROTE_FILES = setOf("write_file", "edit_file", "new_project")
+
+        /**
+         * Tool names that change the checklist — §5j.
+         *
+         * Named here for the same reason the two sets above are: the engine knows
+         * nothing about what a tool *is*, and it already makes exceptions by name
+         * for `ask` and `goal_done`. Its own set rather than a third use of
+         * [CHANGED_SOMETHING], because the question it answers is different —
+         * "should the list be written" is not "did this turn do work".
+         */
+        private val TASK_TOOLS = setOf("set_tasks", "task_done")
 
         /**
          * How many turns a goal gets before it must stop and say so.

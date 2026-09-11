@@ -49,7 +49,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Build
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Stop
+import dev.ely.warp.tools.WarpTask
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.TextButton
@@ -279,6 +282,18 @@ fun ChatScreen(
     modifier: Modifier = Modifier,
 ) {
     val messages by engine.messages.collectAsState()
+    val steps by engine.steps.collectAsState()
+
+    // Which `set_tasks` card is the live one — §5j.
+    //
+    // The newest, because there is one checklist and drawing it against two
+    // calls would put two answers to "what is left" in the same transcript with
+    // nothing to say which is current. The earlier ones become a quiet line.
+    val liveListCallId = remember(messages) {
+        messages.lastOrNull { message ->
+            message.toolCalls.any { it.name == "set_tasks" }
+        }?.toolCalls?.last { it.name == "set_tasks" }?.id
+    }
     val busy by engine.busy.collectAsState()
     val elsewhere by engine.elsewhere.collectAsState()
     val rules = LocalContext.current.let { remember(it) { Rules.get(it) } }
@@ -393,6 +408,8 @@ fun ChatScreen(
                                     asking = pendingQuestion,
                                     onAnswerQuestion = { questions?.answer(it) },
                                     onHold = { held = it },
+                                    steps = steps,
+                                    liveListCallId = liveListCallId,
                                 )
                             }
                         }
@@ -965,6 +982,8 @@ private fun MessageItem(
     asking: Question? = null,
     onAnswerQuestion: (String) -> Unit = {},
     onHold: (HeldMessage) -> Unit = {},
+    steps: List<WarpTask> = emptyList(),
+    liveListCallId: String? = null,
 ) {
     // Press and hold to open the menu — §9f.
     //
@@ -993,7 +1012,10 @@ private fun MessageItem(
         if (message.role == Role.USER) {
             UserMessage(message)
         } else {
-            AssistantMessage(message, markModifier, permission, onDecide, asking, onAnswerQuestion)
+            AssistantMessage(
+                message, markModifier, permission, onDecide, asking, onAnswerQuestion,
+                steps, liveListCallId,
+            )
         }
     }
 }
@@ -1035,6 +1057,8 @@ private fun AssistantMessage(
     onDecide: (Decision) -> Unit = {},
     asking: Question? = null,
     onAnswerQuestion: (String) -> Unit = {},
+    steps: List<WarpTask> = emptyList(),
+    liveListCallId: String? = null,
 ) {
     val working = message.streaming && message.text.isEmpty() && message.toolCalls.isEmpty()
 
@@ -1072,6 +1096,32 @@ private fun AssistantMessage(
                 }
                 if (call.name == "ask") {
                     AnsweredQuestion(call)
+                    return@forEach
+                }
+
+                // The checklist gets its own card, and the ticks get none —
+                // §5j. Same treatment as `ask` above, for the same reason: a
+                // list of intentions dressed as machinery reads as machinery.
+                //
+                // A tick draws nothing at all. The list already says which steps
+                // are done, so a card per tick would be five cards repeating
+                // what one card shows — and the evidence is not lost, because
+                // the note is drawn under its step.
+                if (call.name == "task_done") return@forEach
+
+                if (call.name == "set_tasks") {
+                    // Only the newest list is the live one. There is one
+                    // checklist, and drawing it twice would be two answers to
+                    // "what is left" with no way to tell which is current.
+                    if (call.id == liveListCallId) {
+                        TaskListCard(steps)
+                    } else {
+                        Text(
+                            "Plan revised",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     return@forEach
                 }
 
@@ -1163,6 +1213,102 @@ private fun ThinkingLine(
                         .heightIn(max = 260.dp)
                         .verticalScroll(rememberScrollState()),
                 )
+            }
+        }
+    }
+}
+
+/**
+ * The steps, ticking themselves off — §5j.
+ *
+ * Reads the live list rather than the arguments of the call that made it, which
+ * is what "updating in place" means here: the card drawn when the plan was
+ * written is the same card that shows it finished, so a conversation has one
+ * checklist in it rather than a trail of stale ones.
+ *
+ * Ticks are not tappable, and that is settled rather than missing. The list is
+ * the model's statement about its own work, and a tick applied by hand would be
+ * a claim the model never made, sitting in data the model is then shown.
+ */
+@Composable
+private fun TaskListCard(steps: List<WarpTask>) {
+    // Nothing rather than an empty box. A card headed "Plan" with no steps under
+    // it says the plan is empty, which is a different claim from having none.
+    if (steps.isEmpty()) return
+
+    val done = steps.count { it.done }
+    val finished = done == steps.size
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Plan",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.weight(1f),
+                )
+                // The count is the line you read while it works, so it says what
+                // is left rather than what has been done — "2 of 5" answers the
+                // question you actually have.
+                Text(
+                    "$done of ${steps.size}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (finished) {
+                        WarpSuccess
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+
+            steps.forEach { task ->
+                Spacer(Modifier.size(8.dp))
+                Row(verticalAlignment = Alignment.Top) {
+                    Icon(
+                        if (task.done) {
+                            Icons.Outlined.CheckCircle
+                        } else {
+                            Icons.Outlined.RadioButtonUnchecked
+                        },
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = if (task.done) {
+                            WarpSuccess
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                    Spacer(Modifier.size(WarpSpace.small))
+                    Column(modifier = Modifier.weight(1f)) {
+                        // A finished step goes quiet rather than being struck
+                        // through: it is still part of the plan and still worth
+                        // reading, it is simply no longer what is happening.
+                        Text(
+                            task.text,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (task.done) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                        )
+                        // The evidence, kept where the claim is. This is the one
+                        // place it appears, since the tick draws no card of its
+                        // own.
+                        task.note?.let { note ->
+                            Text(
+                                note,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
             }
         }
     }

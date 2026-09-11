@@ -561,6 +561,38 @@ object DebugServer {
                     .put("prompt", dev.ely.warp.data.Rules.get(context).asPrompt() ?: JSONObject.NULL)
             }
 
+            // The checklist, as data — §5j.
+            //
+            // Written at the same time as the tools rather than after them. The
+            // rewind in §9f shipped with no route, so proving it needed a person
+            // holding the phone and reading a dialog out loud.
+            //
+            // Reports each step's own state rather than a count, because "two
+            // done" cannot tell you *which* two — and out-of-order ticking is a
+            // thing this feature deliberately allows and has to be checked for.
+            "GET /tasks" -> {
+                val board = DebugBridge.tasks
+                    ?: return 503 to error("no task board")
+                val steps = board.state()
+                200 to JSONObject()
+                    .put(
+                        "tasks",
+                        JSONArray().also { array ->
+                            steps.forEach { task ->
+                                array.put(
+                                    JSONObject()
+                                        .put("text", task.text)
+                                        .put("done", task.done)
+                                        .put("note", task.note ?: JSONObject.NULL)
+                                )
+                            }
+                        }
+                    )
+                    .put("count", steps.size)
+                    .put("done", steps.count { it.done })
+                    .put("open", steps.count { !it.done })
+            }
+
             "POST /tool" -> runBlocking {
                 val name = json.optString("name")
                 val tool = dev.ely.warp.tools.ALL_TOOLS[name]
@@ -575,8 +607,11 @@ object DebugServer {
                     context, DebugBridge.conversation?.invoke()
                 )
 
+                // The board goes in too, or `set_tasks` driven through this route
+                // writes to a list nothing draws and the check passes for the
+                // wrong reason — the failure this whole surface exists to stop.
                 val env = dev.ely.warp.tools.ToolEnv(
-                    project, context, DebugBridge.subagents,
+                    project, context, DebugBridge.subagents, DebugBridge.tasks,
                 )
                 when (val r = tool.run(env, args)) {
                     is dev.ely.warp.tools.ToolResult.Ok -> 200 to JSONObject()

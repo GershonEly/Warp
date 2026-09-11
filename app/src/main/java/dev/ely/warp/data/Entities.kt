@@ -55,6 +55,20 @@ data class ConversationEntity(
     val updatedAt: Long,
     /** Non-null while a delete is undoable. */
     val deletedAt: Long? = null,
+    /**
+     * The steps the model said it would take, as JSON — §5j.
+     *
+     * A column on the conversation rather than a table of its own, following the
+     * same reasoning already written down for `toolCallsJson` and `attachments`:
+     * the list is only ever read back with its conversation and never queried
+     * across, and a join for something never queried is a table maintained for
+     * nothing. `tool_grants` argues the other way because grants *are* asked
+     * about by name, one at a time.
+     *
+     * Null and empty mean the same thing here — no checklist — which is why this
+     * one does not need the care `errorKind` needed.
+     */
+    val tasksJson: String? = null,
 )
 
 /**

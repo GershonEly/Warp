@@ -153,7 +153,13 @@ private fun WarpApp() {
             choices = { registry.modelChoices() },
         )
     }
-    val toolRunner = remember { ToolRunner(context, permission, questions, subagents) }
+    // One board, handed to both sides — §5j. The runner so the tools can change
+    // the list, the engine so it can store it and the screen can watch it. Two
+    // boards would be two answers to "what is left", and only one of them drawn.
+    val taskBoard = remember { dev.ely.warp.tools.TaskBoard() }
+    val toolRunner = remember {
+        ToolRunner(context, permission, questions, subagents, taskBoard)
+    }
     // The application's scope, not the screen's. A turn that outlives the
     // activity is the entire point of the service, and it cannot outlive a
     // scope that the activity owns.
@@ -198,6 +204,7 @@ private fun WarpApp() {
                     report: suspend (dev.ely.warp.ai.ToolCall) -> Unit,
                 ) = toolRunner.run(call, report)
             },
+            board = taskBoard,
         )
     }
     // Told which chat it is in, now that there is one. Read at the moment of
@@ -286,6 +293,7 @@ private fun WarpApp() {
             engine.messages.value.lastOrNull { it.role == dev.ely.warp.ai.Role.USER }?.id
         }
         DebugBridge.subagents = subagents
+        DebugBridge.tasks = taskBoard
         DebugBridge.sendWithFiles = { text, paths ->
             val id = engine.conversationId.value ?: "_scratch"
             val taken = paths.mapNotNull { path ->
@@ -312,7 +320,7 @@ private fun WarpApp() {
             val known = drawer.conversations.any { it.id == id }
             if (known) {
                 scope.launch {
-                    engine.open(id, conversations.loadMessages(id))
+                    engine.open(id, conversations.loadMessages(id), conversations.tasksFor(id))
                     destination = WarpDestination.CHAT
                 }
             }
@@ -382,6 +390,7 @@ private fun WarpApp() {
             DebugBridge.goal = null
             DebugBridge.command = null
             DebugBridge.conversation = null
+            DebugBridge.tasks = null
         }
     }
 
@@ -449,7 +458,7 @@ private fun WarpApp() {
                     // appears holding the previous conversation's messages for a
                     // frame. A transcript flashing someone else's words, even
                     // briefly, is the one thing this list must never do.
-                    engine.open(id, conversations.loadMessages(id))
+                    engine.open(id, conversations.loadMessages(id), conversations.tasksFor(id))
                     destination = WarpDestination.CHAT
                     // The question has been answered. Leaving the query in place
                     // means the next time the drawer opens it opens on a search
@@ -478,7 +487,7 @@ private fun WarpApp() {
                     // Put it back on screen as well as back in the list. Undo
                     // means "that did not happen", and a restored conversation
                     // you then have to go and find has only half happened.
-                    engine.open(id, conversations.loadMessages(id))
+                    engine.open(id, conversations.loadMessages(id), conversations.tasksFor(id))
                     destination = WarpDestination.CHAT
                 }
             },
@@ -551,7 +560,7 @@ private fun WarpApp() {
                     },
                     onOpenChat = { id ->
                         scope.launch {
-                            engine.open(id, conversations.loadMessages(id))
+                            engine.open(id, conversations.loadMessages(id), conversations.tasksFor(id))
                             destination = WarpDestination.CHAT
                         }
                     },

@@ -232,6 +232,72 @@ class MockProvider(
         // file every round: that is a loop, and a loop must be stopped. The old
         // cap could not tell them apart, and cut a real 108-message build into
         // six pieces — §5g.
+        // A checklist, driven the way `keep writing` drives a write — §5j.
+        //
+        // Three rounds rather than one, because each round proves a different
+        // thing and one round would prove only the first. The list has to exist
+        // before a tick can land on it, and the tick is deliberately **step 1
+        // while step 0 is still open**: out-of-order is a case §5j says must be
+        // recorded exactly as given rather than tidied up, and a script that
+        // only ever ticks in order could never catch it being tidied.
+        if ("plan it out" in prompt.lowercase() && request.tools.any { it.name == "set_tasks" }) {
+            val listed = request.messages.any { message ->
+                message.role == Role.ASSISTANT &&
+                    message.toolCalls.any { it.name == "set_tasks" }
+            }
+            val ticked = request.messages.any { message ->
+                message.role == Role.ASSISTANT &&
+                    message.toolCalls.any { it.name == "task_done" }
+            }
+
+            when {
+                !listed -> {
+                    emit(
+                        AiEvent.ToolCallRequested(
+                            ToolCall(
+                                id = UUID.randomUUID().toString(),
+                                name = "set_tasks",
+                                argumentsJson = """
+                                    {"tasks":["Make the lobby screen",
+                                              "Add three fighters",
+                                              "Best-of-three rounds"]}
+                                """.trimIndent(),
+                            )
+                        )
+                    )
+                    emit(AiEvent.Completed())
+                    return@flow
+                }
+
+                !ticked -> {
+                    emit(
+                        AiEvent.ToolCallRequested(
+                            ToolCall(
+                                id = UUID.randomUUID().toString(),
+                                name = "task_done",
+                                argumentsJson = """
+                                    {"task":1,"note":"three fighters on the select screen"}
+                                """.trimIndent(),
+                            )
+                        )
+                    )
+                    emit(AiEvent.Completed())
+                    return@flow
+                }
+
+                else -> {
+                    emit(
+                        AiEvent.TextDelta(
+                            "Listed three steps and finished the second one. " +
+                                "The first is still open, on purpose."
+                        )
+                    )
+                    emit(AiEvent.Completed())
+                    return@flow
+                }
+            }
+        }
+
         if (request.tools.isNotEmpty()) {
             val soFar = request.messages.count {
                 it.role == Role.ASSISTANT && it.toolCalls.isNotEmpty()

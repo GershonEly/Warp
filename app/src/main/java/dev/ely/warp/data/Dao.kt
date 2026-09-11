@@ -90,6 +90,20 @@ interface ConversationDao {
     @Query("UPDATE conversations SET updatedAt = :now WHERE id = :id")
     suspend fun touch(id: String, now: Long)
 
+    // ── the checklist, §5j ───────────────────────────────────────────────
+    //
+    // A targeted update rather than an upsert of the whole row, for the same
+    // reason `setSortKey` is one on folders: rebuilding the entity from a model
+    // that does not carry every column is how `createdAt` got rewritten by a
+    // drag. Ticking a step is not the event that renames a conversation.
+
+    @Query("UPDATE conversations SET tasksJson = :tasksJson, updatedAt = :now WHERE id = :id")
+    suspend fun setTasks(id: String, tasksJson: String?, now: Long)
+
+    /** Read on its own, because opening a chat does not need the whole row. */
+    @Query("SELECT tasksJson FROM conversations WHERE id = :id")
+    suspend fun tasksJson(id: String): String?
+
     // ── delete, in two stages ────────────────────────────────────────────
 
     /** Stage one: gone from every list, still on disk. */

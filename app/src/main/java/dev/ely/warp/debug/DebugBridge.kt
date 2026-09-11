@@ -92,6 +92,18 @@ object DebugBridge {
     var subagents: dev.ely.warp.tools.RunsSubagents? = null
 
     /**
+     * The steps — §5j.
+     *
+     * The board itself, and here for exactly the reason [subagents] is: `POST
+     * /tool` builds its own [dev.ely.warp.tools.ToolEnv], so a `set_tasks` driven
+     * through that route has to reach the same list the screen draws. Without
+     * this it would answer *there is no task list here* on the one path built to
+     * test it, and the check would pass for the wrong reason.
+     */
+    @Volatile
+    var tasks: dev.ely.warp.tools.TaskBoard? = null
+
+    /**
      * The running goal as (condition, turn, limit), or null.
      *
      * The engine's own type here, unlike the other hooks: it grew a field, the

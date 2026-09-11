@@ -74,6 +74,14 @@ data class ToolEnv(
      * needs something absent should say so rather than pretend it worked.
      */
     val subagents: RunsSubagents? = null,
+    /**
+     * Where the steps are kept, or null where nothing keeps them — §5j.
+     *
+     * Nullable for the same reason [subagents] is: the runner exists in places
+     * the chat engine does not, and a tool whose workings are missing should say
+     * so rather than pretend it worked.
+     */
+    val tasks: TaskBoard? = null,
 )
 
 interface Tool {
@@ -561,6 +569,7 @@ val ALL_TOOLS: Map<String, Tool> =
     // to wander to. The main agent fetches; the helper reads what it was given.
     (READ_TOOLS.values +
         listOf(NewProjectTool, WriteFile, EditFile, AskUser, GoalDone, Delegate, FetchUrl) +
+        listOf(SetTasks, TaskDone) +
         DEVICE_TOOLS).associateBy { it.name }
 
 /** Everything, plus the way out. What a `/goal` turn is given. */
@@ -575,9 +584,19 @@ val GRILL_TOOL_SPECS: List<dev.ely.warp.ai.ToolSpec> =
         dev.ely.warp.ai.ToolSpec(it.name, it.description, it.schemaJson)
     }
 
-/** Just the reading tools, for a turn that is not allowed to act. */
+/**
+ * Just the reading tools, for a turn that is not allowed to act — plus the list.
+ *
+ * `/plan` gets `set_tasks` and `task_done` even though it may change nothing,
+ * because a planning turn that produces a checklist *is* the plan, and the two
+ * tools write nothing but the list itself.
+ *
+ * Built from `READ_TOOLS.values` plus these two rather than by widening
+ * `READ_TOOLS`, and that distinction is load-bearing: §5c hands a subagent tools
+ * out of that map, and a helper must not be able to rewrite the main plan.
+ */
 val READ_TOOL_SPECS: List<dev.ely.warp.ai.ToolSpec> =
-    READ_TOOLS.values.map {
+    (READ_TOOLS.values + SetTasks + TaskDone).map {
         dev.ely.warp.ai.ToolSpec(it.name, it.description, it.schemaJson)
     }
 

@@ -30,6 +30,14 @@ class ToolRunner(
      * what a model is.
      */
     private val subagents: RunsSubagents? = null,
+    /**
+     * Where the steps are kept — §5j.
+     *
+     * Owned outside this package like the two desks, because the list outlives
+     * the turn: it is stored with the conversation, and nothing here knows what
+     * a conversation is.
+     */
+    private val tasks: TaskBoard? = null,
 ) {
 
     /**
@@ -150,7 +158,7 @@ class ToolRunner(
         report(call.copy(status = ToolCall.Status.RUNNING))
 
         return when (val result = runCatching {
-            tool.run(ToolEnv(project, context, subagents), args)
+            tool.run(ToolEnv(project, context, subagents, tasks), args)
         }.getOrElse {
             Log.w(TAG, "${call.name} threw", it)
             ToolResult.Failed(it.message ?: it.javaClass.simpleName)
