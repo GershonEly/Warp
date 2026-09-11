@@ -67,6 +67,17 @@ class ChatEngine(
     val steps: StateFlow<List<WarpTask>> =
         board?.tasks ?: MutableStateFlow(emptyList<WarpTask>()).asStateFlow()
 
+    init {
+        // Kept whenever the model changes it, wherever that happened — §5j.
+        //
+        // This hung off the round loop first, so the list was only written when
+        // a task tool ran inside a turn. The first run of the suite caught it:
+        // the debug surface runs a tool without a turn around it, the board
+        // changed, and nothing saved it. A promise about "whenever it changes"
+        // has to be wired to the thing that changes.
+        board?.onChanged = { scope.launch { persistTasks() } }
+    }
+
     private var turn: Job? = null
 
     /**
@@ -571,13 +582,14 @@ class ChatEngine(
             val calls = sheet?.find(replyId)?.toolCalls.orEmpty()
             val onlyAsked = calls.isNotEmpty() && calls.all { it.name == "ask" }
 
-            // The steps are saved the moment they change — §5j. Deliberately not
-            // added to CHANGED_SOMETHING below: ticking a box is not work that
-            // has earned the turn more rounds, and treating it as such would give
-            // a model an endless budget for saying it made progress.
-            if (calls.any { it.status == ToolCall.Status.DONE && it.name in TASK_TOOLS }) {
-                persistTasks()
-            }
+            // The steps are not saved from here — the board says when it changed
+            // and the save hangs off that, so it happens wherever a tool was run
+            // from. Worth saying here, because this is where it used to live.
+            //
+            // They are also deliberately absent from CHANGED_SOMETHING below:
+            // ticking a box is not work that has earned the turn more rounds, and
+            // treating it as such would hand a model an endless budget for saying
+            // it made progress.
 
             // And neither does a round that changed something.
             //
@@ -1041,17 +1053,6 @@ class ChatEngine(
          * says that dialog must never do.
          */
         private val WROTE_FILES = setOf("write_file", "edit_file", "new_project")
-
-        /**
-         * Tool names that change the checklist — §5j.
-         *
-         * Named here for the same reason the two sets above are: the engine knows
-         * nothing about what a tool *is*, and it already makes exceptions by name
-         * for `ask` and `goal_done`. Its own set rather than a third use of
-         * [CHANGED_SOMETHING], because the question it answers is different —
-         * "should the list be written" is not "did this turn do work".
-         */
-        private val TASK_TOOLS = setOf("set_tasks", "task_done")
 
         /**
          * How many turns a goal gets before it must stop and say so.

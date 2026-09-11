@@ -849,11 +849,22 @@ if want("build"):
     with open(apk, "wb") as f:
         f.write(subprocess.run(
             [ADB, "exec-out", "run-as", "dev.ely.warp",
+             # The shared build workspace, not the conversation's folder. The two
+             # are different things: `files/work/build/` is where the toolchain
+             # assembles, and `files/projects/<id>/app.apk` is the copy handed
+             # back to the chat. The signed APK to install is the first one.
              "cat", "files/work/build/com.example.crashy.apk"],
             capture_output=True).stdout)
+    # Both streams, and the size. adb writes "Performing Streamed Install" to
+    # stdout and the *reason* to stderr, so reporting stdout first meant every
+    # failure here read as "Performing Streamed Install" — a detail that names
+    # the step it reached rather than what went wrong. The size matters too: this
+    # check once failed on a 72-byte file, which was `cat` saying the path did
+    # not exist.
+    size = os.path.getsize(apk)
     installed = subprocess.run([ADB, "install", "-r", apk], capture_output=True, text=True)
     check("the APK Warp built really installs", "Success" in installed.stdout,
-          installed.stdout.strip()[:80] or installed.stderr.strip()[:80])
+          f"{size}B — " + (installed.stderr.strip() or installed.stdout.strip())[:160])
 
     s, r = call("POST", "/tool", {"name": "launch", "args": {}}, timeout=60)
     check("and then launch reaches it", bool(r.get("summary")), json.dumps(r)[:80])
@@ -1341,7 +1352,36 @@ if want("tasks"):
 
     check("a fresh start shows no steps until a chat is opened",
           call("GET", "/tasks")[1]["count"] == 0)
-    call("POST", "/chat/open", {"id": cid})
+
+    # Wait for the chat to actually be open, rather than for the route to say so.
+    #
+    # `/chat/open` answers 200 the moment it knows the id exists and loads the
+    # conversation on a coroutine behind that — so reading /tasks straight after
+    # the 200 reads the list before it has been put back, and the check failed
+    # against a feature that worked. State, not the status code: the same rule
+    # the rest of this suite is built on.
+    # Retried, because straight after a restart the app answers 404 for a
+    # conversation that certainly exists: `/chat/open` is checked against the
+    # drawer's loaded list rather than against the store, and that list arrives a
+    # moment after the routes do. Observed as exactly that — 404, then 200 a
+    # second later, for the same id.
+    s_open, r_open = 0, {}
+    for _ in range(40):
+        s_open, r_open = call("POST", "/chat/open", {"id": cid})
+        if s_open == 200:
+            break
+        time.sleep(0.25)
+    for _ in range(40):
+        if call("GET", "/state")[1].get("conversationId") == cid:
+            break
+        time.sleep(0.25)
+    # The detail is not decoration. This check failed once with nothing to say
+    # why, and the answer needed a hand-run reproduction to find.
+    check("reopening actually opens the conversation",
+          call("GET", "/state")[1].get("conversationId") == cid,
+          f"open answered {s_open} {r_open}, wanted {cid}, "
+          f"state says {call('GET', '/state')[1].get('conversationId')}")
+
     s, t = call("GET", "/tasks")
     check("the list survives the app being force-stopped",
           t["count"] == 4 and t["done"] == 4)

@@ -49,6 +49,22 @@ class TaskBoard {
     /** What the screen draws. */
     val tasks: StateFlow<List<WarpTask>> = _tasks.asStateFlow()
 
+    /**
+     * Called when **the model** changes the list, so it can be kept.
+     *
+     * On the board rather than at the place a tool happens to be run from, and
+     * that is the whole point. Saving was first wired into the engine's round
+     * loop, which meant the promise "the list is saved whenever it changes" was
+     * really "saved when it changes *there*" — and the first run of the suite
+     * caught it, because the debug surface runs a tool without a turn around it.
+     *
+     * [load] and [clear] deliberately do not fire it. Neither is a change worth
+     * recording, and firing on `clear` is precisely how an empty list would be
+     * written over the steps of the chat you just left.
+     */
+    @Volatile
+    var onChanged: ((List<WarpTask>) -> Unit)? = null
+
     /** The list right now, for a caller that is not composing. */
     fun state(): List<WarpTask> = _tasks.value
 
@@ -77,6 +93,7 @@ class TaskBoard {
             if (found >= 0) before.removeAt(found) else WarpTask(text)
         }
         _tasks.value = after
+        onChanged?.invoke(after)
         return after
     }
 
@@ -100,6 +117,7 @@ class TaskBoard {
         // the same step cannot quietly erase the evidence the first one gave.
         val ticked = task.copy(done = true, note = note ?: task.note)
         _tasks.value = list.toMutableList().also { it[index] = ticked }
+        onChanged?.invoke(_tasks.value)
         return ticked
     }
 
