@@ -315,4 +315,129 @@ object ReadLogcat : Tool {
 }
 
 /** Everything that runs something. Kept named, because RUNS never gets Always. */
-val DEVICE_TOOLS: List<Tool> = listOf(BuildProject, InstallProject, LaunchProject, ReadLogcat)
+/**
+ * Ask the app it built what it actually stored — §5m.
+ *
+ * The other half of §5g's forty messages of blind debugging. Warp cannot read
+ * another app's sandbox and no permission changes that, so the generated app
+ * carries a provider that serves its own files, and this knocks on it.
+ *
+ * `FREE`, like the other reading tools. It cannot reach anything Warp did not
+ * build: the door is opened by a key written into that project at creation, and
+ * held in that project's own metadata.
+ */
+object AppData : Tool {
+    override val name = "app_data"
+    override val risk = Risk.FREE
+    override val description =
+        "Read what the app you built actually stored — its files, and the rows " +
+            "in its database. Use it instead of guessing why something looks " +
+            "empty or wrong after the app has run."
+    override val schemaJson = """
+        {"type":"object","properties":{
+          "what":{"type":"string","enum":["list","read","table"],
+                  "description":"list its files, read one file, or read a table."},
+          "path":{"type":"string","description":"For read: the path from list."},
+          "db":{"type":"string","description":"For table: the database's path from list."},
+          "table":{"type":"string","description":"For table: the table name."}},
+         "required":["what"]}
+    """.trimIndent()
+
+    override fun describe(args: JSONObject): String = when (args.optString("what")) {
+        "read" -> args.optString("path")
+        "table" -> "${args.optString("table")} in ${args.optString("db")}"
+        else -> "what the app stored"
+    }
+
+    override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult {
+        val meta = NewProject.meta(env.project)
+            ?: return ToolResult.Failed("there is no project here yet")
+
+        // The case that must never read as "the app stored nothing" — §5m. An
+        // app built before the door existed cannot answer, and the fix is a
+        // rebuild, so the answer says so rather than coming back empty.
+        val key = meta.dataKey
+            ?: return ToolResult.Failed(
+                "this app was built before Warp could look inside it. " +
+                    "Build and install it again, then try once it has run."
+            )
+
+        val what = args.optString("what").ifBlank { "list" }
+        val uri = android.net.Uri.parse("content://${meta.applicationId}.warpdata")
+            .buildUpon()
+            .appendQueryParameter("key", key)
+            .appendQueryParameter("what", what)
+            .apply {
+                args.optString("path").takeIf { it.isNotBlank() }
+                    ?.let { appendQueryParameter("path", it) }
+                args.optString("db").takeIf { it.isNotBlank() }
+                    ?.let { appendQueryParameter("db", it) }
+                args.optString("table").takeIf { it.isNotBlank() }
+                    ?.let { appendQueryParameter("table", it) }
+            }
+            .build()
+
+        val cursor = runCatching {
+            env.context.contentResolver.query(uri, null, null, null, null)
+        }.getOrNull()
+            ?: return ToolResult.Failed(
+                // Three different facts, one symptom, so the answer names them
+                // rather than guessing which one it was.
+                "no answer from ${meta.applicationId} — it may not be installed, " +
+                    "may never have been run, or may have been built before the " +
+                    "door existed. Install it, open it once, and try again."
+            )
+
+        return cursor.use { rows ->
+            when (what) {
+                "read" -> {
+                    if (!rows.moveToFirst()) return ToolResult.Failed("no such file in the app")
+                    val text = rows.getString(0)
+                    val size = rows.getLong(1)
+                    val capped = rows.getInt(2) == 1
+                    ToolResult.Ok(
+                        "$size bytes" + if (capped) " · showing the first part" else "",
+                        text,
+                    )
+                }
+
+                "table" -> {
+                    val names = rows.columnNames.joinToString(" | ")
+                    val body = StringBuilder(names).append('\n')
+                    var count = 0
+                    while (rows.moveToNext()) {
+                        count++
+                        body.append(
+                            (0 until rows.columnCount).joinToString(" | ") {
+                                rows.getString(it) ?: "null"
+                            }
+                        ).append('\n')
+                    }
+                    // Zero rows is an answer, and usually *the* answer — "your
+                    // app saved nothing" is what the forty messages were about.
+                    ToolResult.Ok("$count row${if (count == 1) "" else "s"}", body.toString().trim())
+                }
+
+                else -> {
+                    val body = StringBuilder()
+                    var count = 0
+                    while (rows.moveToNext()) {
+                        count++
+                        body.append(rows.getString(0))
+                            .append("  ")
+                            .append(rows.getLong(1))
+                            .append(" bytes\n")
+                    }
+                    if (count == 0) {
+                        ToolResult.Ok("the app has stored nothing yet", null)
+                    } else {
+                        ToolResult.Ok("$count file${if (count == 1) "" else "s"}", body.toString().trim())
+                    }
+                }
+            }
+        }
+    }
+}
+
+val DEVICE_TOOLS: List<Tool> =
+    listOf(BuildProject, InstallProject, LaunchProject, ReadLogcat, AppData)

@@ -34,6 +34,20 @@ object NewProject {
          * it is shown.
          */
         val colour: Int,
+        /**
+         * The key to this app's own door — §5m.
+         *
+         * Written into the generated provider at creation and held here, so Warp
+         * can present it when it asks the app what it stored. Null for every
+         * project made before the door existed, which is exactly the case the
+         * tool has to report rather than read as "the app stored nothing".
+         *
+         * Not cryptography. A signature check is the usual answer and cannot be
+         * used — Warp signs generated apps with a debug key that is not the key
+         * Warp itself is signed with, as `CrashInbox` already records. This stops
+         * the ambient case, which is the case that exists.
+         */
+        val dataKey: String? = null,
     )
 
     private const val META_FILE = "warp.json"
@@ -57,6 +71,7 @@ object NewProject {
             // Older projects predate icons, so they fall back to the same seed
             // the shelf used before rather than to a colour that means nothing.
             colour = json.optInt("colour", 0).takeIf { it != 0 } ?: seedColour(id),
+            dataKey = json.optString("dataKey").takeIf { it.isNotBlank() },
         )
     }
 
@@ -114,6 +129,11 @@ object NewProject {
         File(dir, "res/values/strings.xml").writeText(strings(cleanName))
         File(dir, "src/MainActivity.kt").writeText(mainActivity(id))
         File(dir, "src/CrashReporter.kt").writeText(crashReporter(id))
+        // The app's own door — §5m. Written at creation with its key, because a
+        // key added later would only reach apps rebuilt after it, and Warp would
+        // have no way to tell those apart from apps that stored nothing.
+        val dataKey = java.util.UUID.randomUUID().toString()
+        File(dir, "src/WarpData.kt").writeText(warpData(id, dataKey))
         // §9h asks for the icon to exist from the start rather than after
         // the first successful build, so a project has a face — and therefore
         // a colour — immediately. It is a placeholder and is meant to be
@@ -127,6 +147,7 @@ object NewProject {
                 .put("name", cleanName)
                 .put("applicationId", id)
                 .put("colour", colour)
+                .put("dataKey", dataKey)
                 .toString()
         )
 
@@ -208,8 +229,165 @@ object NewProject {
                         <category android:name="android.intent.category.LAUNCHER" />
                     </intent-filter>
                 </activity>
+
+                <!--
+                  The door Warp asks through - §5m. Exported, because a provider
+                  only its own app can reach is a provider with nothing to do,
+                  and guarded by a key inside it rather than by a signature:
+                  Warp signs generated apps with a debug key that is not the key
+                  Warp itself is signed with.
+                -->
+                <provider
+                    android:name=".WarpData"
+                    android:authorities="$id.warpdata"
+                    android:exported="true" />
             </application>
         </manifest>
+    """.trimIndent()
+
+    /**
+     * The app's own door, written into it at creation — §5m.
+     *
+     * Warp cannot read another app's sandbox and no permission changes that, so
+     * the app serves its own files instead. Android starts a process to answer
+     * its own provider, which is why this works while the app is closed — the
+     * advantage the screenshot tool never had.
+     *
+     * Plain `ContentProvider` and `MatrixCursor`, no dependencies: the phone has
+     * no dependency resolution, so anything a generated project uses has to be
+     * in the platform already.
+     *
+     * **Reads from a copy**, never the live file. A database being written while
+     * it is read gives a torn page or a lock, and SQLite's journal means the
+     * newest rows may not be in the main file at all — the same lesson already
+     * written down about pulling `warp.db-wal` beside `warp.db`.
+     */
+    private fun warpData(id: String, key: String) = """
+        package $id
+
+        import android.content.ContentProvider
+        import android.content.ContentValues
+        import android.database.Cursor
+        import android.database.MatrixCursor
+        import android.database.sqlite.SQLiteDatabase
+        import android.net.Uri
+        import java.io.File
+
+        /**
+         * Answers Warp's questions about this app's own storage.
+         *
+         * Written by Warp when the project was created. Safe to delete if you do
+         * not want it - the app runs without it, and Warp will say it has no way
+         * to look rather than pretend the app stored nothing.
+         */
+        class WarpData : ContentProvider() {
+
+            override fun onCreate() = true
+
+            override fun query(
+                uri: Uri,
+                projection: Array<out String>?,
+                selection: String?,
+                selectionArgs: Array<out String>?,
+                sortOrder: String?,
+            ): Cursor? {
+                val context = context ?: return null
+                // Wrong key is silence, not an error: an answer that says "wrong
+                // key" tells whoever asked that there is a key to guess.
+                if (uri.getQueryParameter("key") != KEY) return null
+
+                val root = context.dataDir
+                return when (uri.getQueryParameter("what")) {
+                    "list" -> list(root)
+                    "read" -> read(root, uri.getQueryParameter("path"))
+                    "table" -> table(root, uri.getQueryParameter("db"), uri.getQueryParameter("table"))
+                    else -> null
+                }
+            }
+
+            private fun list(root: File): Cursor {
+                val out = MatrixCursor(arrayOf("path", "size"))
+                root.walkTopDown().maxDepth(6).forEach { file ->
+                    if (file.isFile) {
+                        val path = file.absolutePath.removePrefix(root.absolutePath).trimStart('/')
+                        // Its own code and the library it was built against are
+                        // not "what the app stored", and they are most of the
+                        // bytes here.
+                        if (!path.startsWith("code_cache") && !path.startsWith("lib")) {
+                            // The type is written out. A bare arrayOf of a String
+                            // and a Long infers an intersection for the reified
+                            // parameter, which the on-device compiler treats as
+                            // an error rather than a warning.
+                            out.addRow(arrayOf<Any?>(path, file.length()))
+                        }
+                    }
+                }
+                return out
+            }
+
+            private fun read(root: File, path: String?): Cursor? {
+                if (path.isNullOrBlank()) return null
+                val file = File(root, path).canonicalFile
+                // Inside this app or nowhere. A path is a string and `..` is a
+                // string that looks fine.
+                if (!file.path.startsWith(root.canonicalFile.path)) return null
+                if (!file.isFile) return null
+
+                val text = runCatching { file.readText() }.getOrElse { return null }
+                val out = MatrixCursor(arrayOf("text", "size", "capped"))
+                val capped = text.length > CAP
+                out.addRow(
+                    arrayOf<Any?>(
+                        if (capped) text.take(CAP) else text,
+                        file.length(),
+                        if (capped) 1 else 0,
+                    )
+                )
+                return out
+            }
+
+            private fun table(root: File, db: String?, name: String?): Cursor? {
+                if (db.isNullOrBlank() || name.isNullOrBlank()) return null
+                if (!name.all { it.isLetterOrDigit() || it == '_' }) return null
+
+                val live = File(root, db).canonicalFile
+                if (!live.path.startsWith(root.canonicalFile.path) || !live.isFile) return null
+
+                // The copy, for the reason in the class comment above.
+                val copy = File.createTempFile("warp", ".db", root.resolve("cache").also { it.mkdirs() })
+                return try {
+                    live.copyTo(copy, overwrite = true)
+                    val handle = SQLiteDatabase.openDatabase(
+                        copy.path, null, SQLiteDatabase.OPEN_READONLY
+                    )
+                    val rows = handle.rawQuery("SELECT * FROM " + name + " LIMIT " + ROWS, null)
+                    val out = MatrixCursor(rows.columnNames)
+                    while (rows.moveToNext()) {
+                        out.addRow((0 until rows.columnCount).map { rows.getString(it) })
+                    }
+                    rows.close()
+                    handle.close()
+                    out
+                } catch (e: Exception) {
+                    null
+                } finally {
+                    copy.delete()
+                }
+            }
+
+            override fun getType(uri: Uri): String? = null
+            override fun insert(uri: Uri, values: ContentValues?): Uri? = null
+            override fun update(
+                uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?,
+            ) = 0
+            override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?) = 0
+
+            private companion object {
+                const val KEY = "$key"
+                const val CAP = 20000
+                const val ROWS = 200
+            }
+        }
     """.trimIndent()
 
     private fun strings(name: String) = """
