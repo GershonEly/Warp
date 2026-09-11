@@ -139,6 +139,27 @@ class ChatEngine(
     @Volatile
     private var steered = false
 
+    /**
+     * Held by [steer] and by a turn closing — §5i item 7.
+     *
+     * One lock over both, because the two things that must not interleave are
+     * "is there still a turn to take this" and "there is not any more". Measured
+     * before it existed: the mock finished four rounds in 1.5 s, a correction
+     * arrived 0.7 s later while `turn.isActive` was still true, and the closing
+     * turn then reset the state and discarded it. The message was stored, shown,
+     * and never answered — the silent loss this project keeps paying for.
+     */
+    private val steerLock = Any()
+
+    /** Take the flag, if it is set. Caller must hold [steerLock]. */
+    private fun takeSteerLocked(): Boolean {
+        val had = steered
+        steered = false
+        return had
+    }
+
+    private fun takeSteer(): Boolean = synchronized(steerLock) { takeSteerLocked() }
+
     private val _elsewhere = MutableStateFlow(false)
 
     /**
@@ -447,28 +468,7 @@ class ChatEngine(
                 persistNow(userMessage.id)
 
                 runGoal(replyId)
-
-                // Answer anything you said while it was working — §5i item 7.
-                //
-                // A loop rather than one pass, because you can correct it again
-                // while it answers your first correction, and a reply that
-                // arrives after the last thing you said would be answering the
-                // wrong question. Bounded, because everything that can repeat
-                // here is bounded.
-                var corrections = 0
-                while (steered && corrections++ < MAX_STEERS) {
-                    steered = false
-                    val answer = ChatMessage(
-                        id = UUID.randomUUID().toString(),
-                        role = Role.ASSISTANT,
-                        text = "",
-                        streaming = true,
-                    )
-                    sheet?.add(answer)
-                    activeReplyId = answer.id
-                    runGoal(answer.id)
-                }
-
+                answerCorrections()
                 refineTitle(replyId)
             } catch (e: CancellationException) {
                 // Stopped by the user: keep whatever text already arrived
@@ -494,13 +494,119 @@ class ChatEngine(
             } finally {
                 // Only if nothing has started since. See [turnToken].
                 if (token == turnToken) {
-                    _busy.value = false
-                    _elsewhere.value = false
-                    sheet = null
-                    activeReplyId = null
+                    // Closing and the last look at the letterbox happen together,
+                    // under the lock [steer] takes — §5i item 7. Apart, a
+                    // correction could land after the check and before the reset,
+                    // and be thrown away with the state: stored, shown, and never
+                    // answered. That window was real and measured, at about half
+                    // a second on the mock.
+                    val late = synchronized(steerLock) {
+                        _busy.value = false
+                        _elsewhere.value = false
+                        sheet = null
+                        activeReplyId = null
+                        takeSteerLocked()
+                    }
                     // Same guard: a turn that has been superseded must not tell
                     // the service the newer one has finished.
                     Working.finished()
+
+                    // Outside the lock, and as its own turn: this one is over.
+                    if (late) scope.launch { answerLate() }
+                }
+            }
+        }
+    }
+
+    /**
+     * Answer whatever you said while it was working — §5i item 7.
+     *
+     * A loop rather than one pass, because you can correct a correction, and a
+     * reply that arrives after the last thing you said is answering the wrong
+     * question. Bounded, like everything here that can repeat.
+     */
+    private suspend fun answerCorrections() {
+        var corrections = 0
+        while (takeSteer() && corrections++ < MAX_STEERS) {
+            val answer = ChatMessage(
+                id = UUID.randomUUID().toString(),
+                role = Role.ASSISTANT,
+                text = "",
+                streaming = true,
+            )
+            sheet?.add(answer)
+            activeReplyId = answer.id
+            runGoal(answer.id)
+        }
+    }
+
+    /**
+     * A correction that arrived as the turn was closing, answered as its own.
+     *
+     * The turn it was meant for has already gone, so this starts a fresh one for
+     * the message that is already in the transcript — no second copy of what you
+     * typed, which is why this exists rather than a call to [send].
+     */
+    private fun answerLate() {
+        // Deliberately **not** `turn?.isActive`. This is launched from inside
+        // the closing turn's own `finally`, so that job is still running and
+        // checking it would mean the turn refusing to answer on account of
+        // itself — which is exactly what it did, and why the correction still
+        // sat there unanswered after the first fix.
+        //
+        // The sheet is the right question: it was cleared under the lock a
+        // moment ago, so a non-null one means a newer turn has already taken
+        // over and this correction belongs to it.
+        if (_busy.value || sheet != null) return
+        val before = _messages.value
+        if (before.lastOrNull()?.role != Role.USER) return
+
+        val replyId = UUID.randomUUID().toString()
+        sheet = Sheet(
+            _conversationId.value,
+            before + ChatMessage(
+                id = replyId,
+                role = Role.ASSISTANT,
+                text = "",
+                streaming = true,
+            ),
+        ).also { _messages.value = it.messages }
+        _elsewhere.value = false
+        _busy.value = true
+        activeReplyId = replyId
+        val token = ++turnToken
+        Working.started("Thinking")
+
+        turn = scope.launch {
+            try {
+                runGoal(replyId)
+                answerCorrections()
+            } catch (e: CancellationException) {
+                val open = activeReplyId ?: replyId
+                finish(open) { it.copy(streaming = false) }
+                withContext(NonCancellable) { persistNow(open) }
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "late correction failed", e)
+                val open = activeReplyId ?: replyId
+                finish(open) {
+                    it.copy(
+                        streaming = false,
+                        error = AiError.Unknown("${e.javaClass.simpleName}: ${e.message}"),
+                    )
+                }
+                persistNow(open)
+            } finally {
+                if (token == turnToken) {
+                    val late = synchronized(steerLock) {
+                        _busy.value = false
+                        _elsewhere.value = false
+                        sheet = null
+                        activeReplyId = null
+                        takeSteerLocked()
+                    }
+                    Working.finished()
+                    if (late) scope.launch { answerLate() }
                 }
             }
         }
@@ -877,16 +983,24 @@ class ChatEngine(
     fun steer(text: String): Boolean {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return false
-        val current = sheet ?: return false
-        if (turn?.isActive != true) return false
 
-        val message = ChatMessage(
-            id = UUID.randomUUID().toString(),
-            role = Role.USER,
-            text = trimmed,
-        )
-        current.add(message)
-        steered = true
+        val message = synchronized(steerLock) {
+            // The sheet, not `turn.isActive`, decides. A turn is briefly still
+            // "active" while its own cleanup runs, and that gap is exactly where
+            // a correction used to disappear. The sheet is cleared inside this
+            // same lock, so seeing one means there is a turn that will still look
+            // — and seeing none means the caller should simply send it.
+            val current = sheet ?: return false
+            ChatMessage(
+                id = UUID.randomUUID().toString(),
+                role = Role.USER,
+                text = trimmed,
+            ).also {
+                current.add(it)
+                steered = true
+            }
+        }
+
         // Written before anything answers it, for the same reason the first
         // question is: losing your own words is worse than losing a reply.
         scope.launch { runCatching { persistNow(message.id) } }
