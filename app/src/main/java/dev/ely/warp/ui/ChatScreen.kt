@@ -1457,7 +1457,14 @@ private fun ToolCard(
             // JSON do not flip.
             Ltr {
                 if (change != null) {
-                    DiffView(change, expanded = open)
+                    DiffView(
+                        change,
+                        expanded = open,
+                        // A refused or failed write changed nothing, so it must
+                        // not wear the colour of one that did — §5k.
+                        applied = call.status != ToolCall.Status.DENIED &&
+                            call.status != ToolCall.Status.FAILED,
+                    )
                 } else {
                     Text(
                         call.argumentsJson,
@@ -1474,10 +1481,14 @@ private fun ToolCard(
                     Text(
                         result,
                         style = WarpMono,
-                        color = if (call.status == ToolCall.Status.FAILED) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            WarpSuccess
+                        color = when (call.status) {
+                            ToolCall.Status.FAILED -> MaterialTheme.colorScheme.error
+                            // "you said no" was printed in the colour that means
+                            // it worked. Refusing is neither a success nor a
+                            // fault, and the header already says so in grey.
+                            ToolCall.Status.DENIED ->
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            else -> WarpSuccess
                         },
                     )
                 }

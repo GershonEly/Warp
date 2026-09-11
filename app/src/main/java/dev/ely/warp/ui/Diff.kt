@@ -128,23 +128,50 @@ private const val COLLAPSED_LINES = 14
  * in the margin stops lining up with anything.
  */
 @Composable
-fun DiffView(lines: List<DiffLine>, expanded: Boolean, modifier: Modifier = Modifier) {
+fun DiffView(
+    lines: List<DiffLine>,
+    expanded: Boolean,
+    /**
+     * Whether this change actually reached the file.
+     *
+     * False drains the colour out of it, and that is not a nicety. A refused
+     * write drew its lines in green — the colour that means *this was added* —
+     * under a card that said "you said no". The card was honest and the body
+     * contradicted it, which is the worse of the two to believe.
+     *
+     * A change still waiting on you keeps its colour: there, green is what you
+     * are being asked to allow, not a claim about what happened.
+     */
+    applied: Boolean = true,
+    modifier: Modifier = Modifier,
+) {
     val shown = if (expanded) lines else lines.take(COLLAPSED_LINES)
     val hidden = lines.size - shown.size
 
     Column(modifier = modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+        if (!applied) {
+            Text(
+                "not applied",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+            )
+        }
         shown.forEach { line ->
-            val ground = when (line.kind) {
-                DiffLine.Kind.ADDED -> WarpSuccess.copy(alpha = 0.14f)
-                DiffLine.Kind.REMOVED -> MaterialTheme.colorScheme.error.copy(alpha = 0.14f)
-                DiffLine.Kind.SAME -> Color.Transparent
+            val ground = when {
+                !applied -> Color.Transparent
+                line.kind == DiffLine.Kind.ADDED -> WarpSuccess.copy(alpha = 0.14f)
+                line.kind == DiffLine.Kind.REMOVED ->
+                    MaterialTheme.colorScheme.error.copy(alpha = 0.14f)
+                else -> Color.Transparent
             }
-            val ink = when (line.kind) {
-                DiffLine.Kind.ADDED -> WarpSuccess
-                DiffLine.Kind.REMOVED -> MaterialTheme.colorScheme.error
+            val ink = when {
+                !applied -> MaterialTheme.colorScheme.onSurfaceVariant
+                line.kind == DiffLine.Kind.ADDED -> WarpSuccess
+                line.kind == DiffLine.Kind.REMOVED -> MaterialTheme.colorScheme.error
                 // Context is dimmed rather than absent. A change with nothing
                 // around it is a change you cannot place in the file.
-                DiffLine.Kind.SAME -> MaterialTheme.colorScheme.onSurfaceVariant
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
             }
             val sign = when (line.kind) {
                 DiffLine.Kind.ADDED -> "+ "
