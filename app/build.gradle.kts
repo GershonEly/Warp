@@ -67,6 +67,26 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+
+            // JGit and the Apache SSHD jars it brings each carry their own copy
+            // of the same jar metadata, and two files at one path stops the
+            // merge outright — §5n.
+            //
+            // Dropped, because none of it means anything inside an APK: OSGi
+            // metadata describes an Eclipse plugin, DEPENDENCIES and INDEX.LIST
+            // describe a jar, and a jar's own signature cannot survive being
+            // repacked into one that is signed again.
+            excludes += "/OSGI-INF/**"
+            excludes += "/META-INF/DEPENDENCIES"
+            excludes += "/META-INF/INDEX.LIST"
+            excludes += "/META-INF/*.{SF,DSA,RSA}"
+
+            // Kept, not dropped, and the difference matters. Apache 2.0 asks for
+            // NOTICE to travel with what you ship, and Warp is open source — so
+            // these take the first copy rather than being excluded, which would
+            // quietly remove someone else's licence text from the app.
+            pickFirsts += "/META-INF/LICENSE*"
+            pickFirsts += "/META-INF/NOTICE*"
         }
         jniLibs {
             // Extract native libs to disk rather than running them from inside
@@ -184,6 +204,10 @@ dependencies {
     // Both are pure Java and run on ART inside Warp — no JVM needed for these.
     implementation(libs.r8)      // D8: .class -> .dex
     implementation(libs.apksig)  // signs the APKs Warp builds
+
+    // Git on the phone — §5n. Pure Java, so it runs on ART like the two above.
+    implementation(libs.jgit)
+    implementation(libs.jgit.ssh)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

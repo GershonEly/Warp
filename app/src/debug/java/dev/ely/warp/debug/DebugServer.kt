@@ -625,6 +625,59 @@ object DebugServer {
                     )
             }
 
+            // Does JGit actually run here — §5n, feasibility before work.
+            //
+            // The APK building proves only that it fits. This makes a repository,
+            // commits to it, and reads the commit back out, which is the whole
+            // question: JGit is pure Java but it looks for a filesystem, a user
+            // identity and a `git` config that Android has none of.
+            //
+            // Throwaway directory, removed afterwards. Nothing here touches a
+            // real project.
+            "POST /git/probe" -> {
+                val out = JSONObject()
+                val dir = java.io.File(context.cacheDir, "git-probe-${System.currentTimeMillis()}")
+                try {
+                    dir.mkdirs()
+                    org.eclipse.jgit.api.Git.init().setDirectory(dir).call().use { git ->
+                        java.io.File(dir, "hello.txt").writeText("from the phone")
+                        git.add().addFilepattern("hello.txt").call()
+                        val commit = git.commit()
+                            .setMessage("first commit on the phone")
+                            // Set explicitly: JGit otherwise reads a global git
+                            // config and a hostname, and Android has neither.
+                            .setAuthor("Warp", "warp@localhost")
+                            .call()
+                        val log = git.log().call().toList()
+                        out.put("ok", true)
+                            .put("commit", commit.name.take(8))
+                            .put("message", log.firstOrNull()?.fullMessage)
+                            .put("commits", log.size)
+                    }
+                } catch (e: Throwable) {
+                    // Throwable, not Exception: a missing class on Android
+                    // arrives as an Error, and that is exactly the failure this
+                    // probe exists to catch.
+                    out.put("ok", false)
+                        .put("failed", "${e.javaClass.name}: ${e.message}")
+                } finally {
+                    dir.deleteRecursively()
+                }
+
+                // Asked separately, because SSH is its own artifact and its own
+                // risk. HTTPS with a token works without it.
+                out.put(
+                    "ssh",
+                    runCatching {
+                        Class.forName(
+                            "org.eclipse.jgit.transport.sshd.SshdSessionFactory"
+                        ).simpleName
+                    }.getOrElse { "unavailable: ${it.javaClass.simpleName}" }
+                )
+
+                200 to out
+            }
+
             "POST /tool" -> runBlocking {
                 val name = json.optString("name")
                 val tool = dev.ely.warp.tools.ALL_TOOLS[name]
