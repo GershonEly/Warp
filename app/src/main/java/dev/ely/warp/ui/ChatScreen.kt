@@ -294,6 +294,17 @@ fun ChatScreen(
 ) {
     val messages by engine.messages.collectAsState()
     val steps by engine.steps.collectAsState()
+    val openConversation by engine.conversationId.collectAsState()
+
+    // Where this conversation's files and its git history live — §5k, §5n.
+    //
+    // Worked out once here rather than inside each card. Every message would
+    // otherwise resolve the same path, and a card is drawn far more often than
+    // a conversation changes.
+    val appContext = LocalContext.current
+    val projectDir = remember(openConversation) {
+        dev.ely.warp.build.Projects.forConversation(appContext, openConversation)
+    }
 
     // A reply that would draw nothing is not drawn at all — §5j.
     //
@@ -444,6 +455,7 @@ fun ChatScreen(
                                     onHold = { held = it },
                                     steps = steps,
                                     liveListCallId = liveListCallId,
+                                    project = projectDir,
                                 )
                             }
                         }
@@ -563,35 +575,95 @@ fun ChatScreen(
         // reading. So the two cases say different things.
         rewinding?.let { message ->
             val changed = engine.changesAfter(message.id)
+
+            // The save point the files were at when this message was sent —
+            // §9f's missing half, finally possible because §5n keeps a record.
+            //
+            // Looked up once per dialog rather than on every recomposition: it
+            // reads the git log, which is disk work, and the answer cannot
+            // change while a dialog is open.
+            val undoable = remember(message.id) {
+                val project = dev.ely.warp.build.Projects.forConversation(
+                    context, engine.conversationId.value,
+                )
+                if (changed > 0 && dev.ely.warp.git.Repo.isRepo(project)) {
+                    runCatching {
+                        dev.ely.warp.git.Repo.commitBefore(project, message.createdAt)
+                    }.getOrNull()
+                } else {
+                    null
+                }
+            }
+
             AlertDialog(
                 onDismissRequest = { rewinding = null },
                 title = { Text("Go back to before this?") },
                 text = {
                     Text(
-                        if (changed > 0) {
+                        when {
+                            // Both halves, which is what §9f asked for from the
+                            // start: keep the work, or put it back too.
+                            undoable != null ->
+                                "This message and everything after it will leave the " +
+                                    "conversation, and its text goes back in the box.\n\n" +
+                                    "Warp made $changed change${if (changed == 1) "" else "s"} " +
+                                    "to your files after this point. You can keep those, " +
+                                    "or put the files back to the save point from just " +
+                                    "before — ${undoable.id}."
+
                             // "changes" rather than "files": one new_project
                             // writes a whole project, so counting calls and
                             // calling them files would understate it.
-                            "This message and everything after it will leave the " +
-                                "conversation, and its text goes back in the box.\n\n" +
-                                "Warp made $changed change${if (changed == 1) "" else "s"} " +
-                                "to your files after this point. Those stay as they " +
-                                "are — rewinding the chat does not undo them."
-                        } else {
-                            "This message and everything after it will leave the " +
-                                "conversation, and its text goes back in the box."
+                            changed > 0 ->
+                                "This message and everything after it will leave the " +
+                                    "conversation, and its text goes back in the box.\n\n" +
+                                    "Warp made $changed change${if (changed == 1) "" else "s"} " +
+                                    "to your files after this point. Those stay as they " +
+                                    "are — this project is not in git, so there is " +
+                                    "nothing to put them back to."
+
+                            else ->
+                                "This message and everything after it will leave the " +
+                                    "conversation, and its text goes back in the box."
                         }
                     )
                 },
                 confirmButton = {
-                    TextButton(onClick = {
-                        input = message.text
-                        engine.rewindTo(message.id)
-                        rewinding = null
-                    }) { Text("Go back") }
+                    // The destructive one is on the right and named for what it
+                    // does to the files, not for what it does to the chat.
+                    if (undoable != null) {
+                        TextButton(onClick = {
+                            input = message.text
+                            val project = dev.ely.warp.build.Projects.forConversation(
+                                context, engine.conversationId.value,
+                            )
+                            runCatching {
+                                dev.ely.warp.git.Repo.restore(project, undoable.id)
+                            }
+                            engine.rewindTo(message.id)
+                            rewinding = null
+                        }) { Text("Go back and undo files") }
+                    } else {
+                        TextButton(onClick = {
+                            input = message.text
+                            engine.rewindTo(message.id)
+                            rewinding = null
+                        }) { Text("Go back") }
+                    }
                 },
                 dismissButton = {
-                    TextButton(onClick = { rewinding = null }) { Text("Keep it") }
+                    Row {
+                        TextButton(onClick = { rewinding = null }) { Text("Keep it") }
+                        // Offered only when undoing is possible, so the plain
+                        // rewind is still reachable without touching the files.
+                        if (undoable != null) {
+                            TextButton(onClick = {
+                                input = message.text
+                                engine.rewindTo(message.id)
+                                rewinding = null
+                            }) { Text("Chat only") }
+                        }
+                    }
                 },
             )
         }
@@ -1047,6 +1119,8 @@ private fun MessageItem(
     onHold: (HeldMessage) -> Unit = {},
     steps: List<WarpTask> = emptyList(),
     liveListCallId: String? = null,
+    /** This conversation's project folder, for git-backed diffs — §5k. */
+    project: java.io.File? = null,
 ) {
     // Press and hold to open the menu — §9f.
     //
@@ -1080,7 +1154,7 @@ private fun MessageItem(
         } else {
             AssistantMessage(
                 message, markModifier, permission, onDecide, asking, onAnswerQuestion,
-                steps, liveListCallId,
+                steps, liveListCallId, project,
             )
         }
     }
@@ -1165,6 +1239,8 @@ private fun AssistantMessage(
     onAnswerQuestion: (String) -> Unit = {},
     steps: List<WarpTask> = emptyList(),
     liveListCallId: String? = null,
+    /** This conversation's project folder, for git-backed diffs — §5k. */
+    project: java.io.File? = null,
 ) {
     val working = message.streaming && message.text.isEmpty() && message.toolCalls.isEmpty()
 
@@ -1242,6 +1318,10 @@ private fun AssistantMessage(
                     // how Allow stops meaning anything.
                     asking = permission?.takeIf { it.callId == call.id },
                     onDecide = onDecide,
+                    // When this message happened, so a whole-file write can be
+                    // shown against what the file was then — §5k, §5n.
+                    at = message.createdAt,
+                    project = project,
                 )
             }
 
@@ -1486,6 +1566,10 @@ private fun ToolCard(
     call: ToolCall,
     asking: PermissionRequest? = null,
     onDecide: (Decision) -> Unit = {},
+    /** When the message carrying this call happened — §5k. */
+    at: Long = 0L,
+    /** This conversation's project folder, where its git history lives. */
+    project: java.io.File? = null,
 ) {
     // Collapsed by default, and only openable when there is something inside.
     // The summary line is the point of the card — four hundred lines of a file
@@ -1495,7 +1579,22 @@ private fun ToolCard(
 
     // §5k. Computed here rather than below, because a card showing a long diff
     // has to be openable even when the tool returned no body to expand.
-    val change = remember(call.id, call.argumentsJson) { fileChange(call) }
+    //
+    // The previous version of a file is only fetched once the card is **open**.
+    // Reading a git blob is disk work, and a transcript with forty write cards
+    // in it would do forty reads to draw a screen where every one of them is
+    // collapsed to a single line.
+    val change = remember(call.id, call.argumentsJson, open, project) {
+        fileChange(call) { path ->
+            if (!open || at == 0L || project == null) null else runCatching {
+                if (dev.ely.warp.git.Repo.isRepo(project)) {
+                    dev.ely.warp.git.Repo.fileBefore(project, path, at)
+                } else {
+                    null
+                }
+            }.getOrNull()
+        }
+    }
     val canOpen = body != null || (change != null && change.size > 14)
 
     Surface(

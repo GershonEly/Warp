@@ -93,19 +93,73 @@ object GitDiff : Tool {
     override val name = "git_diff"
     override val risk = Risk.WRITES
     override val description =
-        "Show what has changed since the last save point, as a diff. Use it to " +
-            "check your own work before saving."
-    override val schemaJson = """{"type":"object","properties":{}}"""
+        "Show what changed, as a diff. With no arguments: everything since the " +
+            "last save point, to check your own work before saving. With `from`: " +
+            "what a save point changed, which is how to see what an earlier " +
+            "change actually did."
+    override val schemaJson = """
+        {"type":"object","properties":{
+          "from":{"type":"string","description":"A save point id from git_log."},
+          "to":{"type":"string","description":"Defaults to now. A save point id."}},
+         "required":[]}
+    """.trimIndent()
 
-    override fun describe(args: JSONObject) = "what changed since the last save"
+    override fun describe(args: JSONObject): String =
+        args.optString("from").takeIf { it.isNotBlank() }
+            ?.let { "what changed since $it" }
+            ?: "what changed since the last save"
 
     override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult {
         if (!Repo.isRepo(env.project)) return noRepo()
+        val from = args.optString("from").takeIf { it.isNotBlank() }
         return runCatching {
-            val text = Repo.diff(env.project)
-            if (text.isBlank()) ToolResult.Ok("nothing has changed", null)
+            val text = if (from == null) {
+                Repo.diff(env.project)
+            } else {
+                Repo.diffBetween(
+                    env.project,
+                    from,
+                    args.optString("to").takeIf { it.isNotBlank() } ?: "HEAD",
+                )
+            }
+            if (text.isBlank()) ToolResult.Ok("nothing changed", null)
             else ToolResult.Ok("${text.lines().size} lines of changes", text.take(20_000))
         }.getOrElse { ToolResult.Failed(it.message ?: "could not read the changes") }
+    }
+}
+
+object GitClone : Tool {
+    override val name = "git_clone"
+    override val risk = Risk.RUNS
+    override val description =
+        "Copy an existing repository onto the phone, so its code can be read " +
+            "or worked on. Only a repository the person named."
+    override val schemaJson = """
+        {"type":"object","properties":{
+          "url":{"type":"string","description":"https://github.com/owner/name.git"}},
+         "required":["url"]}
+    """.trimIndent()
+
+    override fun describe(args: JSONObject) = "clone ${args.optString("url")}"
+
+    override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult {
+        val url = args.optString("url").ifBlank {
+            return ToolResult.Failed("which repository? give the full address")
+        }
+        // Into this conversation's own folder, and only when it is empty.
+        // Cloning over a project would take away work that is not in any
+        // repository yet, which is the one thing this feature exists to prevent.
+        if (Repo.isRepo(env.project)) {
+            return ToolResult.Failed("this project is already a repository")
+        }
+        if (env.project.listFiles()?.isNotEmpty() == true) {
+            return ToolResult.Failed(
+                "there are already files here — clone into a new chat instead"
+            )
+        }
+        return runCatching {
+            ToolResult.Ok(Repo.clone(env.project, url, Repo.token(env.context)), null)
+        }.getOrElse { ToolResult.Failed(it.message ?: "could not clone") }
     }
 }
 
@@ -239,5 +293,5 @@ object GitCreateRepo : Tool {
 /** Everything git, named once so the registry and the docs cannot drift apart. */
 val GIT_TOOLS: List<Tool> = listOf(
     GitInit, GitCommit, GitLog, GitDiff, GitRestore,
-    GitPush, GitPull, GitCreateRepo,
+    GitPush, GitPull, GitClone, GitCreateRepo,
 )

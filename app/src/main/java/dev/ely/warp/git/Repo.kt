@@ -120,6 +120,83 @@ object Repo {
         }
     }
 
+    /**
+     * What changed between two save points — §5n.
+     *
+     * Separate from [diff] because the two answer different questions: that one
+     * is "what have I not saved yet", and this is "what did that change do".
+     * The second is the one you want a week later, and the one §5k could never
+     * show for a whole-file write, because the old text was not kept anywhere
+     * until now.
+     */
+    fun diffBetween(project: File, from: String, to: String = "HEAD"): String =
+        open(project) { git ->
+            val older = git.repository.resolve("$from^{tree}")
+                ?: return@open "no save point called $from"
+            val newer = git.repository.resolve("$to^{tree}")
+                ?: return@open "no save point called $to"
+
+            val out = ByteArrayOutputStream()
+            DiffFormatter(out).use { formatter ->
+                formatter.setRepository(git.repository)
+                git.repository.newObjectReader().use { reader ->
+                    formatter.format(
+                        CanonicalTreeParser().apply { reset(reader, older) },
+                        CanonicalTreeParser().apply { reset(reader, newer) },
+                    )
+                }
+            }
+            out.toString(Charsets.UTF_8.name())
+        }
+
+    /**
+     * The newest save point made at or before a moment — §9f's missing half.
+     *
+     * The rewind shipped deliberately unfinished: undoing the file changes
+     * needed per-message records of what was written, and git is that record.
+     * This is the join between the two — you rewind to a message, and the state
+     * the files were in then is the last commit before that message existed.
+     *
+     * **Matched by time rather than by a stored id**, and the trade is stated
+     * rather than hidden. Recording a commit id on every message would be exact,
+     * and would cost a column, a migration and a second thing to keep in step.
+     * Both clocks are this phone's, and commits land seconds after the work they
+     * describe, so the only case this gets wrong is a commit made in the same
+     * second as the message it belongs beside.
+     *
+     * Null when nothing was ever saved before that point, which is the honest
+     * answer to "can you undo this" when nobody was tracking yet.
+     */
+    fun commitBefore(project: File, millis: Long): Entry? = open(project) { git ->
+        git.log().call()
+            .firstOrNull { it.commitTime * 1000L <= millis }
+            ?.let { Entry(it.name.take(8), it.fullMessage.trim(), it.commitTime * 1000L) }
+    }
+
+    /**
+     * One file, as it was just before a moment — §5k's missing before-and-after.
+     *
+     * The diff viewer can show what an `edit_file` did, because that call
+     * carries its own `old` and `new`. A `write_file` over an existing file
+     * cannot: it replaces everything and the previous text was never kept. §5k
+     * left that gap open on purpose and said git would close it. This is it.
+     *
+     * Null when there was no save point before then, or the file did not exist
+     * yet — both of which mean "everything in this file is new", which is what
+     * the viewer already shows.
+     */
+    fun fileBefore(project: File, path: String, millis: Long): String? = open(project) { git ->
+        val commit = git.log().call()
+            .firstOrNull { it.commitTime * 1000L <= millis }
+            ?: return@open null
+
+        org.eclipse.jgit.treewalk.TreeWalk.forPath(
+            git.repository, path, git.repository.parseCommit(commit).tree,
+        )?.use { walk ->
+            String(git.repository.open(walk.getObjectId(0)).bytes, Charsets.UTF_8)
+        }
+    }
+
     /** What has changed since the last commit, as a unified diff. */
     fun diff(project: File): String = open(project) { git ->
         val out = ByteArrayOutputStream()

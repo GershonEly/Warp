@@ -106,12 +106,23 @@ fun diffLines(old: String, new: String): List<DiffLine> {
  * before-and-after for everything, and a second copy of every file written would
  * be work thrown away the day it lands.
  */
-fun fileChange(call: ToolCall): List<DiffLine>? {
+fun fileChange(call: ToolCall, before: ((String) -> String?)? = null): List<DiffLine>? {
     val args = runCatching { JSONObject(call.argumentsJson.ifBlank { "{}" }) }.getOrNull()
         ?: return null
     return when (call.name) {
         "edit_file" -> diffLines(args.optString("old"), args.optString("new"))
-        "write_file" -> diffLines("", args.optString("content"))
+        "write_file" -> {
+            // The old text, if anything kept it — §5k's gap, closed by §5n.
+            //
+            // `write_file` replaces a whole file and never carried what was
+            // there before, so this used to be drawn as all-added even when it
+            // changed two lines of an existing file. Git has the previous
+            // version, and [before] is how the card asks for it without this
+            // file learning what a repository is.
+            val path = args.optString("path")
+            val old = if (path.isNotBlank()) before?.invoke(path).orEmpty() else ""
+            diffLines(old, args.optString("content"))
+        }
         else -> null
     }
 }
