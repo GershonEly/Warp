@@ -11,6 +11,7 @@ import dev.ely.warp.tools.tasksFromJson
 import dev.ely.warp.tools.toJson
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
@@ -25,7 +26,13 @@ import java.util.UUID
  * that a message can be mid-stream.
  */
 class ConversationRepository(context: Context) :
-    ChatEngine.ConversationStore, dev.ely.warp.tools.GrantStore {
+    ChatEngine.ConversationStore,
+    dev.ely.warp.tools.GrantStore,
+    // Earlier chats, for the tool that reads them — §5p. Implemented here
+    // rather than given a class of its own because it is two queries that
+    // already exist, and the interface is what keeps the tools package from
+    // learning what Room is.
+    dev.ely.warp.tools.ReadsSessions {
 
     private val db = WarpDatabase.get(context)
     private val conversations = db.conversations()
@@ -187,6 +194,14 @@ class ConversationRepository(context: Context) :
     /** The steps of a conversation, for the screen that is about to open it. */
     suspend fun tasksFor(conversationId: String): List<WarpTask> =
         tasksFromJson(conversations.tasksJson(conversationId))
+
+    // ── earlier chats, for the model to read — §5p ───────────────────────
+
+    override suspend fun list(limit: Int): List<Pair<String, String>> =
+        observeDrawer().first().conversations.take(limit).map { it.id to it.title }
+
+    override suspend fun messages(conversationId: String): List<ChatMessage> =
+        loadMessages(conversationId)
 
     // ── writing ──────────────────────────────────────────────────────────
 

@@ -82,6 +82,14 @@ data class ToolEnv(
      * so rather than pretend it worked.
      */
     val tasks: TaskBoard? = null,
+    /**
+     * Where earlier conversations can be read — §5p. Null where none can.
+     *
+     * Nullable like the rest, and for the same reason: the runner exists in
+     * places the store does not, and a tool whose workings are missing should
+     * say so rather than answer as though nothing ever happened.
+     */
+    val sessions: ReadsSessions? = null,
 )
 
 interface Tool {
@@ -592,7 +600,10 @@ val READ_TOOLS: Map<String, Tool> =
     // looks, and a `/plan` turn is exactly when knowing the real icon sizes
     // matters most. A planner that has to guess writes a plan that has to be
     // corrected.
-    listOf(ReadFile, ListDir, Glob, Grep, AndroidDocs).associateBy { it.name }
+    // `past_session` reads only what you already said, in this app, and changes
+    // nothing — so it belongs with the tools that look. It is also exactly what
+    // a planning turn wants: the cheapest way to avoid repeating a week ago.
+    listOf(ReadFile, ListDir, Glob, Grep, AndroidDocs, PastSessions).associateBy { it.name }
 
 /** Everything the model can be offered, by name. */
 val ALL_TOOLS: Map<String, Tool> =

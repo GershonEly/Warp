@@ -158,7 +158,7 @@ private fun WarpApp() {
     // boards would be two answers to "what is left", and only one of them drawn.
     val taskBoard = remember { dev.ely.warp.tools.TaskBoard() }
     val toolRunner = remember {
-        ToolRunner(context, permission, questions, subagents, taskBoard)
+        ToolRunner(context, permission, questions, subagents, taskBoard, conversations)
     }
     // The application's scope, not the screen's. A turn that outlives the
     // activity is the entire point of the service, and it cannot outlive a

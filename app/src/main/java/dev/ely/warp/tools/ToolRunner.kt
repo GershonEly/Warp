@@ -38,6 +38,8 @@ class ToolRunner(
      * a conversation is.
      */
     private val tasks: TaskBoard? = null,
+    /** Where earlier conversations are read from — §5p. */
+    private val sessions: ReadsSessions? = null,
 ) {
 
     /**
@@ -158,7 +160,7 @@ class ToolRunner(
         report(call.copy(status = ToolCall.Status.RUNNING))
 
         return when (val result = runCatching {
-            tool.run(ToolEnv(project, context, subagents, tasks), args)
+            tool.run(ToolEnv(project, context, subagents, tasks, sessions), args)
         }.getOrElse {
             Log.w(TAG, "${call.name} threw", it)
             ToolResult.Failed(it.message ?: it.javaClass.simpleName)
