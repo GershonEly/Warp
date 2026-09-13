@@ -614,6 +614,9 @@ val ALL_TOOLS: Map<String, Tool> =
     (READ_TOOLS.values +
         listOf(NewProjectTool, WriteFile, EditFile, AskUser, GoalDone, Delegate, FetchUrl) +
         listOf(SetTasks, TaskDone) +
+        // §5n. Deliberately not in READ_TOOLS: a helper reading files is one
+        // thing, and a helper with the ability to push is another.
+        GIT_TOOLS +
         DEVICE_TOOLS).associateBy { it.name }
 
 /** Everything, plus the way out. What a `/goal` turn is given. */

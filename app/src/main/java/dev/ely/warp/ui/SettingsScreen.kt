@@ -30,6 +30,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -118,6 +119,9 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
 
         Spacer(Modifier.size(WarpSpace.section))
         WebSearchSection(registry.choice.providerId)
+
+        Spacer(Modifier.size(WarpSpace.section))
+        GitHubSection()
 
         Spacer(Modifier.size(WarpSpace.section))
         AmbientSection()
@@ -434,6 +438,78 @@ private fun AmbientSection() {
         // The whole row is the target, not just the switch. A 32dp control at
         // the far edge of a phone is the hardest thing on the screen to hit.
         Switch(checked = on, onCheckedChange = { appearance.setAmbient(it) })
+    }
+}
+
+/**
+ * The token that lets Warp push your apps to GitHub — §5n.
+ *
+ * Beside the AI keys and kept the same way: encrypted by the Android Keystore,
+ * never in a project, never in a log. It is the same vault, with its own name.
+ *
+ * **Only needed for the half that leaves the phone.** Save points, history and
+ * undo all work with no token and no account at all, which is deliberate — the
+ * most valuable part of git here is the part that needs nobody's permission.
+ */
+@Composable
+private fun GitHubSection() {
+    val context = LocalContext.current
+    var saved by remember { mutableStateOf(dev.ely.warp.git.Repo.hasToken(context)) }
+    var input by remember { mutableStateOf("") }
+
+    Text("GitHub", style = MaterialTheme.typography.headlineMedium)
+    Spacer(Modifier.size(WarpSpace.tiny))
+    Text(
+        "A token lets Warp push an app you built to a repository, and create " +
+            "one when you ask for it. Undo and history need no token — only " +
+            "sending code out does.\n\n" +
+            "Make one at github.com → Settings → Developer settings → Personal " +
+            "access tokens, and give it the `repo` scope.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    Spacer(Modifier.size(WarpSpace.medium))
+
+    if (saved) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(WarpRadius.small))
+                .background(MaterialTheme.colorScheme.surfaceContainer)
+                .padding(WarpSpace.medium),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                // Never the token itself, not even partly. It is a password
+                // that can create and delete repositories.
+                "A token is saved on this phone",
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = {
+                dev.ely.warp.ai.KeyVault.delete(context, "git.token")
+                saved = false
+            }) { Text("Remove") }
+        }
+    } else {
+        OutlinedTextField(
+            value = input,
+            onValueChange = { input = it },
+            label = { Text("GitHub token") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.size(WarpSpace.small))
+        Button(
+            onClick = {
+                if (dev.ely.warp.git.Repo.saveToken(context, input.trim())) {
+                    input = ""
+                    saved = true
+                }
+            },
+            enabled = input.isNotBlank(),
+        ) { Text("Save") }
     }
 }
 

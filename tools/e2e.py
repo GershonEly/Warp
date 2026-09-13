@@ -211,7 +211,7 @@ def watch_build(seconds=140):
 WANTED = {a.lower() for a in sys.argv[1:]}
 GROUP_NAMES = ["surface", "chat", "tools", "permissions", "commands", "grill",
                "goal", "project", "build", "room", "web", "brain", "attach", "budget",
-               "subagent", "settings", "diff", "tasks"]
+               "subagent", "settings", "diff", "git", "tasks"]
 
 
 def want(group):
@@ -1327,6 +1327,72 @@ if want("diff"):
     check("appending to a file leaves the rest alone",
           d["same"] == 4 and d["added"] == 1 and d["removed"] == 0,
           f"+{d['added']} -{d['removed']} ={d['same']}")
+
+
+if want("git"):
+    # Git — §5n.
+    #
+    # Every check here goes through the tools rather than through JGit, because
+    # the question is not "does the library work" — the probe answered that — but
+    # whether a project on this phone can be saved, broken and put back.
+    print("\n19. GIT")
+    call("POST", "/chat/new")
+    wipe_project()
+
+    s, r = call("POST", "/tool", {"name": "git_commit", "args": {"message": "too early"}})
+    check("committing before there is a repository is refused",
+          "not in git yet" in (r.get("failed") or ""), json.dumps(r)[:110])
+
+    s, r = call("POST", "/tool", {"name": "git_init", "args": {}}, timeout=60)
+    check("a project can be put into git", "tracking" in (r.get("summary") or ""),
+          json.dumps(r)[:110])
+    check("and a .gitignore is written before anything can be pushed",
+          ".gitignore" in on_device("ls", "-a", project_path()),
+          on_device("ls", "-a", project_path()).replace("\n", " ")[:120])
+
+    s, r = call("POST", "/tool", {"name": "git_init", "args": {}}, timeout=60)
+    check("a second init says so rather than starting again",
+          "already" in (r.get("summary") or ""), json.dumps(r)[:110])
+
+    call("POST", "/tool", {"name": "write_file",
+                           "args": {"path": "src/Thing.kt", "content": "val a = 1\n"}})
+    s, r = call("POST", "/tool", {"name": "git_commit", "args": {"message": "first"}},
+                timeout=60)
+    check("a save point is made after a write", "saved" in (r.get("summary") or ""),
+          json.dumps(r)[:110])
+
+    s, r = call("POST", "/tool", {"name": "git_commit", "args": {"message": "again"}},
+                timeout=60)
+    # An empty commit would be a save point that changed nothing, and a history
+    # full of those is one you cannot navigate.
+    check("committing with nothing changed makes no save point",
+          "nothing had changed" in (r.get("summary") or ""), json.dumps(r)[:110])
+
+    s, r = call("POST", "/tool", {"name": "git_log", "args": {}}, timeout=60)
+    check("the save point is in the history",
+          "first" in (r.get("body") or ""), json.dumps(r)[:110])
+    commit = (r.get("body") or "").split()[0] if r.get("body") else ""
+
+    # The whole point of the feature: break it, and get it back.
+    call("POST", "/tool", {"name": "write_file",
+                           "args": {"path": "src/Thing.kt", "content": "this is broken\n"}})
+    s, r = call("POST", "/tool", {"name": "git_diff", "args": {}}, timeout=60)
+    check("the diff shows what changed since the save point",
+          "broken" in (r.get("body") or ""), json.dumps(r)[:110])
+
+    s, r = call("POST", "/tool", {"name": "git_restore", "args": {"commit": commit}},
+                timeout=60)
+    check("restoring names the save point it went back to",
+          commit[:6] in (r.get("summary") or ""), json.dumps(r)[:110])
+    check("and the file is actually back",
+          "val a = 1" in on_device("cat", project_path("src/Thing.kt")),
+          on_device("cat", project_path("src/Thing.kt"))[:80])
+
+    # Leaving the phone needs a credential, and the message has to name what is
+    # missing rather than failing somewhere obscure.
+    s, r = call("POST", "/tool", {"name": "git_push", "args": {}}, timeout=60)
+    check("pushing with no token says what is missing",
+          "token" in (r.get("failed") or "").lower(), json.dumps(r)[:130])
 
 
 if want("tasks"):
