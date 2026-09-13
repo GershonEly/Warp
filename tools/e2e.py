@@ -1000,9 +1000,26 @@ if want("brain"):
     check("and the card says which topic, not 'ok'",
           "icons" in (r.get("summary") or ""), f"summary={r.get('summary')!r}")
 
-    s, r = call("POST", "/tool", {"name": "android_docs", "args": {"topic": "compose"}})
-    check("it knows the Compose traps",
-          "rememberSaveable" in (r.get("body") or ""), json.dumps(r)[:110])
+    # §5o. Compose and Material were removed: Warp cannot build either, and
+    # teaching them is what produced an app made of stacked pixel-sized
+    # rectangles. These two checks are the replacement, and they guard the two
+    # facts that caused the damage.
+    s, r = call("POST", "/tool", {"name": "android_docs", "args": {"topic": "layout"}})
+    body = r.get("body") or ""
+    check("it says a number in Kotlin is a pixel",
+          "PIXEL" in body and "dp" in body, json.dumps(r)[:110])
+    check("and that views stack without a container",
+          "on top of each other" in body, json.dumps(r)[:110])
+
+    s, r = call("POST", "/tool", {"name": "android_docs", "args": {"topic": "design"}})
+    check("it knows not to default to purple on black",
+          "purple" in (r.get("body") or "").lower(), json.dumps(r)[:110])
+
+    # The summary rides on every single message, so the two facts that decide
+    # whether an app looks built have to survive in it.
+    s, r = call("POST", "/tool", {"name": "android_docs", "args": {"topic": "project"}})
+    check("the project tree shows res/layout and colors",
+          "layout/activity_main.xml" in (r.get("body") or ""), json.dumps(r)[:110])
 
     # Names what it has rather than only what it lacks. A model told "no such
     # topic" guesses again; a model handed the list picks.

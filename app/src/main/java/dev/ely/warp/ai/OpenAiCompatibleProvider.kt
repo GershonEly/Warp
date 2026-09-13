@@ -79,6 +79,7 @@ abstract class OpenAiCompatibleProvider(
                             displayName = m.optString("name").ifBlank { modelId },
                             contextTokens = m.optInt("context_length").takeIf { it > 0 },
                             badge = badgeFor(modelId),
+                            canSee = seesImages(m),
                         )
                     )
                 }
@@ -126,6 +127,8 @@ abstract class OpenAiCompatibleProvider(
         try {
             connection.inputStream.bufferedReader().use { reader ->
                 var stopReason = "end_turn"
+                /** What the provider says this cost, if it says — §5p. */
+                var usage: Usage? = null
                 // Tool calls stream as fragments across many events, keyed by
                 // their position in the array rather than by id.
                 val toolNames = mutableMapOf<Int, String>()
@@ -134,6 +137,23 @@ abstract class OpenAiCompatibleProvider(
 
                 for (event in ProviderHttp.sseEvents(reader)) {
                     currentCoroutineContext().ensureActive()
+
+                    // Before the `choices` check below, not after — §5p.
+                    //
+                    // The usage chunk arrives with an **empty** choices array,
+                    // so the `?: continue` under this would throw away the one
+                    // event carrying the bill. That is the whole reason this
+                    // sits here looking out of order.
+                    event.optJSONObject("usage")?.let { u ->
+                        usage = Usage(
+                            promptTokens = u.optInt("prompt_tokens"),
+                            completionTokens = u.optInt("completion_tokens"),
+                            // OpenRouter's own field, in dollars. Absent
+                            // everywhere else, and absent must stay null rather
+                            // than becoming zero — "free" is a claim.
+                            costUsd = if (u.has("cost")) u.optDouble("cost") else null,
+                        )
+                    }
 
                     val choice = event.optJSONArray("choices")?.optJSONObject(0) ?: continue
                     val delta = choice.optJSONObject("delta")
@@ -195,7 +215,7 @@ abstract class OpenAiCompatibleProvider(
                             toolNames.clear(); toolIds.clear(); toolArgs.clear()
                         }
                 }
-                emit(AiEvent.Completed(stopReason))
+                emit(AiEvent.Completed(stopReason, usage))
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
@@ -310,6 +330,17 @@ abstract class OpenAiCompatibleProvider(
             put("stream", true)
             put("max_tokens", MAX_TOKENS)
 
+            // Ask for the bill — §5p.
+            //
+            // Streaming otherwise reports nothing at all about what a request
+            // cost, which is how a spent balance arrived as forty failures
+            // rather than as a number going down. Both forms are sent because
+            // the two dialects spell it differently and each ignores the other's
+            // key: `stream_options` is OpenAI's, `usage.include` is OpenRouter's
+            // and is the one that carries an actual price.
+            put("stream_options", JSONObject().put("include_usage", true))
+            put("usage", JSONObject().put("include", true))
+
             // Search, when this service has it and the user has switched it on.
             //
             // OpenRouter runs the search itself and bills it to the same key
@@ -386,6 +417,27 @@ abstract class OpenAiCompatibleProvider(
     protected open fun isChatModel(modelId: String): Boolean {
         val id = modelId.lowercase()
         return NON_CHAT_MARKERS.none { it in id }
+    }
+
+    /**
+     * Whether this model can be shown a picture, if the service says — §5o.
+     *
+     * OpenRouter answers properly: `architecture.input_modalities` lists what a
+     * model accepts, and about 274 of its 445 models include `image`. Services
+     * that say nothing return null, and null means *nobody said* rather than no
+     * — see [AiModel.canSee] for why that distinction is kept.
+     *
+     * Read from the response rather than guessed from the name. A name-based
+     * guess would silently refuse a model that can see, which is worse than the
+     * problem it set out to fix.
+     */
+    private fun seesImages(model: JSONObject): Boolean? {
+        val modalities = model.optJSONObject("architecture")
+            ?.optJSONArray("input_modalities")
+            ?: return null
+        return (0 until modalities.length()).any {
+            modalities.optString(it).equals("image", ignoreCase = true)
+        }
     }
 
     /** A rough hint from the model's name; these services do not report it. */

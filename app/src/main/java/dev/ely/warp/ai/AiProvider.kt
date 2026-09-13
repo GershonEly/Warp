@@ -107,6 +107,8 @@ data class ModelChoice(
     val available: Boolean = true,
     /** Shown in the short default list. Everything else is behind "show all". */
     val recommended: Boolean = true,
+    /** See [AiModel.canSee]. Null means the provider did not say. */
+    val canSee: Boolean? = null,
 ) {
     val label: String get() = if (effort == null) modelName else "$modelName (${effort.label})"
 
@@ -144,6 +146,20 @@ data class AiModel(
     val badge: ModelBadge? = null,
     /** Effort levels this model offers. Empty means effort is not a choice. */
     val effortLevels: List<Effort> = emptyList(),
+    /**
+     * Whether this model can be shown a picture — §5o.
+     *
+     * **Three-valued on purpose.** `true` and `false` are things a provider
+     * told us; `null` is "nobody said", and the three must not be flattened.
+     * Warp refuses an image only on a definite `false`, because refusing on a
+     * guess would block a model that can see, and this project has been bitten
+     * by confident wrong answers more than by missing ones.
+     *
+     * OpenRouter reports it per model. Most others do not, so they stay null
+     * and the provider's own error is what surfaces — which is at least honest
+     * about where the refusal came from.
+     */
+    val canSee: Boolean? = null,
 )
 
 data class ToolSpec(
@@ -197,6 +213,14 @@ data class ChatMessage(
      * this is not one of them.
      */
     val byApp: Boolean = false,
+    /**
+     * What this reply cost, once the provider has said — §5p.
+     *
+     * On the message rather than only on a running total, because a total tells
+     * you the conversation is expensive and this tells you **which answer** was.
+     * Null until the reply finishes, and null on providers that never report.
+     */
+    val usage: Usage? = null,
     /** True while text is still streaming in. */
     val streaming: Boolean = false,
     val error: AiError? = null,
@@ -323,10 +347,46 @@ sealed interface AiEvent {
     ) : AiEvent
 
     /** The turn ended normally. */
-    data class Completed(val stopReason: String = "end_turn") : AiEvent
+    data class Completed(
+        val stopReason: String = "end_turn",
+        /**
+         * What this request cost and used, when the provider says — §5p.
+         *
+         * Arrives **at the end**, not during, and that is the honest shape of
+         * it: providers report usage with the final chunk. Null where nobody
+         * reported anything, which is most providers — and null must read as
+         * "unknown", never as free.
+         */
+        val usage: Usage? = null,
+    ) : AiEvent
 
     /** The turn ended badly. Not an exception — the UI renders this. */
     data class Failed(val error: AiError) : AiEvent
+}
+
+/**
+ * What one request spent — §5p.
+ *
+ * @param costUsd what the provider charged, when it says. OpenRouter does;
+ *   most do not, and a token count without a price is still worth showing.
+ */
+data class Usage(
+    val promptTokens: Int = 0,
+    val completionTokens: Int = 0,
+    val costUsd: Double? = null,
+) {
+    val totalTokens: Int get() = promptTokens + completionTokens
+
+    operator fun plus(other: Usage) = Usage(
+        promptTokens = promptTokens + other.promptTokens,
+        completionTokens = completionTokens + other.completionTokens,
+        // Two unknowns are still unknown; one known and one unknown is the
+        // known part, which is the most that can honestly be claimed.
+        costUsd = when {
+            costUsd == null && other.costUsd == null -> null
+            else -> (costUsd ?: 0.0) + (other.costUsd ?: 0.0)
+        },
+    )
 }
 
 // ── failures worth telling the user apart ────────────────────────────────
@@ -340,6 +400,37 @@ sealed class AiError(val message: String, val canRetry: Boolean) {
 
     data object RateLimited : AiError(
         "The provider is rate limiting us. Wait a moment and try again.", true)
+
+    /**
+     * The key is fine. The balance is not — §5o.
+     *
+     * Its own case because it was being reported as [BadKey], and a message
+     * telling somebody to re-check a working key sends them to fix something
+     * that is not broken. He saw that three times in one session while the key
+     * worked before and after.
+     *
+     * `canRetry` is false on purpose: a spent balance does not clear by asking
+     * again, which is exactly what forty retries in two bursts proved.
+     */
+    data class OutOfCredits(val detail: String) : AiError(
+        if (detail.isBlank()) "The provider says there are no credits left for this key."
+        else "No credits left: $detail",
+        false,
+    )
+
+    /**
+     * Refused, for a reason that is the provider's to explain.
+     *
+     * 403 was folded into [BadKey] because both are "not allowed". They are not
+     * the same thing to the person reading it: a rejected key is fixed in
+     * Settings, and a refused request is fixed by changing the request, the
+     * model, or nothing at all.
+     */
+    data class Refused(val detail: String) : AiError(
+        if (detail.isBlank()) "The provider refused that request."
+        else "The provider refused that: $detail",
+        false,
+    )
 
     data object Offline : AiError(
         "No internet connection.", true)

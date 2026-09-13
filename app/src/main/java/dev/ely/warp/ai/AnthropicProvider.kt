@@ -382,7 +382,11 @@ class AnthropicProvider(
         }.getOrNull().orEmpty()
 
         return when (code) {
-            401, 403 -> AiError.BadKey
+            // Split for the reason in ProviderHttp.errorFor — §5o. A refused
+            // request and a rejected key are fixed in different places.
+            401 -> AiError.BadKey
+            402 -> AiError.OutOfCredits("")
+            403 -> AiError.Refused("")
             429 -> AiError.RateLimited
             in 500..599 -> AiError.Server(message.ifBlank { "HTTP $code" })
             else -> AiError.Unknown(message.ifBlank { "HTTP $code" })

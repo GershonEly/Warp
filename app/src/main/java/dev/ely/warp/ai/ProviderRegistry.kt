@@ -249,6 +249,9 @@ class ProviderRegistry(private val context: Context) {
                     },
                     available = usable,
                     recommended = model.id in shortlist,
+                    // Carried through so the composer can refuse a picture
+                    // before it is sent rather than after — §5o, §5h.
+                    canSee = model.canSee,
                 )
             }
         }

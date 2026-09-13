@@ -244,7 +244,10 @@ object WriteFile : Tool {
     override val risk = Risk.WRITES
     override val description =
         "Create a file inside the project, or replace one completely. " +
-            "Prefer edit_file when only part of a file changes."
+            "Write the whole thing you mean to write — a new file, or a " +
+            "rewrite of one you are reshaping. Do not build a file up over " +
+            "many small edits. Use edit_file for a fix inside a file that is " +
+            "already what you want."
     override val schemaJson = """
         {"type":"object","properties":{
           "path":{"type":"string","description":"Path relative to the project root."},
@@ -296,8 +299,11 @@ object EditFile : Tool {
     override val name = "edit_file"
     override val risk = Risk.WRITES
     override val description =
-        "Replace an exact piece of text in a file. The old text must appear " +
-            "exactly once, so include enough context to make it unique."
+        "Fix a specific piece of an existing file. The old text must appear " +
+            "exactly once, so include enough context to make it unique. " +
+            "For a file you are still writing, or a change touching most of " +
+            "one, write_file the whole thing instead — a file built out of " +
+            "twenty small edits costs twenty round trips and ends up wrong."
     override val schemaJson = """
         {"type":"object","properties":{
           "path":{"type":"string","description":"Path relative to the project root."},
@@ -413,10 +419,13 @@ object AndroidDocs : Tool {
     override val name = "android_docs"
     override val risk = Risk.FREE
     override val description =
-        "Read what Warp already knows about Android — project layout, icon " +
-            "sizes, Compose, Material 3, permissions and the things that fail " +
-            "quietly. Use this instead of asking the user, and instead of " +
-            "guessing. Topics: " + AndroidBrain.names.joinToString(", ")
+        "Read what Warp already knows about Android — how to build a screen " +
+            "here, making it look designed, icon sizes, project layout, " +
+            "permissions and the things that fail quietly. Read `layout` " +
+            "before writing any UI: this toolchain has no Compose and no " +
+            "libraries, and sizes written in Kotlin are pixels. Use this " +
+            "instead of asking the user, and instead of guessing. Topics: " +
+            AndroidBrain.names.joinToString(", ")
 
     override val schemaJson = """
         {"type":"object","properties":{

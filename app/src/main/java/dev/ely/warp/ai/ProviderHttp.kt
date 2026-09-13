@@ -72,8 +72,25 @@ internal object ProviderHttp {
      */
     fun errorFor(code: Int, body: String): AiError {
         val message = extractMessage(body)
+
+        // What it says beats what it returned — §5o.
+        //
+        // Providers put "insufficient credits" behind 402, 403 and sometimes
+        // 400, and OpenRouter phrases a spent balance as an ordinary refusal.
+        // Reading the sentence is the only reliable way to tell a money problem
+        // from a key problem, and telling somebody to re-check a working key is
+        // the worst of the three answers.
+        val aboutMoney = listOf("credit", "insufficient funds", "quota", "billing")
+            .any { message.contains(it, ignoreCase = true) }
+        if (aboutMoney) return AiError.OutOfCredits(message)
+
         return when (code) {
-            401, 403 -> AiError.BadKey
+            401 -> AiError.BadKey
+            402 -> AiError.OutOfCredits(message)
+            // Not BadKey. 403 is "not allowed", which covers moderation, a
+            // model this account cannot reach, and a region block — none of
+            // which are fixed by looking at the key.
+            403 -> AiError.Refused(message)
             429 -> AiError.RateLimited
             in 500..599 -> AiError.Server(message.ifBlank { "HTTP $code" })
             else -> AiError.Unknown(message.ifBlank { "HTTP $code" })

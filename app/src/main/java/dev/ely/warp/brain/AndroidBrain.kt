@@ -35,7 +35,13 @@ object AndroidBrain {
     val SUMMARY = """
         Android knowledge you already have, without asking the user:
         call android_docs(topic) to read any of these in full, once, when you need it.
-        Topics: project · icons · compose · material · rules · gotchas
+        Topics: project · layout · design · icons · rules · gotchas
+
+        This toolchain has NO Compose and NO libraries — only the Android
+        framework. Screens are XML layouts in res/layout, styled with colours,
+        themes and drawables. Read android_docs("layout") before writing UI.
+        A number in Kotlin is a PIXEL, so 16 is about 6 dp: put sizes in XML.
+
         Never ask the user for icon sizes, folder names, manifest boilerplate or
         SDK rules. Look them up instead. Do not guess a version number or an API
         you are unsure of — say what you are unsure about.
@@ -45,9 +51,11 @@ object AndroidBrain {
     val topics: Map<String, String> by lazy {
         mapOf(
             "project" to PROJECT,
+            // Before icons, because it is the one that decides whether an app
+            // looks like anything — §5o.
+            "layout" to LAYOUT,
+            "design" to DESIGN,
             "icons" to ICONS,
-            "compose" to COMPOSE,
-            "material" to MATERIAL,
             "rules" to RULES,
             "gotchas" to GOTCHAS,
         )
@@ -66,11 +74,21 @@ object AndroidBrain {
         warp.json                  name, applicationId
         src/                       .kt files, all compiled together
         res/
+          layout/activity_main.xml   screens - see the `layout` topic
+          drawable/card.xml          shapes, corners, gradients
           values/strings.xml
+          values/colors.xml          the palette, named once
+          values/styles.xml          the theme
+          values-night/colors.xml    the same names, dark values
           values/ic_launcher_background.xml
           mipmap-anydpi-v26/ic_launcher.xml
           mipmap-{m,h,xh,xxh,xxxh}dpi/ic_launcher.png
         ```
+
+        **Everything under `res/` is compiled** — `aapt2` is given the whole
+        folder and `R` is generated from it. Layouts, drawables, themes and
+        colours all work. Use them: they are the difference between an app that
+        looks made and one assembled out of coloured rectangles in Kotlin.
 
         ## The manifest a build needs
 
@@ -120,75 +138,180 @@ object AndroidBrain {
         files by hand, and never ask the user for a size.
     """.trimIndent()
 
-    private val COMPOSE = """
-        # Compose — the traps that actually bite
+    private val LAYOUT = """
+        # Building a screen here — read this before writing any UI
 
-        ## State
+        ## What this toolchain has, and has not
 
-        - `remember { mutableStateOf(x) }` survives recomposition.
-        - `rememberSaveable` survives rotation and process death. Anything a
-          person typed belongs here; a scroll position usually does not.
-        - `by` unwraps it: `var n by remember { mutableStateOf(0) }` then read
-          `n`, not `n.value`.
-        - **Hoist state** to the lowest common caller. A composable that owns
-          state it did not create cannot be previewed or reused.
+        **You have: XML layouts, drawables, themes, styles, colours, and the
+        whole `android.widget` set.** `aapt2` compiles the entire `res/` folder
+        and generates `R`, so every one of these already works.
 
-        ## Recomposition
+        **You do not have: Compose, AppCompat, Material Components, or any
+        other library.** There is no dependency resolution on the phone — only
+        the Android framework and what you write. Compose will not compile. If a
+        task really needs it, say so plainly and build what you can without it.
 
-        - Reading a state value inside a lambda that runs later (`onClick`) does
-          not subscribe that composable to it. Reading it in the body does.
-        - An unstable parameter — a plain `List`, a lambda recreated every call
-          — makes a composable recompose every time its parent does. `List` is
-          not stable; `ImmutableList` or a `data class` holding one is.
-        - Never do work in a composable body. It runs an unknown number of
-          times. Use `LaunchedEffect(key)` for anything that should happen once.
+        ## The mistake that ruins apps built here
 
-        ## Lists
+        **A number in Kotlin is a PIXEL. A number in XML is what you write.**
 
-        - `LazyColumn`, and give `items(list, key = { it.id })` a key. Without
-          one, deleting a row animates the wrong item and state jumps between
-          rows.
-        - Nesting a scrollable in a scrollable of the same direction throws at
-          runtime, not at compile time.
+        ```kotlin
+        view.setPadding(16, 16, 16, 16)   // 16 PIXELS - about 6 dp. Tiny.
+        ```
+        ```xml
+        android:padding="16dp"            <!-- 16 dp. Correct everywhere. -->
+        ```
 
-        ## Side effects
+        A phone is around 440 dpi, so a raw pixel number comes out roughly **a
+        third of the size you meant**. This is the single most common reason an
+        app built here looks wrong: everything is small and cramped.
 
-        - `LaunchedEffect(Unit)` runs once per composition entry.
-        - `DisposableEffect` when something must be undone.
-        - `rememberCoroutineScope()` dies with the screen — anything that must
-          outlive it belongs on a longer-lived scope. Warp learned this when
-          leaving the app cancelled a running turn.
+        **So put the layout in XML.** When something must be sized in code,
+        convert:
+
+        ```kotlin
+        val Int.dp: Int get() =
+            (this * resources.displayMetrics.density).toInt()
+        view.setPadding(16.dp, 16.dp, 16.dp, 16.dp)
+        ```
+
+        `TextView.textSize = 22f` is the one exception — that setter is already
+        in **sp**, which is what text should use.
+
+        ## Views stack unless something arranges them
+
+        Adding views without a container puts them **on top of each other**.
+        Overlapping text is not a mystery, it is a missing layout.
+
+        - `LinearLayout` — a row or a column. `layout_weight` shares the space.
+        - `FrameLayout` — deliberately stacked, for overlays only.
+        - `ScrollView` — one child, and that child is usually a `LinearLayout`.
+        - `androidx.constraintlayout` is **not available** — nest simply instead.
+
+        ```xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:padding="24dp">
+            <TextView
+                android:id="@+id/title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="28sp" />
+        </LinearLayout>
+        ```
+        ```kotlin
+        setContentView(R.layout.activity_main)
+        findViewById<TextView>(R.id.title).text = "Ready"
+        ```
+
+        ## Nothing is rounded by default
+
+        A background colour is a rectangle. Rounded corners are a **drawable**,
+        and drawables are cheap — `res/drawable/card.xml`:
+
+        ```xml
+        <shape xmlns:android="http://schemas.android.com/apk/res/android"
+            android:shape="rectangle">
+            <solid android:color="@color/surface" />
+            <corners android:radius="16dp" />
+        </shape>
+        ```
+
+        Then `android:background="@drawable/card"`. A `<gradient>` works the same
+        way, and `<stroke>` gives an outline. An app made only of squares is an
+        app with no drawables in it.
+
+        ## A game or anything drawn
+
+        Subclass `View`, override `onDraw(canvas)`, and keep a `Paint` as a field
+        — allocating inside `onDraw` stutters. Sizes there are pixels too, so
+        scale by `resources.displayMetrics.density` once and work in your own
+        units. `invalidate()` asks for one more frame; for animation use
+        `postInvalidateOnAnimation()`.
+
+        Touch goes through `onTouchEvent`: `ACTION_DOWN` to start, `ACTION_MOVE`
+        to drag, `ACTION_UP` to drop. Return `true` from `ACTION_DOWN` or you
+        never see the rest.
     """.trimIndent()
 
-    private val MATERIAL = """
-        # Material 3
+    private val DESIGN = """
+        # Making it look like something, with what is here
 
-        ## Colour roles
+        Material Components is **not available** — no `MaterialButton`, no
+        `MaterialTheme`. What follows is how to get the same result from a theme,
+        a colour file and some drawables, which you do have.
 
-        Use roles, never raw colours: `primary` / `onPrimary`,
-        `primaryContainer` / `onPrimaryContainer`, `surface`, `surfaceVariant`,
-        `surfaceContainer{,High,Highest}`, `outline`, `outlineVariant`, `error`.
-        The `on-` colour is what is legible on top of its pair — picking your own
-        is how contrast breaks in the other theme.
+        ## Do not default to purple on black
 
-        ## Type
+        Purple-on-black is Material's sample palette and it is what every model
+        reaches for when it has not decided anything. It is the look of an app
+        nobody chose the colours for.
 
-        `displayLarge` → `headlineMedium` → `titleMedium` → `bodyLarge` →
-        `labelMedium`. Body text is `bodyLarge`; `labelMedium` is for chips and
-        captions.
+        **Decide a palette and write it down** in `res/values/colors.xml`, then
+        never write a hex code anywhere else:
 
-        ## Layout
+        ```xml
+        <resources>
+            <color name="bg">#0E1116</color>
+            <color name="surface">#171B22</color>
+            <color name="text">#ECEFF4</color>
+            <color name="muted">#9AA4B2</color>
+            <color name="accent">#4C8DFF</color>
+        </resources>
+        ```
 
-        - **48 dp** is the smallest touchable target. A 24 dp icon needs padding
-          around it, not a bigger icon.
-        - Spacing on a 4 dp grid. Pick a scale and keep to it.
-        - Dark themes tint their neutrals — pure grey reads as cheap.
+        Pick the accent from what the app *is* — a notes app is not a racing
+        game. Two neutrals, one accent, and one colour for danger is enough for
+        almost anything.
 
-        ## Dynamic colour
+        ## A theme, or you get the 2011 default
 
-        `dynamicDarkColorScheme(context)` on Android 12+, with a static fallback
-        below it. It is a nice default and a poor brand: an app that must look
-        like itself should not use it.
+        With no theme the app inherits the platform's oldest look, and that is
+        most of "the fonts are wrong". `res/values/styles.xml`:
+
+        ```xml
+        <resources>
+            <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
+                <item name="android:windowBackground">@color/bg</item>
+                <item name="android:textColor">@color/text</item>
+                <item name="android:colorAccent">@color/accent</item>
+            </style>
+        </resources>
+        ```
+
+        Then `android:theme="@style/AppTheme"` on `<application>`. Add
+        `res/values-night/colors.xml` with the same names and dark values and the
+        whole app follows the phone — no code, no check.
+
+        ## Sizes that read well on a phone
+
+        These are **dp in XML**, and pixels if you write them in Kotlin — see the
+        `layout` topic before using any of them in code.
+
+        - **48 dp** is the smallest thing a thumb reliably hits. A 24 dp icon
+          gets padding, not a bigger icon.
+        - Screen edges **16–24 dp**. Space between unrelated blocks **16–24 dp**,
+          inside a block **8 dp**.
+        - Body text **16 sp**, titles **20–28 sp**, captions **12–14 sp**.
+          Never below 12 sp.
+        - Corner radius **12–16 dp** on cards, **8 dp** on small controls. Pick
+          one and use it everywhere.
+
+        ## Cheap things that make it look finished
+
+        - A pressed state: `res/drawable/button.xml` as a `<selector>` with a
+          different `<solid>` for `android:state_pressed="true"`. Without it,
+          nothing on screen answers a tap.
+        - `android:elevation="2dp"` on a card, once. Shadows everywhere is worse
+          than none.
+        - Line spacing: `android:lineSpacingMultiplier="1.2"` on anything longer
+          than a line.
+        - Alignment beats decoration. Things lining up on one edge is most of
+          what "designed" looks like.
     """.trimIndent()
 
     private val RULES = """

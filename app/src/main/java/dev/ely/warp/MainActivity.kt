@@ -554,6 +554,7 @@ private fun WarpApp() {
                     modelLabel = choice.label,
                     onPickModel = { showPicker = true },
                     effort = choice.effort,
+                    modelSees = choice.canSee,
                     permission = permission,
                     questions = questions,
                 )

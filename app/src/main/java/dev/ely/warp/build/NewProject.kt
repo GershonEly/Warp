@@ -123,10 +123,17 @@ object NewProject {
 
         dir.mkdirs()
         File(dir, "res/values").mkdirs()
+        File(dir, "res/layout").mkdirs()
+        File(dir, "res/drawable").mkdirs()
         File(dir, "src").mkdirs()
 
         File(dir, "AndroidManifest.xml").writeText(manifest(id))
         File(dir, "res/values/strings.xml").writeText(strings(cleanName))
+        // The pattern to copy, not just a screen that runs — §5o.
+        File(dir, "res/layout/activity_main.xml").writeText(activityLayout())
+        File(dir, "res/values/colors.xml").writeText(colours())
+        File(dir, "res/values/styles.xml").writeText(styles())
+        File(dir, "res/drawable/card.xml").writeText(cardDrawable())
         File(dir, "src/MainActivity.kt").writeText(mainActivity(id))
         File(dir, "src/CrashReporter.kt").writeText(crashReporter(id))
         // The app's own door — §5m. Written at creation with its key, because a
@@ -217,6 +224,7 @@ object NewProject {
             <application
                 android:name=".CrashReporter"
                 android:label="@string/app_name"
+                android:theme="@style/AppTheme"
                 android:icon="@mipmap/ic_launcher"
                 android:roundIcon="@mipmap/ic_launcher_round"
                 android:allowBackup="false">
@@ -413,25 +421,94 @@ object NewProject {
         package $id
 
         import android.app.Activity
-        import android.graphics.Color
         import android.os.Bundle
-        import android.view.Gravity
         import android.widget.TextView
 
         class MainActivity : Activity() {
             override fun onCreate(savedInstanceState: Bundle?) {
                 super.onCreate(savedInstanceState)
 
-                val label = TextView(this).apply {
-                    text = getString(R.string.app_name)
-                    textSize = 22f
-                    gravity = Gravity.CENTER
-                    setTextColor(Color.WHITE)
-                    setBackgroundColor(Color.parseColor("#101014"))
-                }
-                setContentView(label)
+                // The screen is res/layout/activity_main.xml. Sizes belong
+                // there, in dp - a number written in Kotlin is a pixel, which
+                // on this phone is about a third of what you meant.
+                setContentView(R.layout.activity_main)
+
+                findViewById<TextView>(R.id.title).text = getString(R.string.app_name)
             }
         }
+    """.trimIndent()
+
+    /**
+     * The first screen, as a layout rather than as code — §5o.
+     *
+     * This file exists to be copied. A real build watched on 2026-09-13 wrote
+     * **115 edits into one Kotlin file and not one thing under `res/`**, because
+     * the starter showed a programmatic `TextView` and that is what a model
+     * imitates. Everything that went wrong followed: sizes in pixels came out a
+     * third too small, views added without a container stacked on top of each
+     * other, and nothing had a rounded corner because nothing had a drawable.
+     *
+     * So the starting point demonstrates the whole pattern in miniature: a
+     * layout with dp, a named palette, a theme, and one drawable.
+     */
+    private fun activityLayout() = """
+        <?xml version="1.0" encoding="utf-8"?>
+        <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="24dp">
+
+            <TextView
+                android:id="@+id/title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/card"
+                android:paddingHorizontal="24dp"
+                android:paddingVertical="16dp"
+                android:textColor="@color/text"
+                android:textSize="24sp" />
+
+        </LinearLayout>
+    """.trimIndent()
+
+    /** The palette, named once so no hex code is ever written twice — §5o. */
+    private fun colours() = """
+        <?xml version="1.0" encoding="utf-8"?>
+        <resources>
+            <color name="bg">#0E1116</color>
+            <color name="surface">#171B22</color>
+            <color name="text">#ECEFF4</color>
+            <color name="muted">#9AA4B2</color>
+            <color name="accent">#4C8DFF</color>
+        </resources>
+    """.trimIndent()
+
+    /**
+     * A theme, because without one an app inherits the platform's oldest look.
+     *
+     * That is most of what "the fonts look wrong" turned out to mean.
+     */
+    private fun styles() = """
+        <?xml version="1.0" encoding="utf-8"?>
+        <resources>
+            <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
+                <item name="android:windowBackground">@color/bg</item>
+                <item name="android:textColor">@color/text</item>
+                <item name="android:colorAccent">@color/accent</item>
+            </style>
+        </resources>
+    """.trimIndent()
+
+    /** One drawable, so the first rounded corner is already there to copy. */
+    private fun cardDrawable() = """
+        <?xml version="1.0" encoding="utf-8"?>
+        <shape xmlns:android="http://schemas.android.com/apk/res/android"
+            android:shape="rectangle">
+            <solid android:color="@color/surface" />
+            <corners android:radius="16dp" />
+        </shape>
     """.trimIndent()
 
     /**

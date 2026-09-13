@@ -4,6 +4,7 @@ import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -136,6 +137,14 @@ class ChatEngine(
      * more file, and then the turn stops: what you just said is answered next,
      * rather than after everything it was already planning to do.
      */
+    /**
+     * Turns that have failed back to back in this goal — §5o.
+     *
+     * Reset by any turn that works, so a goal that fails once an hour runs for
+     * ever and a goal failing every two seconds stops.
+     */
+    private var consecutiveFailures = 0
+
     @Volatile
     private var steered = false
 
@@ -421,6 +430,8 @@ class ChatEngine(
         ) return
         this.mode = mode
         steered = false
+        // A new turn you asked for is a fresh start, whatever the last one did.
+        consecutiveFailures = 0
         // Said once, here, because this is the only place that knows a turn is
         // beginning. A refusal you gave in the last turn does not follow you
         // into this one: you have just said something new.
@@ -647,8 +658,45 @@ class ChatEngine(
             // third ended on a permission he refused. The budget exists to stop
             // a model looping unattended; a dropped connection is not looping,
             // and neither is being told no.
-            val failed = sheet?.find(last)?.error != null
+            val failure = sheet?.find(last)?.error
+            val failed = failure != null
             val spent = if (failed) current.turn else current.turn + 1
+
+            // Free of the budget, but not free of a brake — §5o.
+            //
+            // The rule above is right and was nearly a disaster on its own. A
+            // real run hit "this request would exceed your available credits"
+            // and retried **forty times in two bursts, one every half second**,
+            // because a failure costs no turn and nothing else slowed it down.
+            // A credit limit is not a blip: it stays true until he adds credits,
+            // so hammering it could never have worked and every attempt was
+            // another row in his transcript.
+            if (failed) {
+                consecutiveFailures++
+                if (consecutiveFailures >= MAX_FAILURES_IN_A_ROW) {
+                    update(replyId) {
+                        it.copy(
+                            streaming = false,
+                            // What the provider said, not a guess at what it
+                            // meant. "Check your key" for a credit limit sends
+                            // somebody to fix something that is not broken.
+                            error = AiError.Unknown(
+                                "Stopped after $consecutiveFailures failures in a row. " +
+                                    "The last one was: ${failure?.message}"
+                            ),
+                        )
+                    }
+                    _goal.value = current.copy(paused = true)
+                    persistNow(replyId)
+                    return
+                }
+                // Longer each time. The first retry is for a blip; by the third
+                // the answer is almost certainly not going to change on its own,
+                // and a person is better placed to decide than a loop is.
+                delay(RETRY_BACKOFF_MS * consecutiveFailures)
+            } else {
+                consecutiveFailures = 0
+            }
 
             if (spent > current.limit) {
                 // Paused, not ended. The goal survives with a Continue button,
@@ -703,6 +751,9 @@ class ChatEngine(
         var total = 0
         var repeats = 0
         var lastSignature: String? = null
+
+        /** Every round's calls, so a second look at the same thing is visible. */
+        val lookedAt = mutableSetOf<String>()
 
         while (true) {
             val ranTools = streamInto(replyId)
@@ -777,8 +828,8 @@ class ChatEngine(
                     "Stopped: it called the same tool $MAX_REPEATS times in a row " +
                         "with the same arguments, which is a loop rather than progress."
                 round >= MAX_TOOL_ROUNDS ->
-                    "Stopped after $MAX_TOOL_ROUNDS rounds of looking without changing " +
-                        "anything. Say “continue” to let it keep going."
+                    "Stopped after $MAX_TOOL_ROUNDS rounds spent looking at things it had " +
+                        "already looked at. Say “continue” to let it keep going."
                 total >= MAX_ROUNDS_EVER ->
                     "Stopped after $MAX_ROUNDS_EVER rounds in one turn. " +
                         "Say “continue” to let it keep going."
@@ -804,7 +855,20 @@ class ChatEngine(
                 return replyId
             }
 
-            if (!onlyAsked && !worked) round++
+            // Looking somewhere new is research. Looking somewhere twice is
+            // wandering — §5o.
+            //
+            // The old rule spent the budget on every round that did not change a
+            // file, so eight honest reads ended a turn. It fired three times in
+            // a real build where the model was reading and searching its way
+            // into a game it had not written yet, and that reading *was* the
+            // work.
+            //
+            // [repeats] above catches the same call twice in a row; this catches
+            // the same call again later in the turn, which is the other half of
+            // going in circles.
+            val seenBefore = signature.isNotEmpty() && !lookedAt.add(signature)
+            if (!onlyAsked && !worked && seenBefore) round++
             replyId = UUID.randomUUID().toString()
             activeReplyId = replyId
             sheet?.add(
@@ -914,7 +978,16 @@ class ChatEngine(
                     )
                 }
 
-                is AiEvent.Completed -> update(replyId) { it.copy(streaming = false) }
+                // The bill arrives with the last chunk — §5p. Added rather than
+                // replaced, because one reply can span several requests: a turn
+                // that calls three tools pays for four round trips, and showing
+                // only the last one would under-report every interesting answer.
+                is AiEvent.Completed -> update(replyId) {
+                    it.copy(
+                        streaming = false,
+                        usage = event.usage?.let { u -> it.usage?.plus(u) ?: u } ?: it.usage,
+                    )
+                }
 
                 is AiEvent.Failed -> update(replyId) {
                     it.copy(streaming = false, error = event.error)
@@ -1205,13 +1278,16 @@ class ChatEngine(
         private const val PERSIST_EVERY_MS = 1_000L
 
         /**
-         * How many times a turn may go and **look** before it must speak.
+         * How many times a turn may look at something it has **already seen**.
          *
-         * Looking, not working. A round that wrote a file or ran a build does
-         * not spend this, because the budget exists to stop a model wandering
-         * and a model that is changing things is not wandering. Counting every
-         * round instead cut a real 108-message build into six pieces — see
-         * §5g.
+         * Narrowed twice, each time by a real session. First it counted every
+         * round, and cut a 108-message build into six pieces — §5g. Then it
+         * counted every round that changed no file, and stopped three turns of a
+         * real game build where reading and searching *was* the work — §5o.
+         *
+         * What is left is the thing it was always trying to catch: going back to
+         * the same file, the same search, the same page. Reading eight different
+         * files is a morning's work; reading one file eight times is a circle.
          */
         private const val MAX_TOOL_ROUNDS = 8
 
@@ -1286,6 +1362,25 @@ class ChatEngine(
          */
         private const val MAX_STEERS = 12
 
+        /**
+         * How many turns may fail in a row before a goal stops and says so.
+         *
+         * Three, because the first failure is a blip worth retrying and the
+         * third is a condition. Measured before this existed: forty failures in
+         * two bursts against a credit limit that was never going to clear on its
+         * own — see §5o.
+         */
+        private const val MAX_FAILURES_IN_A_ROW = 3
+
+        /**
+         * The wait after a failed turn, multiplied by how many have failed.
+         *
+         * Two seconds, then four, then it stops. The old behaviour was a retry
+         * every half second, which cannot help a rate limit and cannot help a
+         * spent balance — the two things most likely to be failing.
+         */
+        private const val RETRY_BACKOFF_MS = 2_000L
+
         /** What a resumed goal says, so the model knows nothing else changed. */
         const val CONTINUE_MESSAGE = "Continue with the goal. Do not start again."
 
@@ -1318,6 +1413,19 @@ class ChatEngine(
             after you have stated it. Offline versions of those features — a local
             two-player mode, an on-device high-score table, a bot opponent — are
             usually what the person actually wants, so offer one and carry on.
+
+            Write whole files. When you are building something new, write the
+            file you mean to write in one go rather than growing it through a
+            long run of small edits — a screen assembled from twenty one-line
+            edits costs twenty round trips, and it is how a file ends up
+            inconsistent with itself. Save edit_file for fixing something inside
+            a file that is already right.
+
+            Say what is missing. If a request needs something this toolchain
+            does not have — a library, Compose, a backend — name that one thing
+            plainly, once, and build everything around it. Working around a hole
+            in silence is what makes an assistant look like it does not know
+            what it is doing.
 
             ${dev.ely.warp.brain.AndroidBrain.SUMMARY}
         """.trimIndent()

@@ -73,6 +73,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -275,6 +276,16 @@ fun ChatScreen(
     modelLabel: String,
     onPickModel: () -> Unit,
     effort: Effort?,
+    /**
+     * Whether the chosen model can be shown a picture — §5o, §5h.
+     *
+     * Null means the provider never said, and null is not "no": an image is
+     * refused only on a definite false. §5h asks for the refusal to happen at
+     * the moment of attaching, with the reason — a real session sent three
+     * images to a model that could not see, and each one came back as
+     * "no endpoints found that support image input" after costing a turn.
+     */
+    modelSees: Boolean? = null,
     /** Where a tool goes to ask you. Null leaves the cards read-only. */
     permission: PermissionDesk? = null,
     /** Where `/grill-me` puts its questions. Null renders them as plain cards. */
@@ -484,7 +495,21 @@ fun ChatScreen(
                     }
                 },
                 attachments = pending,
-                onAttach = { pending = pending + it },
+                // Refused here, not by the provider — §5h's promise, kept.
+                //
+                // Only on a definite no. A model whose provider never said
+                // anything is still allowed, because refusing on a guess would
+                // block a model that can see perfectly well.
+                onAttach = { attachment ->
+                    if (modelSees == false &&
+                        attachment.kind == dev.ely.warp.ai.Attachment.Kind.IMAGE
+                    ) {
+                        ruleFeedback = "$modelLabel cannot see pictures. " +
+                            "Pick a model that can, or describe it in words."
+                    } else {
+                        pending = pending + attachment
+                    }
+                },
                 onRemoveAttachment = { gone -> pending = pending.filterNot { it.id == gone.id } },
                 onStop = { engine.stop() },
                 voice = voice,
@@ -1152,8 +1177,12 @@ private fun AssistantMessage(
             // happening rather than leaving an empty space. It also stays after
             // the answer arrives whenever there is reasoning to show, since that
             // is when you actually want to look at it.
-            if (working || message.thinking.isNotBlank()) {
-                ThinkingLine(thinking = message.thinking, working = working)
+            if (working || message.thinking.isNotBlank() || message.usage != null) {
+                ThinkingLine(
+                    thinking = message.thinking,
+                    working = working,
+                    usage = message.usage,
+                )
             }
 
             // Markdown, not plain text. Only the assistant's side: what you
@@ -1243,9 +1272,27 @@ private fun AssistantMessage(
 private fun ThinkingLine(
     thinking: String = "",
     working: Boolean = true,
+    /** What the reply cost, once it has landed — §5p. Null until then. */
+    usage: dev.ely.warp.ai.Usage? = null,
 ) {
     var open by remember { mutableStateOf(false) }
     val has = thinking.isNotBlank()
+
+    // How long it has been away — §5p.
+    //
+    // Four seconds of quiet and ninety seconds of quiet looked identical, and
+    // they are not the same situation: one is working and the other is usually a
+    // request that has already gone wrong. Counted here rather than passed in,
+    // because the only thing it measures is how long this line has been on
+    // screen — which is exactly the question being asked.
+    var seconds by remember { mutableIntStateOf(0) }
+    LaunchedEffect(working) {
+        seconds = 0
+        while (working) {
+            kotlinx.coroutines.delay(1_000)
+            seconds++
+        }
+    }
 
     Column {
         Row(
@@ -1259,6 +1306,45 @@ private fun ThinkingLine(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            // Only once there is something to say. A timer that appears reading
+            // 0:00 on every reply is a counter for its own sake; the number
+            // starts mattering at the point you begin to wonder.
+            if (working && seconds >= 3) {
+                Spacer(Modifier.size(6.dp))
+                Text(
+                    if (seconds < 60) "${seconds}s"
+                    else "${seconds / 60}m ${(seconds % 60).toString().padStart(2, '0')}s",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            // What it cost, once it is known — §5p.
+            //
+            // Only after the reply lands, because that is when the provider
+            // says. A number ticking during the stream would be an estimate
+            // wearing the clothes of a fact, and this app does not do that.
+            //
+            // Tokens when there is no price: most providers report usage and
+            // not money, and "12.4k tokens" is still the difference between a
+            // cheap answer and an expensive one.
+            usage?.takeIf { !working && it.totalTokens > 0 }?.let { spent ->
+                Spacer(Modifier.size(6.dp))
+                Text(
+                    when {
+                        // Sub-cent costs are most of them, and rounding one to
+                        // $0.00 would say "free" about something that was not.
+                        spent.costUsd != null && spent.costUsd >= 0.01 ->
+                            "$" + "%.2f".format(spent.costUsd)
+                        spent.costUsd != null -> "$" + "%.4f".format(spent.costUsd)
+                        spent.totalTokens >= 1000 ->
+                            "%.1fk tokens".format(spent.totalTokens / 1000f)
+                        else -> "${spent.totalTokens} tokens"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             if (has) {
                 Spacer(Modifier.size(2.dp))
                 Icon(

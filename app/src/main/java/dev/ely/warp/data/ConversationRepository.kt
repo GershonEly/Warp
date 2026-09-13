@@ -334,11 +334,18 @@ class ConversationRepository(context: Context) :
         AiError.BadKey -> "BAD_KEY"
         AiError.RateLimited -> "RATE_LIMITED"
         AiError.Offline -> "OFFLINE"
+        is AiError.OutOfCredits -> "OUT_OF_CREDITS"
+        is AiError.Refused -> "REFUSED"
         is AiError.Server -> "SERVER"
         is AiError.Unknown -> "UNKNOWN"
     }
 
     private fun AiError.storageDetail(): String? = when (this) {
+        // The provider's own words, kept — §5o. Reading a transcript months
+        // later and finding "no credits left" with nothing after it would lose
+        // the one part that said which limit was hit.
+        is AiError.OutOfCredits -> detail
+        is AiError.Refused -> detail
         is AiError.Server -> detail
         is AiError.Unknown -> detail
         else -> null
@@ -358,6 +365,8 @@ class ConversationRepository(context: Context) :
         "BAD_KEY" -> AiError.BadKey
         "RATE_LIMITED" -> AiError.RateLimited
         "OFFLINE" -> AiError.Offline
+        "OUT_OF_CREDITS" -> AiError.OutOfCredits(detail.orEmpty())
+        "REFUSED" -> AiError.Refused(detail.orEmpty())
         "SERVER" -> AiError.Server(detail.orEmpty())
         else -> AiError.Unknown(detail ?: "This reply did not finish.")
     }
