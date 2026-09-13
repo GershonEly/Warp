@@ -30,7 +30,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
+import dev.ely.warp.ui.theme.WarpSuccess
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -195,13 +197,37 @@ private fun FileList(
     onBack: () -> Unit,
     onOpen: (File) -> Unit,
 ) {
-    val files = remember(folder, folder.lastModified()) {
+    val all = remember(folder, folder.lastModified()) {
         folder.walkTopDown()
             .filter { it.isFile }
             // Output, not source. Listing it invites tapping 700 KB of zip.
             .filter { it.name != "app.apk" && it.name != "warp.json" }
+            // git's own bookkeeping is not the project — §5i item 9.
+            .filter { !it.invariantPath(folder).startsWith(".git/") }
             .sortedBy { it.invariantPath(folder) }
             .toList()
+    }
+
+    // What the model touched, at a glance — §5i item 9.
+    //
+    // One call for the whole list rather than one per row: this walks the tree,
+    // and doing it per file would walk it once for every file. Empty when the
+    // project is not in git, which is what makes the dots simply not appear
+    // rather than appear wrong.
+    val status = remember(folder, folder.lastModified()) {
+        runCatching {
+            if (dev.ely.warp.git.Repo.isRepo(folder)) {
+                dev.ely.warp.git.Repo.status(folder)
+            } else {
+                emptyMap()
+            }
+        }.getOrElse { emptyMap() }
+    }
+
+    var query by remember(folder) { mutableStateOf("") }
+    val files = remember(all, query) {
+        val q = query.trim().lowercase()
+        if (q.isEmpty()) all else all.filter { q in it.invariantPath(folder).lowercase() }
     }
 
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
@@ -214,23 +240,58 @@ private fun FileList(
         Column {
             Text(app.name, style = MaterialTheme.typography.titleMedium)
             Text(
-                "${files.size} files",
+                // Says how many have changed, because that is the number you
+                // are looking for after a turn — "18 files" answers nothing.
+                buildString {
+                    append("${all.size} files")
+                    val touched = status.size
+                    if (touched > 0) append(" · $touched changed")
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
+
+    // Same rule the app list uses: a search box over a handful of rows is
+    // furniture pretending to be a feature.
+    if (all.size >= 8) {
+        Spacer(Modifier.size(WarpSpace.small))
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            placeholder = { Text("Find a file") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
     Spacer(Modifier.size(WarpSpace.small))
+
+    if (files.isEmpty()) {
+        Text(
+            "No file here matches “${query.trim()}”.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = WarpSpace.medium),
+        )
+        return
+    }
 
     LazyColumn {
         items(items = files, key = { f: File -> f.absolutePath }) { file ->
-            FileRow(file, folder) { onOpen(file) }
+            FileRow(file, folder, status[file.invariantPath(folder)]) { onOpen(file) }
         }
     }
 }
 
 @Composable
-private fun FileRow(file: File, project: File, onClick: () -> Unit) {
+private fun FileRow(
+    file: File,
+    project: File,
+    /** Changed since the last save point, or new, or null for untouched. */
+    state: dev.ely.warp.git.Repo.State? = null,
+    onClick: () -> Unit,
+) {
     val folder = file.invariantPath(project).substringBeforeLast('/', "")
 
     Row(
@@ -240,6 +301,33 @@ private fun FileRow(file: File, project: File, onClick: () -> Unit) {
             .clickable(onClick = onClick)
             .padding(vertical = 10.dp),
     ) {
+        // A dot before the icon, or the space where one would be — §5i item 9.
+        //
+        // The space is kept even when there is nothing to say, so the file names
+        // stay on one line down the list. Names that shift sideways depending on
+        // whether a file changed is a list that is harder to read than one with
+        // no dots at all.
+        Box(modifier = Modifier.size(8.dp)) {
+            if (state != null) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(
+                            when (state) {
+                                // New is the louder of the two on purpose: a
+                                // file that did not exist before is the bigger
+                                // surprise when you are scanning for what
+                                // happened.
+                                dev.ely.warp.git.Repo.State.NEW -> WarpSuccess
+                                else -> MaterialTheme.colorScheme.primary
+                            }
+                        )
+                )
+            }
+        }
+        Spacer(Modifier.size(WarpSpace.small))
+
         Icon(
             if (folder.isEmpty()) Icons.Outlined.Description else Icons.Outlined.FolderOpen,
             contentDescription = null,

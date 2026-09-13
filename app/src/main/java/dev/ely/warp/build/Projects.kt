@@ -72,7 +72,13 @@ object Projects {
                 // Source only. The APK and the metadata are outputs, and a
                 // count that includes them disagrees with the file list it
                 // labels — the row said 6 files and tapping it showed 5.
+                //
+                // `.git` is the same fault at a larger scale, and it arrived
+                // with §5n: a project of eight files read "76 files" because git
+                // keeps its own objects inside the folder. Seen in a screenshot
+                // within a minute of the feature existing.
                 val files = dir.walkTopDown()
+                    .onEnter { it.name != ".git" }
                     .filter { it.isFile && it.name != "app.apk" && it.name != "warp.json" }
                     .count()
                 val apk = NewProject.lastApk(dir)

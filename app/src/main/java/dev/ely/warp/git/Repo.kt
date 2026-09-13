@@ -114,6 +114,30 @@ object Repo {
         Entry(commit.name.take(8), commit.fullMessage, commit.commitTime * 1000L)
     }
 
+    /** What has happened to a file since the last save point — §5i item 9. */
+    enum class State { UNCHANGED, CHANGED, NEW }
+
+    /**
+     * Every file that is not as it was at the last save point.
+     *
+     * Returned as a map rather than asked per file, because the Files screen
+     * draws a whole list at once and one status call is one walk of the tree
+     * instead of one per row.
+     *
+     * Paths are relative and use forward slashes, which is what git stores and
+     * what the screen already builds for its own rows.
+     */
+    fun status(project: File): Map<String, State> = open(project) { git ->
+        val status = git.status().call()
+        buildMap {
+            // Untracked first so a modified-and-untracked file cannot end up
+            // labelled merely changed; a file git has never seen is new, and
+            // that is the more important of the two facts.
+            (status.modified + status.changed).forEach { put(it, State.CHANGED) }
+            (status.untracked + status.added).forEach { put(it, State.NEW) }
+        }
+    }
+
     fun log(project: File): List<Entry> = open(project) { git ->
         git.log().setMaxCount(LOG_LIMIT).call().map {
             Entry(it.name.take(8), it.fullMessage.trim(), it.commitTime * 1000L)
