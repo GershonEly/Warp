@@ -60,13 +60,13 @@ import dev.ely.warp.tools.ToolRunner
 import dev.ely.warp.data.DrawerState
 import dev.ely.warp.diag.DeviceProbe
 import dev.ely.warp.ui.AppsScreen
+import dev.ely.warp.ui.AssetsScreen
 import dev.ely.warp.ui.BuildScreen
 import dev.ely.warp.ui.EditorScreen
 import dev.ely.warp.ui.FilesScreen
 import dev.ely.warp.ui.ChatScreen
 import dev.ely.warp.ui.ambientWash
 import dev.ely.warp.ui.DemoChip
-import dev.ely.warp.ui.ComingSoonScreen
 import dev.ely.warp.ui.Ltr
 import dev.ely.warp.ui.ModelPickerDialog
 import dev.ely.warp.ui.SettingsScreen
@@ -85,6 +85,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // So the price on an icon permission card is the real one. The tool that
+        // draws it describes itself from its arguments alone — no Context gets
+        // that far — and the card is where the money is agreed to.
+        dev.ely.warp.data.ImageModels.warm(this)
         setContent {
             // Read here rather than inside the theme, so changing it in
             // Settings repaints the screen underneath the switch.
@@ -591,10 +595,18 @@ private fun WarpApp() {
                     onOpen = { editing = it },
                     initial = filesFor,
                 )
-                WarpDestination.ASSETS -> ComingSoonScreen(
-                    "Assets",
-                    "Icon and image generation, resized for every density " +
-                        "Android needs.",
+                WarpDestination.ASSETS -> AssetsScreen(
+                    // Fresh each time, like Files, and for the same reason: the
+                    // list is derived from disk and a cached copy is one more
+                    // thing that can disagree with it.
+                    apps = remember(destination, filesFor) {
+                        dev.ely.warp.build.Projects.all(context)
+                    },
+                    folderFor = {
+                        dev.ely.warp.build.Projects.forConversation(context, it.conversationId)
+                    },
+                    onOpenSettings = { destination = WarpDestination.SETTINGS },
+                    initial = filesFor,
                 )
             }
         }

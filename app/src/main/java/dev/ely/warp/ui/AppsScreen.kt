@@ -266,10 +266,23 @@ private fun AppSheet(
                 // leaving you wondering where Install went.
                 Button(
                     onClick = {
-                        note = dev.ely.warp.build.NewProject
-                            .lastApk(Projects.forConversation(context, app.conversationId))
-                            ?.let { Installer.open(context, it) }
-                            ?: "nothing built yet — ask the chat to build it"
+                        val dir = Projects.forConversation(context, app.conversationId)
+                        val apk = dev.ely.warp.build.NewProject.lastApk(dir)
+                        // Spelled out rather than chained. The chain this
+                        // replaces ended `?: "nothing built yet"`, and
+                        // `Installer.open` returns **null on success** — so a
+                        // perfectly good install reported that nothing had been
+                        // built. Three outcomes, three branches, no elvis
+                        // operator quietly treating success as absence.
+                        //
+                        // The stale check is first because it is the only one
+                        // that is silent otherwise: Android installs an old APK
+                        // happily and hands back the previous app.
+                        note = when {
+                            apk == null -> "nothing built yet — ask the chat to build it"
+                            else -> dev.ely.warp.build.NewProject.staleReason(dir)
+                                ?: Installer.open(context, apk)
+                        }
                     },
                     enabled = app.built,
                 ) { Text(if (installed) "Reinstall" else "Install") }

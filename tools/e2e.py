@@ -211,7 +211,7 @@ def watch_build(seconds=140):
 WANTED = {a.lower() for a in sys.argv[1:]}
 GROUP_NAMES = ["surface", "chat", "tools", "permissions", "commands", "grill",
                "goal", "project", "build", "room", "web", "brain", "attach", "budget",
-               "subagent", "settings", "diff", "git", "tasks"]
+               "subagent", "settings", "diff", "git", "icons", "tasks"]
 
 
 def want(group):
@@ -1393,6 +1393,87 @@ if want("git"):
     s, r = call("POST", "/tool", {"name": "git_push", "args": {}}, timeout=60)
     check("pushing with no token says what is missing",
           "token" in (r.get("failed") or "").lower(), json.dumps(r)[:130])
+
+
+if want("icons"):
+    # Icon Studio — §8.
+    #
+    # **Nothing here calls `make_icon`.** A run of this suite would draw a real
+    # picture on a real key, and a test that costs four cents every time is a
+    # test that gets commented out within a week. The probe does everything the
+    # tool does except the one paid step: a project is made, artwork is drawn
+    # locally, and the whole write path runs for free.
+    print("\n20. ICONS")
+    s, r = call("POST", "/icon/probe", timeout=60)
+    check("the icon path runs end to end", s == 200 and r.get("ok") is True,
+          json.dumps(r)[:160])
+
+    # Five densities, three files each. Counted off the filesystem by the probe
+    # rather than taken from what the writer claimed — those are two different
+    # facts, and this project has been caught three times believing the second.
+    check("every density gets its three files", r.get("pngs") == 15,
+          f"got {r.get('pngs')}")
+    check("the adaptive icon is written for Android 8 and up",
+          r.get("adaptive") is True)
+    check("and the manifest actually points at it", r.get("declared") is True,
+          "an icon nothing refers to installs blank")
+
+    check("the app's colour is taken from its own artwork",
+          r.get("colourChanged") is True,
+          "it was still the hash of the application id")
+    check("and the new colour is saved where the shelf reads it",
+          r.get("colourSaved") is True)
+
+    check("both preview shapes exist for the Assets screen",
+          r.get("preview") is True and r.get("previewRound") is True,
+          f"square={r.get('preview')} round={r.get('previewRound')}")
+
+    # 48dp at xxxhdpi. Checked by decoding the file rather than by seeing it in
+    # a screenshot: the tile falls back to a coloured letter that looks almost
+    # exactly like the placeholder icon it replaces, so a failed decode is
+    # invisible to the eye and only a number can tell them apart.
+    check("and the screen can actually decode them", r.get("previewPx") == 192,
+          f"decoded to {r.get('previewPx')}px")
+
+    # The permission model, not the drawing. WRITES asks once and offers Always,
+    # which is right for somebody iterating on an icon; RUNS would ask nine times
+    # and teach them to stop reading the card.
+    check("drawing an icon asks before it spends", r.get("tool") == "WRITES",
+          f"risk is {r.get('tool')}")
+
+    # The claim the Settings screen makes out loud. Best first is the makers'
+    # own ranking, and price agreeing with it top to bottom is what lets the
+    # screen say so without inventing a measurement.
+    check("the model list is ordered best first, price agreeing",
+          r.get("orderedByPrice") is True)
+    check("there is a real choice to make", (r.get("options") or 0) >= 4,
+          f"got {r.get('options')} options")
+
+    check("the default is the cheap one that is made for this",
+          r.get("modelName") == "Nano Banana", r.get("modelName"))
+    check("and its price is on the card, not left to be discovered",
+          r.get("price") == "4¢", r.get("price"))
+
+    # The bug the first real icon found — and it was never about icons.
+    #
+    # A drawn icon lands in res/ and the installed app was compiled before it
+    # existed, so reinstalling puts the same old icon back and reads as the
+    # drawing having failed. Every edit ever made had the same silence; an icon
+    # is just the only change you can see from the home screen.
+    s, r = call("POST", "/install/stale", timeout=60)
+    check("the stale check runs", s == 200 and r.get("ok") is True, json.dumps(r)[:140])
+    check("installing an app older than its code is refused",
+          r.get("staleIsCaught") is True)
+    check("and the refusal names the file that is newer",
+          r.get("namesTheFile") is True, r.get("reason"))
+    # A guard that always refuses would pass a one-sided test and make
+    # installing impossible, so the other direction is checked too.
+    check("while a current build installs without complaint",
+          r.get("freshIsFine") is True)
+    # warp.json is written after the APK by recordBuild, so it is newer than
+    # every build that ever happens. Not excluding it would block everything.
+    check("and the file written after every build is not mistaken for an edit",
+          r.get("metaIgnored") is True)
 
 
 if want("tasks"):

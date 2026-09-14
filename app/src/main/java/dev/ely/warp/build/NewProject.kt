@@ -91,6 +91,24 @@ object NewProject {
     }
 
     /**
+     * The app's colour, now that it has a real icon — §8.
+     *
+     * [seedColour] is a hash, and §9h is blunt about what that is worth:
+     * *decoration pretending to be meaning*. A generated icon replaces it with
+     * a colour that is actually the app's, taken from its own artwork, and the
+     * shelf and the drawer pick it up without knowing anything changed.
+     *
+     * Rewrites one field and keeps the rest, like [recordBuild] — the file also
+     * holds the data key, and losing that would orphan everything the app has
+     * saved.
+     */
+    fun recordColour(dir: File, colour: Int) {
+        val json = runCatching { JSONObject(File(dir, META_FILE).readText()) }
+            .getOrDefault(JSONObject())
+        File(dir, META_FILE).writeText(json.put("colour", colour).toString())
+    }
+
+    /**
      * The APK from the last successful build, or null if there has not been one.
      *
      * Null when the file has since been deleted, too — a remembered path to
@@ -101,6 +119,51 @@ object NewProject {
             ?: return null
         val path = json.optString("lastApk").takeIf { it.isNotBlank() } ?: return null
         return File(path).takeIf { it.isFile }
+    }
+
+    /**
+     * A source file newer than the built APK, or null when the APK is current.
+     *
+     * **This is the check that was missing**, and an icon is what made it
+     * visible. A drawn icon lands in `res/` and changes nothing you can see
+     * until the app is compiled again — so installing the old APK, which is the
+     * obvious thing to try, gives back the old icon and looks exactly like the
+     * drawing having failed. It cost an afternoon and about four cents to work
+     * that out, and the same silence applies to every edit ever made: change a
+     * file, reinstall, get the previous app, with nothing anywhere saying so.
+     *
+     * Three exclusions, each for its own reason:
+     * - `app.apk` is the output, and is trivially newer than itself.
+     * - `warp.json` is written **after** the APK by [recordBuild], so it is
+     *   newer than the build every single time.
+     * - `.git` is git's own bookkeeping, which changes when you commit rather
+     *   than when you edit — a commit would otherwise read as unbuilt work.
+     *
+     * @return the newest offending file, so the message can name it. Null when
+     *   there is no APK at all: "nothing built yet" is a different answer with
+     *   a different fix, and the caller already says it.
+     */
+    fun newerThanApk(dir: File): File? {
+        val apk = lastApk(dir) ?: return null
+        return dir.walkTopDown()
+            .onEnter { it.name != ".git" && it.name != "build" }
+            .filter { it.isFile && it.name != "app.apk" && it.name != META_FILE }
+            .filter { it.lastModified() > apk.lastModified() }
+            .maxByOrNull { it.lastModified() }
+    }
+
+    /**
+     * Why this APK must not be installed, or null when it is fine to install.
+     *
+     * Written once and used by both the tool and the Apps screen's button. Two
+     * copies of this sentence would be two chances to fix the silence in one
+     * place and leave it in the other — which is exactly how it survived this
+     * long, since the chat and the button were already two paths to the same
+     * stale file.
+     */
+    fun staleReason(dir: File): String? = newerThanApk(dir)?.let {
+        "the built app is older than ${it.relativeTo(dir).path} — " +
+            "installing it would put the previous version back. Build it again first."
     }
 
     /**

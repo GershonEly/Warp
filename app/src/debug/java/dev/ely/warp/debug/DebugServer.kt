@@ -678,6 +678,225 @@ object DebugServer {
                 200 to out
             }
 
+            /**
+             * The icon path, without spending anything — §8.
+             *
+             * Everything after the picture arrives: five densities, the round
+             * variants, the adaptive layers, the manifest, and the app's colour
+             * being replaced by one taken from its own artwork. The drawing
+             * itself is the one step not exercised, deliberately — a test that
+             * costs four cents per run is a test nobody runs twice.
+             *
+             * Artwork comes from [Icons.drawDefault], which is the same local
+             * generator every new project already gets, so the probe proves the
+             * real write path rather than a copy of it.
+             */
+            "POST /icon/probe" -> {
+                val out = JSONObject()
+                val dir = java.io.File(context.cacheDir, "icon-probe-${System.currentTimeMillis()}")
+                try {
+                    // A whole project, because [IconStudio] refuses to put an
+                    // icon where there is no app — and that refusal is part of
+                    // what is being checked.
+                    dir.mkdirs()
+                    val made = dev.ely.warp.build.NewProject.create(
+                        dir, "Probe", "dev.ely.probe",
+                    )
+                    val before = dev.ely.warp.build.NewProject.meta(dir)?.colour
+
+                    val artwork = dev.ely.warp.build.Icons.drawDefault(
+                        "Probe", android.graphics.Color.rgb(0x2E, 0x9E, 0x5B),
+                    )
+                    when (
+                        val outcome = dev.ely.warp.build.IconStudio.install(dir, artwork)
+                    ) {
+                        is dev.ely.warp.build.IconStudio.Outcome.Failed ->
+                            out.put("ok", false).put("failed", outcome.message)
+
+                        is dev.ely.warp.build.IconStudio.Outcome.Drawn -> {
+                            val manifest = java.io.File(dir, "AndroidManifest.xml").readText()
+                            out.put("ok", true)
+                                .put("created", made == null)
+                                .put("groups", outcome.files.size)
+                                // Counted from disk rather than from what the
+                                // writer said it wrote. Those are two different
+                                // claims, and this project has been caught three
+                                // times by code that reported the first one.
+                                .put(
+                                    "pngs",
+                                    java.io.File(dir, "res").walkTopDown()
+                                        .count { it.isFile && it.extension == "png" },
+                                )
+                                .put(
+                                    "adaptive",
+                                    java.io.File(dir, "res/mipmap-anydpi-v26/ic_launcher.xml")
+                                        .isFile,
+                                )
+                                .put("declared", "android:icon" in manifest)
+                                .put("colourChanged", before != null && before != outcome.colour)
+                                .put(
+                                    "colourSaved",
+                                    dev.ely.warp.build.NewProject.meta(dir)?.colour
+                                        == outcome.colour,
+                                )
+                                .put("preview", dev.ely.warp.build.IconStudio.current(dir) != null)
+                                .put(
+                                    "previewRound",
+                                    dev.ely.warp.build.IconStudio.currentRound(dir) != null,
+                                )
+                                // Decoded, not merely present. The Assets screen
+                                // reads these files back with BitmapFactory, and
+                                // "the file is on disk" and "the screen can draw
+                                // it" are two different claims — the tiles fall
+                                // back to a coloured letter that looks almost
+                                // exactly like the real placeholder, so a broken
+                                // decode would be invisible by eye.
+                                .put(
+                                    "previewPx",
+                                    dev.ely.warp.build.IconStudio.current(dir)?.let {
+                                        android.graphics.BitmapFactory.decodeFile(it.path)?.width
+                                    } ?: 0,
+                                )
+                        }
+                    }
+                } catch (e: Throwable) {
+                    out.put("ok", false).put("failed", "${e.javaClass.name}: ${e.message}")
+                } finally {
+                    dir.deleteRecursively()
+                }
+
+                // The chosen model and its price, so the suite can check that the
+                // picker and the card agree about what a tap costs.
+                val model = dev.ely.warp.data.ImageModels.chosen(context)
+                out.put("model", model.id)
+                    .put("modelName", model.name)
+                    .put("price", dev.ely.warp.ai.ImageGen.cents(model))
+                    .put("options", dev.ely.warp.data.ImageModels.all.size)
+                    // The ordering claim the Settings screen makes out loud. If
+                    // this is ever false the screen is telling people something
+                    // untrue about how to read the list.
+                    .put(
+                        "orderedByPrice",
+                        dev.ely.warp.data.ImageModels.all
+                            .zipWithNext().all { (a, b) -> a.centsEach > b.centsEach },
+                    )
+                    .put("tool", dev.ely.warp.tools.ALL_TOOLS["make_icon"]?.risk?.name)
+
+                200 to out
+            }
+
+            /**
+             * Does the image endpoint exist, and does the key open it — §8.
+             *
+             * Its own route rather than part of `/icon/probe`, because that one
+             * is offline and must stay that way: a suite that quietly reaches
+             * the network is a suite that fails on a train.
+             *
+             * **Asks for a model that does not exist.** A 404 is the answer that
+             * proves the most for the least: the URL resolved, the key was
+             * accepted, and the catalogue looked the name up and did not find
+             * it — all without a picture being drawn or a cent being charged.
+             * A 401 would mean the key; anything else is the endpoint itself.
+             */
+            "POST /icon/reach" -> {
+                val out = JSONObject()
+                val key = dev.ely.warp.ai.KeyVault.load(context, "openrouter")
+                if (key.isNullOrBlank()) {
+                    out.put("ok", false).put("failed", "no openrouter key on this phone")
+                } else {
+                    runCatching {
+                        val c = java.net.URL(
+                            "https://openrouter.ai/api/v1/images/generations"
+                        ).openConnection() as java.net.HttpURLConnection
+                        c.requestMethod = "POST"
+                        c.connectTimeout = 30_000
+                        c.readTimeout = 60_000
+                        c.setRequestProperty("Content-Type", "application/json")
+                        c.setRequestProperty("Authorization", "Bearer $key")
+                        c.doOutput = true
+                        c.outputStream.bufferedWriter().use {
+                            it.write(
+                                JSONObject()
+                                    .put("model", "warp/definitely-not-a-model")
+                                    .put("prompt", "probe")
+                                    .put("aspect_ratio", "1:1")
+                                    .toString()
+                            )
+                        }
+                        val code = c.responseCode
+                        val text = runCatching {
+                            c.errorStream?.bufferedReader()?.readText().orEmpty()
+                        }.getOrDefault("")
+                        out.put("ok", true)
+                            .put("code", code)
+                            // 404 is the pass. Recorded as a number rather than
+                            // as a verdict so a different answer is legible
+                            // instead of merely "failed".
+                            .put("keyAccepted", code != 401 && code != 403)
+                            .put("body", text.take(200))
+                    }.onFailure {
+                        out.put("ok", false)
+                            .put("failed", "${it.javaClass.simpleName}: ${it.message}")
+                    }
+                }
+                200 to out
+            }
+
+            /**
+             * Does installing refuse an APK older than the code — §8's real bug.
+             *
+             * Done with timestamps on a throwaway project rather than by
+             * compiling, because the logic being checked *is* timestamps, and a
+             * real build would put thirty seconds between the suite and an
+             * answer it could have had instantly.
+             *
+             * Both directions matter. A guard that always refuses would pass a
+             * one-sided test and make installing impossible.
+             */
+            "POST /install/stale" -> {
+                val out = JSONObject()
+                val dir = java.io.File(context.cacheDir, "stale-${System.currentTimeMillis()}")
+                try {
+                    dir.mkdirs()
+                    dev.ely.warp.build.NewProject.create(dir, "Stale", "dev.ely.stale")
+
+                    val apk = java.io.File(dir, "app.apk").apply { writeText("not really an apk") }
+                    dev.ely.warp.build.NewProject.recordBuild(dir, apk)
+
+                    // Built after everything: nothing to complain about.
+                    apk.setLastModified(System.currentTimeMillis() + 5_000)
+                    out.put("freshIsFine", dev.ely.warp.build.NewProject.staleReason(dir) == null)
+
+                    // An icon drawn after the build — the exact case he hit.
+                    val icon = java.io.File(dir, "res/mipmap-xxxhdpi/ic_launcher.png")
+                    icon.setLastModified(System.currentTimeMillis() + 10_000)
+                    val reason = dev.ely.warp.build.NewProject.staleReason(dir)
+                    out.put("staleIsCaught", reason != null)
+                        // The message must name the file. "Out of date" leaves
+                        // you guessing which change is missing, and guessing is
+                        // what sent him to reinstalling in the first place.
+                        .put("namesTheFile", reason?.contains("ic_launcher.png") == true)
+                        .put("reason", reason)
+
+                    // warp.json is rewritten *after* the APK by recordBuild, so
+                    // it is newer than every build that ever happens. If it were
+                    // not excluded, nothing could ever be installed again.
+                    java.io.File(dir, "warp.json")
+                        .setLastModified(System.currentTimeMillis() + 20_000)
+                    icon.setLastModified(System.currentTimeMillis())
+                    out.put(
+                        "metaIgnored",
+                        dev.ely.warp.build.NewProject.staleReason(dir) == null,
+                    )
+                    out.put("ok", true)
+                } catch (e: Throwable) {
+                    out.put("ok", false).put("failed", "${e.javaClass.name}: ${e.message}")
+                } finally {
+                    dir.deleteRecursively()
+                }
+                200 to out
+            }
+
             "POST /tool" -> runBlocking {
                 val name = json.optString("name")
                 val tool = dev.ely.warp.tools.ALL_TOOLS[name]

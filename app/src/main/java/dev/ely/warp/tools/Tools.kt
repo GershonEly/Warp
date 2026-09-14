@@ -617,6 +617,10 @@ val ALL_TOOLS: Map<String, Tool> =
         // §5n. Deliberately not in READ_TOOLS: a helper reading files is one
         // thing, and a helper with the ability to push is another.
         GIT_TOOLS +
+        // §8. Not in READ_TOOLS for the plainest reason there is: it spends
+        // money, and a helper that can spend money without being asked is a
+        // helper nobody should have given a key to.
+        listOf(MakeIcon) +
         DEVICE_TOOLS).associateBy { it.name }
 
 /** Everything, plus the way out. What a `/goal` turn is given. */

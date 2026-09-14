@@ -132,6 +132,13 @@ object InstallProject : Tool {
         val apk = NewProject.lastApk(env.project)
             ?: return ToolResult.Failed("nothing built yet — call build first")
 
+        // Refused rather than warned, because the failure it prevents is
+        // **silent**: Android installs the old APK perfectly happily, the person
+        // sees their previous app, and nothing anywhere says the change was not
+        // in it. Caught by a drawn icon that never reached the home screen even
+        // after reinstalling — but it was never about icons. Every edit had it.
+        NewProject.staleReason(env.project)?.let { return ToolResult.Failed(it) }
+
         // Through Installer, not a second copy of the same intent. The copy
         // here did not wrap the FileProvider call, so when the APK moved into
         // the project folder this threw straight out of the tool and killed the

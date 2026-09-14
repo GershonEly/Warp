@@ -53,7 +53,9 @@ import dev.ely.warp.ai.ProviderRegistry
 import dev.ely.warp.data.Appearance
 import dev.ely.warp.debug.DebugBridge
 import dev.ely.warp.debug.DebugServer
+import dev.ely.warp.ai.ImageGen
 import dev.ely.warp.data.Identity
+import dev.ely.warp.data.ImageModels
 import dev.ely.warp.data.WebSearch
 import dev.ely.warp.ui.theme.HairlineWidth
 import dev.ely.warp.ui.theme.WarpMono
@@ -119,6 +121,9 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
 
         Spacer(Modifier.size(WarpSpace.section))
         WebSearchSection(registry.choice.providerId)
+
+        Spacer(Modifier.size(WarpSpace.section))
+        IconModelSection()
 
         Spacer(Modifier.size(WarpSpace.section))
         GitHubSection()
@@ -587,6 +592,60 @@ private fun NamingSection(registry: ProviderRegistry) {
             onDismiss = { picking = false },
         )
     }
+}
+
+/**
+ * Who draws the icons — §8.
+ *
+ * **Ordered best first, and the screen says that out loud.** A list that is
+ * silently sorted is a list you have to reverse-engineer, and the two obvious
+ * guesses — alphabetical, or cheapest first — both read plausibly here and are
+ * both wrong. It also says *whose* ranking it is: the makers' own tiering, not a
+ * comparison anyone in this app sat down and made.
+ *
+ * The price is beside every name because this is the one setting in Warp where
+ * the choice is mostly about money. Fifteen cents against one is the decision;
+ * the difference in the picture is real but much smaller than the difference in
+ * the bill.
+ */
+@Composable
+private fun IconModelSection() {
+    val context = LocalContext.current
+    var chosen by remember { mutableStateOf(ImageModels.chosen(context)) }
+
+    Text("Icons", style = MaterialTheme.typography.headlineMedium)
+    Spacer(Modifier.size(WarpSpace.tiny))
+    Text(
+        "Which model draws your app icons, in Assets or when you ask for one in " +
+            "a chat. Listed best first — the makers' own ranking of their range, " +
+            "not a test run here — with what each one costs per icon on your key.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    Spacer(Modifier.size(WarpSpace.medium))
+
+    ImageModels.all.forEach { option ->
+        NamingOption(
+            title = "${option.name} · ${ImageGen.cents(option)}",
+            subtitle = option.note,
+            selected = option.id == chosen.id,
+            onClick = {
+                ImageModels.set(context, option.id)
+                chosen = option
+            },
+        )
+        Spacer(Modifier.size(WarpSpace.small))
+    }
+
+    Footnote(
+        // Said here rather than discovered on a bill. An icon is roughly a
+        // thousand messages, and the per-token pricing behind it is why these
+        // are approximate — the exact charge comes back on the card afterwards.
+        "Prices are per icon and approximate: images are billed per token, so " +
+            "the real figure is shown on the result once it is drawn. Icons are " +
+            "charged to the same OpenRouter key your conversations use."
+    )
 }
 
 @Composable
