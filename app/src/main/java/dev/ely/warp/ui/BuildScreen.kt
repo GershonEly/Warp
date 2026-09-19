@@ -29,6 +29,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -70,15 +71,16 @@ fun BuildScreen(modifier: Modifier = Modifier) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var toolchainState by remember {
-        mutableStateOf<ToolchainInstaller.State>(ToolchainInstaller.State.Checking)
-    }
+    // Watched, not read once. The install now starts on its own at launch, so
+    // this screen is usually opened *during* one — and a screen holding its own
+    // private copy of that would show "not installed" beside an unpack that is
+    // already half done.
+    val toolchainState by ToolchainInstaller.state.collectAsState()
     var buildState by remember { mutableStateOf<BuildUiState>(BuildUiState.Idle) }
     val log = remember { mutableStateListOf<String>() }
 
-    LaunchedEffect(Unit) {
-        toolchainState = withContext(Dispatchers.IO) { ToolchainInstaller.currentState(context) }
-    }
+    // A second look on arrival, in case something outside changed it.
+    LaunchedEffect(Unit) { ToolchainInstaller.ensureInstalled(context) }
 
     // One buzz when the build lands, one when it breaks. This is the longest
     // wait in the app — the phone is usually face-down on a desk by the time it
@@ -113,17 +115,11 @@ fun BuildScreen(modifier: Modifier = Modifier) {
 
         ToolchainCard(
             state = toolchainState,
-            onInstall = {
-                scope.launch {
-                    toolchainState = ToolchainInstaller.install(context) { toolchainState = it }
-                }
-            },
+            onInstall = { ToolchainInstaller.retry(context) },
             onRemove = {
                 scope.launch {
                     ToolchainInstaller.uninstall(context)
-                    toolchainState = withContext(Dispatchers.IO) {
-                        ToolchainInstaller.currentState(context)
-                    }
+                    ToolchainInstaller.refresh(context)
                 }
             },
         )
@@ -248,7 +244,25 @@ private fun ToolchainCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.size(12.dp))
-                Button(onClick = onInstall) { Text("Install toolchain") }
+                Button(onClick = onInstall) { Text("Set up the compiler") }
+            }
+
+            is ToolchainInstaller.State.NoRoom -> {
+                Status("Not enough space", MaterialTheme.colorScheme.error)
+                Spacer(Modifier.size(4.dp))
+                Text(
+                    // The numbers, because "not enough space" without them
+                    // gives you no idea whether to delete one video or a
+                    // hundred. Checked before anything is written: running out
+                    // halfway leaves a half-unpacked compiler, which fails
+                    // later in a far more confusing way than a missing one.
+                    "The compiler needs about ${state.neededMb} MB to unpack, and " +
+                        "there is ${state.freeMb} MB free. Free up some space, then try again.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.size(12.dp))
+                Button(onClick = onInstall) { Text("Try again") }
             }
 
             is ToolchainInstaller.State.Installing -> {

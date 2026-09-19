@@ -89,6 +89,18 @@ class MainActivity : ComponentActivity() {
         // draws it describes itself from its arguments alone — no Context gets
         // that far — and the card is where the money is agreed to.
         dev.ely.warp.data.ImageModels.warm(this)
+
+        // The compiler sets itself up, at first launch, without being asked.
+        //
+        // It used to wait behind a button on the Build tab. Somebody given a
+        // copy of Warp opened it, asked for an app, and watched the build fail
+        // for a reason that appeared nowhere they would think to look — and
+        // the person who gave it to them could not tell why either. The
+        // compiler is not a feature you opt into; it is what the app is for,
+        // and it already ships inside the APK.
+        //
+        // Cheap when there is nothing to do: one file check.
+        dev.ely.warp.build.ToolchainInstaller.ensureInstalled(this)
         setContent {
             // Read here rather than inside the theme, so changing it in
             // Settings repaints the screen underneath the switch.

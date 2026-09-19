@@ -691,6 +691,41 @@ object DebugServer {
              * generator every new project already gets, so the probe proves the
              * real write path rather than a copy of it.
              */
+            /**
+             * Is there a compiler on this phone, and if not, why not.
+             *
+             * Added because the answer was unobtainable. Somebody was given a
+             * copy of Warp, asked it for an app, and the build failed with
+             * nothing anywhere naming the cause — the toolchain had never been
+             * unpacked, and neither they nor the person who gave it to them had
+             * any way to find that out. One request now says it.
+             */
+            "GET /toolchain" -> {
+                val state = dev.ely.warp.build.ToolchainInstaller.state.value
+                val out = JSONObject()
+                    .put("state", state.javaClass.simpleName)
+                    .put(
+                        "bundled",
+                        dev.ely.warp.build.ToolchainInstaller.isBundled(context),
+                    )
+                    .put(
+                        "ready",
+                        state is dev.ely.warp.build.ToolchainInstaller.State.Installed,
+                    )
+                when (state) {
+                    is dev.ely.warp.build.ToolchainInstaller.State.Installed ->
+                        out.put("version", state.version).put("megabytes", state.megabytes)
+                    is dev.ely.warp.build.ToolchainInstaller.State.Installing ->
+                        out.put("files", state.files).put("megabytes", state.megabytes)
+                    is dev.ely.warp.build.ToolchainInstaller.State.NoRoom ->
+                        out.put("neededMb", state.neededMb).put("freeMb", state.freeMb)
+                    is dev.ely.warp.build.ToolchainInstaller.State.Failed ->
+                        out.put("failed", state.message).put("detail", state.detail)
+                    else -> Unit
+                }
+                200 to out
+            }
+
             "POST /icon/probe" -> {
                 val out = JSONObject()
                 val dir = java.io.File(context.cacheDir, "icon-probe-${System.currentTimeMillis()}")

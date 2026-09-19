@@ -156,7 +156,19 @@ class BuildEngine(
         // ── 0. sanity ────────────────────────────────────────────────────
         onStage?.invoke(Stage.PREPARE)
         if (!toolchain.isInstalled) {
-            return@withContext fail(Stage.PREPARE, "The toolchain is not installed yet.")
+            // Says what to do, and says it to the model as much as to the
+            // person. The old message was true and unactionable — "the
+            // toolchain is not installed yet" reads like a fact about the
+            // weather — so the model treated a missing compiler as a broken
+            // project and set about editing perfectly good code.
+            return@withContext fail(
+                Stage.PREPARE,
+                "The compiler is not set up on this phone yet, so nothing can " +
+                    "be built. This is not a problem with the code — do not " +
+                    "change any files. Warp sets the compiler up on its own; " +
+                    "it may still be unpacking. Tell the person to open the " +
+                    "Build tab, where the progress and a Set up button are.",
+            )
         }
         val manifest = File(request.projectDir, "AndroidManifest.xml")
         if (!manifest.isFile) {
