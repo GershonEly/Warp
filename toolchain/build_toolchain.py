@@ -28,10 +28,13 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import struct
+import subprocess
 import sys
 import tarfile
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -217,6 +220,158 @@ ANDROID_SYSTEM_LIBS = {
 
 # ── the build ────────────────────────────────────────────────────────────────
 
+def build_compose_kit(cfg, bundle: Path, staging: Path, args) -> dict:
+    """
+    Everything a Compose app needs, made ready before it reaches the phone.
+
+    Compose is a compiler plugin plus about seventy libraries. The plugin
+    already ships inside kotlinc — versioned with Kotlin, so there is no
+    version matrix to keep in step — which leaves only the libraries, and they
+    arrive as AARs that nothing on a phone knows how to prepare.
+
+    So the preparing happens here, once:
+
+      compose/libs/   classes.jar out of each AAR, for the compile classpath
+      compose/flat/   each library's resources, already run through aapt2
+      compose/dex/    every library's classes, already run through d8
+      compose/packages.txt  one package name per line, for --extra-packages
+
+    **The dex step is the reason this exists.** Dexing these on the phone takes
+    just under a minute, measured, and it would be the same minute on every
+    build for ever. Done here it costs about twenty-five seconds, once, and the
+    phone only merges the result — the same trick the engine already uses for
+    the Kotlin stdlib.
+
+    Needs `aapt2` and `d8`, both of which the bundle already has by this point:
+    the arm64 aapt2 cannot run on the build machine, so the host SDK's copy is
+    used for the resource step, while d8 is pure JVM and runs anywhere.
+    """
+    step("Compose kit (libraries, resources and dex)")
+    comp = cfg.get("compose")
+    if not comp:
+        say("no compose section in sources.json — skipping")
+        return {}
+
+    kit = bundle / "compose"
+    for d in ("libs", "flat", "dex"):
+        (kit / d).mkdir(parents=True, exist_ok=True)
+    stage = staging / "compose"
+    stage.mkdir(parents=True, exist_ok=True)
+
+    # ── download, verify, unpack ────────────────────────────────────────
+    packages: list[str] = []
+    res_dirs: list[tuple[str, Path]] = []
+    for art in comp["artifacts"]:
+        group_path = art["group"].replace(".", "/")
+        base = comp["google_maven"] if art["group"].startswith("androidx.") \
+            else comp["maven_central"]
+        filename = f"{art['name']}-{art['version']}.{art['ext']}"
+        url = f"{base}/{group_path}/{art['name']}/{art['version']}/{filename}"
+
+        local = download(url, CACHE / "compose" / filename)
+        check_hash(local, art.get("sha256"), f"{art['group']}:{art['name']}")
+
+        flat_name = f"{art['group']}_{art['name']}"
+        if art["ext"] == "jar":
+            shutil.copy2(local, kit / "libs" / f"{flat_name}.jar")
+            continue
+
+        # An AAR is a zip holding classes.jar, res/ and a manifest.
+        unpacked = stage / flat_name
+        if unpacked.exists():
+            shutil.rmtree(unpacked)
+        with zipfile.ZipFile(local) as z:
+            z.extractall(unpacked)
+
+        classes = unpacked / "classes.jar"
+        if classes.is_file():
+            shutil.copy2(classes, kit / "libs" / f"{flat_name}.jar")
+
+        res = unpacked / "res"
+        if res.is_dir() and any(res.iterdir()):
+            res_dirs.append((flat_name, res))
+
+        # Each library's R class must be generated into its own package, and
+        # the package name is only stated in the AAR's own manifest.
+        man = unpacked / "AndroidManifest.xml"
+        if man.is_file():
+            m = re.search(r'package="([^"]+)"', man.read_text(encoding="utf-8", errors="replace"))
+            if m:
+                packages.append(m.group(1))
+
+    jars = sorted((kit / "libs").glob("*.jar"))
+    say(f"{len(jars)} libraries, {sum(j.stat().st_size for j in jars) / 1048576:.1f} MB")
+
+    (kit / "packages.txt").write_text(
+        "\n".join(sorted(set(packages))) + "\n", encoding="utf-8")
+    say(f"{len(set(packages))} packages need an R class")
+
+    # ── resources, through the host SDK's aapt2 ─────────────────────────
+    #
+    # The host's, not the bundled one: bin/aapt2 is a static arm64 binary and
+    # will not run here. Compiled resources are a portable format, so which
+    # aapt2 produced them does not matter — only that the versions are close,
+    # and both come from the same build-tools release.
+    host_aapt2 = find_host_aapt2(args.sdk)
+    if host_aapt2 is None:
+        say("WARNING: no host aapt2 found — Compose resources not precompiled.")
+        say("         Compose builds will not work in this bundle.")
+    else:
+        for name, res in res_dirs:
+            subprocess.run(
+                [str(host_aapt2), "compile", "--dir", str(res),
+                 "-o", str(kit / "flat" / f"{name}.zip")],
+                check=True, capture_output=True,
+            )
+        say(f"compiled resources for {len(res_dirs)} libraries")
+
+    # ── dex, once, here ────────────────────────────────────────────────
+    #
+    # The Kotlin stdlib goes in too. It is not a Compose library, but every
+    # Compose app needs it and the engine would otherwise dex it separately —
+    # and a spike that forgot it produced an APK that installed cleanly and
+    # died on launch with ClassNotFoundException: kotlin.jvm.internal.Intrinsics.
+    stdlib = bundle / "kotlinc" / "lib" / "kotlin-stdlib.jar"
+    to_dex = [str(j) for j in jars]
+    if stdlib.is_file():
+        to_dex.append(str(stdlib))
+
+    started = time.time()
+    subprocess.run(
+        ["java", "-Xmx3g", "-cp", str(bundle / "d8" / "r8.jar"),
+         "com.android.tools.r8.D8", "--release", "--min-api", "28",
+         "--lib", str(bundle / "platform" / "android.jar"),
+         "--output", str(kit / "dex"), *to_dex],
+        check=True, capture_output=True,
+    )
+    dexes = sorted((kit / "dex").glob("*.dex"))
+    say(f"pre-dexed into {len(dexes)} files, "
+        f"{sum(d.stat().st_size for d in dexes) / 1048576:.1f} MB, "
+        f"in {time.time() - started:.0f}s")
+
+    return {
+        "artifacts": len(comp["artifacts"]),
+        "packages": len(set(packages)),
+        "dex_files": len(dexes),
+        "resources_precompiled": host_aapt2 is not None,
+    }
+
+
+def find_host_aapt2(sdk: str | None) -> Path | None:
+    """The build machine's own aapt2, newest build-tools first."""
+    if not sdk:
+        return None
+    build_tools = Path(sdk) / "build-tools"
+    if not build_tools.is_dir():
+        return None
+    for version in sorted(build_tools.iterdir(), reverse=True):
+        for candidate in ("aapt2.exe", "aapt2"):
+            p = version / candidate
+            if p.is_file():
+                return p
+    return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Build the Warp arm64 toolchain bundle")
     ap.add_argument("--sdk", default=os.environ.get("ANDROID_HOME") or
@@ -343,6 +498,9 @@ def main() -> int:
     shutil.copy2(aj, bundle / "platform" / "android.jar")
     say(f"copied android.jar ({aj.stat().st_size / 1048576:.1f} MB)")
 
+    # 7b ── the Compose kit --------------------------------------------------
+    compose_note = build_compose_kit(cfg, bundle, staging, args)
+
     # 8 ── sanity check: can every native dependency be satisfied? -----------
     step("Checking native dependencies")
     shipped = {p.name for p in (bundle / "lib").iterdir() if p.is_file()}
@@ -391,7 +549,12 @@ def main() -> int:
             "kotlinc/lib": "compiler jars — run on the bundled JVM",
             "d8": "r8.jar, contains d8",
             "platform": "android.jar for the compile classpath",
+            "compose": "libs/ for the classpath, flat/ precompiled resources, "
+                       "dex/ already dexed, packages.txt for --extra-packages",
         },
+        # Recorded so the phone can tell a bundle that can build Compose from
+        # one that cannot, rather than finding out three stages into a build.
+        "compose": compose_note,
         "env_required": {
             "LD_LIBRARY_PATH": "<toolchain>/jvm/lib:<toolchain>/jvm/lib/server:<toolchain>/lib",
             "JAVA_HOME": "<toolchain>/jvm",
