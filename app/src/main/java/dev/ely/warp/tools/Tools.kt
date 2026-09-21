@@ -468,7 +468,9 @@ object NewProjectTool : Tool {
         {"type":"object","properties":{
           "name":{"type":"string","description":"What the app is called, as a person would say it."},
           "package":{"type":"string",
-            "description":"Application id like com.example.notes. Leave out to derive one."}},
+            "description":"Application id like com.example.notes. Leave out to derive one."},
+          "compose":{"type":"boolean","description":
+            "Use Jetpack Compose instead of XML layouts. Compose looks modern, gives you Material 3 for free, and costs about 8 MB of app size. XML makes a 50 KB app that looks plainer. Ask the person which they want rather than choosing for them; if they have no opinion, use Compose for anything with a real interface and XML for something tiny. This cannot be changed later."}},
          "required":["name"]}
     """.trimIndent()
 
@@ -477,15 +479,20 @@ object NewProjectTool : Tool {
         val id = args.optString("package").ifBlank {
             dev.ely.warp.build.NewProject.derivePackage(name)
         }
-        return "$name ($id)"
+        // The choice is on the card, because it is the one decision here that
+        // cannot be undone afterwards.
+        val kind = if (args.optBoolean("compose", false)) "Compose" else "XML layouts"
+        return "$name ($id) · $kind"
     }
 
     override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult {
         val name = args.optString("name")
+        val compose = args.optBoolean("compose", false)
         val failure = dev.ely.warp.build.NewProject.create(
             dir = env.project,
             name = name,
             applicationId = args.optString("package"),
+            compose = compose,
         )
         if (failure != null) return ToolResult.Failed(failure)
 
@@ -493,16 +500,33 @@ object NewProjectTool : Tool {
         // Lists what it made. "Project created" gives you nothing to check, and
         // the file names are exactly what the next tool call will refer to.
         return ToolResult.Ok(
-            "created ${meta?.applicationId}",
-            listOf(
-                "AndroidManifest.xml",
-                "res/values/strings.xml",
-                "src/MainActivity.kt",
+            "created ${meta?.applicationId}" + if (compose) " · Compose" else "",
+            buildList {
+                add("AndroidManifest.xml")
+                add("res/values/strings.xml")
+                add("res/values/styles.xml")
+                if (!compose) {
+                    add("res/layout/activity_main.xml")
+                    add("res/values/colors.xml")
+                    add("res/drawable/card.xml")
+                }
+                add("src/MainActivity.kt")
                 // Listed because it is real and the model will see it in the
                 // folder. A file that appears from nowhere invites being tidied
                 // away, and this one is what reports crashes back to Warp.
-                "src/CrashReporter.kt  (sends crashes to Warp — leave it)",
-            ).joinToString("\n"),
+                add("src/CrashReporter.kt  (sends crashes to Warp — leave it)")
+                if (compose) {
+                    add("")
+                    // Said here as well as in the Brain, because this is the
+                    // message the model reads immediately before writing its
+                    // first screen.
+                    add(
+                        "This is a Compose project. Build the interface in " +
+                            "Kotlin with @Composable functions — there is no " +
+                            "layout XML and setContentView is not used."
+                    )
+                }
+            }.joinToString("\n"),
         )
     }
 }

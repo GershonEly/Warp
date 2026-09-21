@@ -67,6 +67,16 @@ class BuildEngine(
         /** Heap for the Kotlin compiler. It runs out-of-process, so this is not
          *  limited by Android's per-app cap. */
         val kotlincHeapMb: Int = 1024,
+        /**
+         * Build this project with Jetpack Compose — §8's item 11.
+         *
+         * **Off by default, and per project rather than global.** The XML path
+         * is the one that has been proved by real apps, and turning Compose on
+         * costs about 8 MB of APK for an app that might be a counter. It is a
+         * choice made when the project is created, not a setting that
+         * retroactively changes how everything already built gets rebuilt.
+         */
+        val compose: Boolean = false,
     )
 
     data class StageResult(
@@ -182,6 +192,20 @@ class BuildEngine(
         val resDir = File(request.projectDir, "res")
         val hasRes = resDir.isDirectory && (resDir.listFiles()?.isNotEmpty() == true)
 
+        // Said here rather than discovered three stages in. A Compose project
+        // on a toolchain that predates the Compose kit would otherwise fail at
+        // kotlinc with a page of unresolved references to androidx, which reads
+        // as the code being wrong instead of the bundle being old.
+        if (request.compose && !toolchain.hasCompose) {
+            return@withContext fail(
+                Stage.PREPARE,
+                "This project is built with Compose, but the compiler on this " +
+                    "phone does not include the Compose libraries. This is not " +
+                    "a problem with the code — do not change any files. The " +
+                    "toolchain needs replacing with a newer bundle.",
+            )
+        }
+
         // ── 1. compile resources ─────────────────────────────────────────
         if (hasRes) {
             val r = stage(
@@ -206,7 +230,27 @@ class BuildEngine(
                 add("--target-sdk-version"); add(request.targetSdk.toString())
                 add("--auto-add-overlay")
                 add("-o"); add(baseApk.absolutePath)
-                if (hasRes) add(compiledRes.absolutePath)
+
+                if (request.compose) {
+                    // Every library's resources, then the app's last, so the
+                    // app wins where they collide — `-R` is overlay semantics
+                    // and the last one given takes precedence. This exact
+                    // ordering is the one proved on the device.
+                    toolchain.composeFlatRes.forEach { add("-R"); add(it.absolutePath) }
+                    // One R class per library package. Without this the app
+                    // links and installs and then dies at runtime, because the
+                    // libraries' own compiled code refers to classes that were
+                    // never generated.
+                    toolchain.composePackages.takeIf { it.isNotEmpty() }?.let {
+                        add("--extra-packages"); add(it.joinToString(":"))
+                    }
+                    if (hasRes) { add("-R"); add(compiledRes.absolutePath) }
+                } else if (hasRes) {
+                    // Left exactly as it was. The XML path is the one proved by
+                    // real apps, and "while I was in here" is how a working
+                    // path acquires a bug it did not need.
+                    add(compiledRes.absolutePath)
+                }
             }
             val r = stage(Stage.LINK_RESOURCES, timeoutMinutes = 5, command = cmd)
             if (!r.ok) return@withContext fail(Stage.LINK_RESOURCES, "aapt2 could not link the resources.", r.output)
@@ -236,7 +280,8 @@ class BuildEngine(
             if (compilerJars.isEmpty()) {
                 return@withContext fail(Stage.COMPILE_KOTLIN, "The Kotlin compiler jars are missing from the toolchain.")
             }
-            val classpath = listOf(toolchain.androidJar, classesDir) + stdlibJars()
+            val classpath = listOf(toolchain.androidJar, classesDir) + stdlibJars() +
+                if (request.compose) toolchain.composeLibs else emptyList()
             val r = stage(
                 Stage.COMPILE_KOTLIN, timeoutMinutes = 20,
                 command = toolchain.javaCommand(
@@ -247,6 +292,13 @@ class BuildEngine(
                         add("-no-reflect")
                         add("-nowarn")
                         add("-jvm-target"); add("17")
+                        if (request.compose) {
+                            // What turns `@Composable fun Hello()` into
+                            // `Hello(Composer, int)`. Without it the code
+                            // compiles and every composable is an ordinary
+                            // function that draws nothing.
+                            add("-Xplugin=${toolchain.composePlugin.absolutePath}")
+                        }
                         add("-classpath"); add(classpath.joinToString(":") { it.absolutePath })
                         add("-d"); add(classesDir.absolutePath)
                         addAll(ktFiles.map { it.absolutePath })
@@ -260,9 +312,15 @@ class BuildEngine(
         // The Kotlin standard library is the same for every build, but dexing
         // it dominates build time (about 20 s of a 35 s build). Dex it once,
         // cache the result, and merge it in afterwards.
+        //
+        // A Compose build skips this entirely. The Compose kit's dex already
+        // contains the Kotlin runtime — it was dexed alongside the libraries on
+        // a PC — so this stage would spend twenty seconds producing a second
+        // copy of classes that are about to be merged in anyway, and d8 refuses
+        // to merge the same type twice.
         val stdlibDexDir = File(workRoot, "cache/stdlib-dex")
         val cachedStdlibDex = stdlibDexDir.listFiles { f -> f.extension == "dex" }?.sorted().orEmpty()
-        if (cachedStdlibDex.isEmpty()) {
+        if (!request.compose && cachedStdlibDex.isEmpty()) {
             stdlibDexDir.mkdirs()
             val jars = stdlibJars()
             if (jars.isEmpty()) {
@@ -302,7 +360,16 @@ class BuildEngine(
             }
             // d8 accepts .dex files as input and merges them, so the cached
             // runtime costs a merge instead of a full re-dex.
-            val runtimeDex = stdlibDexDir.listFiles { f -> f.extension == "dex" }?.sorted().orEmpty()
+            //
+            // One or the other, never both. The Compose kit's dex holds the
+            // Kotlin runtime as well as the libraries, so adding the stdlib
+            // cache beside it would hand d8 `kotlin.jvm.internal.Intrinsics`
+            // twice and it would refuse the whole build.
+            val runtimeDex = if (request.compose) {
+                toolchain.composeDex
+            } else {
+                stdlibDexDir.listFiles { f -> f.extension == "dex" }?.sorted().orEmpty()
+            }
             val r = stage(
                 Stage.DEX, timeoutMinutes = 15,
                 command = toolchain.javaCommand(

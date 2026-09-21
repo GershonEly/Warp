@@ -48,6 +48,20 @@ object NewProject {
          * the ambient case, which is the case that exists.
          */
         val dataKey: String? = null,
+        /**
+         * Built with Jetpack Compose rather than XML layouts — §8 item 11.
+         *
+         * **Decided when the project is made, and then it stays decided.** The
+         * two are different ways to write a whole app, not a rendering option:
+         * switching an existing project would leave every screen it already has
+         * written in the other one. It is recorded here rather than guessed
+         * from the sources, because "does this look like Compose" is exactly
+         * the kind of inference that is right until it quietly is not.
+         *
+         * False for every project made before this existed, which is correct —
+         * they are all XML.
+         */
+        val compose: Boolean = false,
     )
 
     private const val META_FILE = "warp.json"
@@ -72,6 +86,7 @@ object NewProject {
             // the shelf used before rather than to a colour that means nothing.
             colour = json.optInt("colour", 0).takeIf { it != 0 } ?: seedColour(id),
             dataKey = json.optString("dataKey").takeIf { it.isNotBlank() },
+            compose = json.optBoolean("compose", false),
         )
     }
 
@@ -172,7 +187,13 @@ object NewProject {
      * @param applicationId blank to derive one from [name].
      * @return the failure reason, or null when it worked.
      */
-    fun create(dir: File, name: String, applicationId: String = ""): String? {
+    fun create(
+        dir: File,
+        name: String,
+        applicationId: String = "",
+        /** Write a Compose app instead of an XML one — §8 item 11. */
+        compose: Boolean = false,
+    ): String? {
         val cleanName = name.trim()
         if (cleanName.isEmpty()) return "the app needs a name"
         if (exists(dir)) {
@@ -186,18 +207,27 @@ object NewProject {
 
         dir.mkdirs()
         File(dir, "res/values").mkdirs()
-        File(dir, "res/layout").mkdirs()
-        File(dir, "res/drawable").mkdirs()
         File(dir, "src").mkdirs()
 
         File(dir, "AndroidManifest.xml").writeText(manifest(id))
         File(dir, "res/values/strings.xml").writeText(strings(cleanName))
-        // The pattern to copy, not just a screen that runs — §5o.
-        File(dir, "res/layout/activity_main.xml").writeText(activityLayout())
-        File(dir, "res/values/colors.xml").writeText(colours())
-        File(dir, "res/values/styles.xml").writeText(styles())
-        File(dir, "res/drawable/card.xml").writeText(cardDrawable())
-        File(dir, "src/MainActivity.kt").writeText(mainActivity(id))
+
+        if (compose) {
+            // No layout, no drawable, no colours file. A Compose app keeps all
+            // three in Kotlin, and leaving empty folders behind would be an
+            // invitation to fill them with XML that nothing reads.
+            File(dir, "res/values/styles.xml").writeText(composeStyles())
+            File(dir, "src/MainActivity.kt").writeText(composeMainActivity(id, cleanName))
+        } else {
+            File(dir, "res/layout").mkdirs()
+            File(dir, "res/drawable").mkdirs()
+            // The pattern to copy, not just a screen that runs — §5o.
+            File(dir, "res/layout/activity_main.xml").writeText(activityLayout())
+            File(dir, "res/values/colors.xml").writeText(colours())
+            File(dir, "res/values/styles.xml").writeText(styles())
+            File(dir, "res/drawable/card.xml").writeText(cardDrawable())
+            File(dir, "src/MainActivity.kt").writeText(mainActivity(id))
+        }
         File(dir, "src/CrashReporter.kt").writeText(crashReporter(id))
         // The app's own door — §5m. Written at creation with its key, because a
         // key added later would only reach apps rebuilt after it, and Warp would
@@ -218,6 +248,7 @@ object NewProject {
                 .put("applicationId", id)
                 .put("colour", colour)
                 .put("dataKey", dataKey)
+                .put("compose", compose)
                 .toString()
         )
 
@@ -562,6 +593,106 @@ object NewProject {
                 <item name="android:colorAccent">@color/accent</item>
             </style>
         </resources>
+    """.trimIndent()
+
+    /**
+     * The one piece of XML a Compose app still needs.
+     *
+     * Android decides what the window looks like *before* any Kotlin runs — the
+     * background colour behind the first frame, and whether there is an action
+     * bar — and that decision is made from a theme in the manifest. Everything
+     * after the first frame is Compose's.
+     *
+     * `NoActionBar` matters: the default theme draws a grey title bar above the
+     * app, which a Compose app then draws its own top bar underneath.
+     */
+    private fun composeStyles() = """
+        <?xml version="1.0" encoding="utf-8"?>
+        <resources>
+            <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar" />
+        </resources>
+    """.trimIndent()
+
+    /**
+     * The Compose starter — the pattern to copy, not just a screen that runs.
+     *
+     * §5o is the reason this is a real screen with state in it rather than a
+     * lone `Text("Hello")`. The template is the most-read example in any
+     * project: whatever it does, the model does more of. So it shows the four
+     * things every Compose screen needs — `remember` for state, `MaterialTheme`
+     * for colour and type, a `Scaffold` for the frame, and `dp` for spacing.
+     *
+     * Notably **no sizes in raw numbers**. The Kotlin-number-is-a-pixel trap
+     * that made every generated app tiny does not exist in Compose — `16.dp` is
+     * the only way to write it — and the template models that from line one.
+     */
+    private fun composeMainActivity(applicationId: String, appName: String) = """
+        package $applicationId
+
+        import android.os.Bundle
+        import androidx.activity.ComponentActivity
+        import androidx.activity.compose.setContent
+        import androidx.compose.foundation.layout.Column
+        import androidx.compose.foundation.layout.fillMaxSize
+        import androidx.compose.foundation.layout.padding
+        import androidx.compose.foundation.layout.Arrangement
+        import androidx.compose.material3.Button
+        import androidx.compose.material3.Card
+        import androidx.compose.material3.MaterialTheme
+        import androidx.compose.material3.Scaffold
+        import androidx.compose.material3.Text
+        import androidx.compose.runtime.Composable
+        import androidx.compose.runtime.getValue
+        import androidx.compose.runtime.mutableIntStateOf
+        import androidx.compose.runtime.remember
+        import androidx.compose.runtime.setValue
+        import androidx.compose.ui.Alignment
+        import androidx.compose.ui.Modifier
+        import androidx.compose.ui.unit.dp
+
+        class MainActivity : ComponentActivity() {
+            override fun onCreate(savedInstanceState: Bundle?) {
+                super.onCreate(savedInstanceState)
+                setContent {
+                    // Wrap everything once, here. MaterialTheme is where the
+                    // colours and text styles come from; without it every
+                    // Text below falls back to an unstyled default.
+                    MaterialTheme {
+                        Scaffold { padding ->
+                            HomeScreen(Modifier.padding(padding))
+                        }
+                    }
+                }
+            }
+        }
+
+        @Composable
+        fun HomeScreen(modifier: Modifier = Modifier) {
+            // State lives in the screen and survives redraws because of
+            // `remember`. Change it and the parts that read it redraw
+            // themselves — you never update a view by hand.
+            var taps by remember { mutableIntStateOf(0) }
+
+            Column(
+                modifier = modifier.fillMaxSize().padding(24.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("$appName", style = MaterialTheme.typography.headlineMedium)
+
+                Card(modifier = Modifier.padding(top = 24.dp)) {
+                    Text(
+                        "Tapped ${'$'}taps times",
+                        modifier = Modifier.padding(24.dp),
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                }
+
+                Button(onClick = { taps++ }, modifier = Modifier.padding(top = 24.dp)) {
+                    Text("Tap me")
+                }
+            }
+        }
     """.trimIndent()
 
     /** One drawable, so the first rounded corner is already there to copy. */

@@ -211,7 +211,7 @@ def watch_build(seconds=140):
 WANTED = {a.lower() for a in sys.argv[1:]}
 GROUP_NAMES = ["surface", "chat", "tools", "permissions", "commands", "grill",
                "goal", "project", "build", "room", "web", "brain", "attach", "budget",
-               "subagent", "settings", "diff", "git", "icons", "tasks"]
+               "subagent", "settings", "diff", "git", "icons", "compose", "tasks"]
 
 
 def want(group):
@@ -1474,6 +1474,64 @@ if want("icons"):
     # every build that ever happens. Not excluding it would block everything.
     check("and the file written after every build is not mistaken for an edit",
           r.get("metaIgnored") is True)
+
+
+if want("compose"):
+    # Compose builds — §8 item 11, the one the plan called "unknown".
+    #
+    # Nothing here compiles anything. That a Compose app builds and runs was
+    # proved by hand on the device: 33 libraries linked in 1 s, kotlinc with the
+    # plugin in 17 s, 8.1 MB APK, Material 3 on screen. What these checks defend
+    # is the part that rots — that the kit is present, that the two kinds of
+    # project stay separate, and that the model is told which one it is in.
+    print("\n21. COMPOSE")
+    s, r = call("GET", "/compose", timeout=60)
+    check("the probe runs", s == 200 and r.get("ok") is True, json.dumps(r)[:140])
+
+    check("the toolchain carries a Compose kit", r.get("ready") is True,
+          f"plugin={r.get('plugin')} libs={r.get('libs')} dex={r.get('dex')}")
+    check("the compiler plugin is there", r.get("plugin") is True,
+          "it ships inside kotlinc, versioned with Kotlin")
+    check("all the libraries came across", (r.get("libs") or 0) >= 60,
+          f"got {r.get('libs')}")
+    check("every library that has resources had them precompiled",
+          (r.get("flatRes") or 0) >= 30, f"got {r.get('flatRes')}")
+    check("and every library package can get an R class",
+          (r.get("packages") or 0) >= 30, f"got {r.get('packages')}")
+
+    # The bug that made the first hand-built Compose APK install cleanly and
+    # die on launch: ClassNotFoundException kotlin.jvm.internal.Intrinsics.
+    # A Compose build uses the kit's dex INSTEAD of the stdlib cache, so the
+    # stdlib has to be inside it.
+    check("the Kotlin runtime is inside the kit's dex, not beside it",
+          r.get("stdlibInKit") is True,
+          "a Compose build uses this dex instead of the stdlib cache")
+
+    # The split. The whole risk of this feature is the two kinds of project
+    # bleeding into each other — §5o is what a model does when told about a
+    # toolchain that is not the one it has.
+    check("a plain project is still XML", r.get("xmlFlag") is True)
+    check("and still gets a layout", r.get("xmlHasLayout") is True)
+    check("and still uses setContentView", r.get("xmlUsesSetContentView") is True)
+
+    check("a Compose project is marked as one", r.get("composeFlag") is True)
+    check("and ships no layout XML for nobody to read",
+          r.get("composeHasNoLayout") is True)
+    check("and uses setContent", r.get("composeUsesSetContent") is True)
+    check("and never setContentView", r.get("composeAvoidsSetContentView") is True)
+
+    # The template is the most-read example in any project: whatever it does,
+    # the model does more of.
+    check("the template sizes things in dp", r.get("templateUsesDp") is True)
+    check("wraps everything in MaterialTheme", r.get("templateUsesTheme") is True)
+    check("and shows state, not just a static screen",
+          r.get("templateHasState") is True)
+
+    check("the model is told which Android it is in, flatly",
+          r.get("brainSplit") is True,
+          "one summary says JETPACK COMPOSE, the other says NO Compose")
+    check("and has somewhere to read the details",
+          r.get("composeTopicExists") is True)
 
 
 if want("tasks"):

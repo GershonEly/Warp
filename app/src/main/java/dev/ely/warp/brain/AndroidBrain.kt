@@ -47,6 +47,41 @@ object AndroidBrain {
         you are unsure of — say what you are unsure about.
     """.trimIndent()
 
+    /**
+     * The same summary, for a project that is built with Compose.
+     *
+     * **Two summaries rather than one hedged one.** §5o's finding was that a
+     * model told about a toolchain it does not have will use it anyway: the
+     * Brain taught Compose, nothing could compile Compose, and 115 edits went
+     * into one Kotlin file while `res/` stayed empty. Telling a model *"you
+     * have Compose, unless this project doesn't, in which case XML"* invites
+     * exactly the same failure from the other direction.
+     *
+     * So the model is told what this project is, flatly, and never the other.
+     */
+    val SUMMARY_COMPOSE = """
+        Android knowledge you already have, without asking the user:
+        call android_docs(topic) to read any of these in full, once, when you need it.
+        Topics: project · compose · design · icons · rules · gotchas
+
+        THIS PROJECT USES JETPACK COMPOSE. Build every screen in Kotlin with
+        @Composable functions. There is no layout XML, no findViewById and no
+        setContentView — MainActivity calls setContent { }. Material 3 is
+        available: MaterialTheme, Scaffold, Card, Button, Text.
+        Read android_docs("compose") before writing your first screen.
+        Sizes are always .dp — 16.dp, never a bare 16.
+
+        Available: the Android framework, Compose, Material 3, coroutines.
+        Nothing else — no image loaders, no networking libraries, no Room.
+
+        Never ask the user for icon sizes, folder names, manifest boilerplate or
+        SDK rules. Look them up instead. Do not guess a version number or an API
+        you are unsure of — say what you are unsure about.
+    """.trimIndent()
+
+    /** Whichever of the two this project has earned. */
+    fun summaryFor(compose: Boolean): String = if (compose) SUMMARY_COMPOSE else SUMMARY
+
     /** Every topic, by name. The tool refuses anything not in here. */
     val topics: Map<String, String> by lazy {
         mapOf(
@@ -54,6 +89,11 @@ object AndroidBrain {
             // Before icons, because it is the one that decides whether an app
             // looks like anything — §5o.
             "layout" to LAYOUT,
+            // Its Compose counterpart. Both are always readable — a topic the
+            // tool refuses depending on the project would be a dead end the
+            // model cannot see coming — but only one is ever named in the
+            // summary, so only one gets read.
+            "compose" to COMPOSE,
             "design" to DESIGN,
             "icons" to ICONS,
             "rules" to RULES,
@@ -136,6 +176,113 @@ object AndroidBrain {
         `Icons.write(project, artwork, colour)` produces all of it — every
         density, the adaptive pair, and the manifest line. Never write icon
         files by hand, and never ask the user for a size.
+    """.trimIndent()
+
+    private val COMPOSE = """
+        # Building a screen with Compose — read this before writing any UI
+
+        ## What this project has, and has not
+
+        **You have: Jetpack Compose, Material 3, coroutines, and the whole
+        Android framework.** The Compose compiler and every library it needs
+        ship with the toolchain, so `@Composable` compiles here.
+
+        **You do not have: any other library.** No image loader, no networking
+        library, no Room, no navigation library. There is no dependency
+        resolution on the phone. If a task really needs one, say so plainly,
+        once, and build what you can without it.
+
+        **There is no layout XML in this project.** Do not create `res/layout/`,
+        do not call `setContentView`, and do not use `findViewById`. They will
+        not fail loudly — they will simply never draw anything, which is worse.
+
+        ## The shape of every screen
+
+        ```kotlin
+        class MainActivity : ComponentActivity() {
+            override fun onCreate(savedInstanceState: Bundle?) {
+                super.onCreate(savedInstanceState)
+                setContent {
+                    MaterialTheme {          // colours and type live here
+                        Scaffold { padding ->
+                            HomeScreen(Modifier.padding(padding))
+                        }
+                    }
+                }
+            }
+        }
+        ```
+
+        `MaterialTheme` is not optional decoration. Without it every `Text`
+        falls back to an unstyled default and the app looks broken.
+
+        ## State: you never update a view
+
+        ```kotlin
+        var count by remember { mutableIntStateOf(0) }
+        Button(onClick = { count++ }) { Text("Tapped ${'$'}count") }
+        ```
+
+        Change the state; the parts that read it redraw themselves. There is no
+        `textView.setText(...)`. State that must survive rotation uses
+        `rememberSaveable` instead of `remember`.
+
+        Use `mutableIntStateOf` for Int, `mutableStateOf` for everything else.
+
+        ## Sizes are always dp
+
+        ```kotlin
+        Modifier.padding(16.dp)     // correct
+        Modifier.padding(16)        // does not compile
+        ```
+
+        The pixel trap that ruins XML apps cannot happen here: `.dp` is the only
+        thing that type-checks. Use `.sp` for text sizes.
+
+        ## What to reach for
+
+        | Want | Use |
+        |---|---|
+        | vertical stack | `Column` |
+        | horizontal row | `Row` |
+        | overlap | `Box` |
+        | long list | `LazyColumn` — **not** `Column` with a scroll |
+        | a panel | `Card` |
+        | screen frame, top bar | `Scaffold`, `TopAppBar` |
+        | spacing between children | `Arrangement.spacedBy(8.dp)` |
+
+        `LazyColumn` matters: a `Column` builds every child at once, so a list
+        of a thousand rows builds a thousand rows.
+
+        ## Colour and type come from the theme
+
+        ```kotlin
+        Text("Score", style = MaterialTheme.typography.titleLarge)
+        Surface(color = MaterialTheme.colorScheme.surfaceVariant) { }
+        ```
+
+        Do not hard-code `Color(0xFF6650a4)` everywhere. Material 3 gives a
+        complete palette that works in dark mode for free; a hand-picked colour
+        does not, and black-on-black is how a generated app ends up unreadable.
+
+        ## Imports are not automatic
+
+        Every composable needs its own import. The common ones:
+
+        ```kotlin
+        import androidx.compose.foundation.layout.Column
+        import androidx.compose.foundation.layout.padding
+        import androidx.compose.material3.Text
+        import androidx.compose.runtime.getValue
+        import androidx.compose.runtime.mutableStateOf
+        import androidx.compose.runtime.remember
+        import androidx.compose.runtime.setValue
+        import androidx.compose.ui.Modifier
+        import androidx.compose.ui.unit.dp
+        ```
+
+        `getValue` and `setValue` are what make `by remember` work. Leaving them
+        out is the most common compile error in a Compose file.
     """.trimIndent()
 
     private val LAYOUT = """

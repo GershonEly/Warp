@@ -49,6 +49,63 @@ class Toolchain(private val root: File) {
     val isInstalled: Boolean
         get() = manifestFile.isFile && aapt2.isFile && java.isFile
 
+    // ── Compose ──────────────────────────────────────────────────────────
+    //
+    // Prepared on a PC by `build_toolchain.py` and shipped ready to use. An
+    // AAR is a zip holding a jar, a manifest and a res/ tree, and nothing on a
+    // phone knows how to take one apart — so nothing here has to.
+
+    private val composeRoot = File(root, "compose")
+
+    /**
+     * The Compose compiler, which arrives with kotlinc rather than beside it.
+     *
+     * Since Kotlin 2.0 the plugin is versioned **with** the compiler and ships
+     * in the same distribution, so there is no version matrix to keep in step:
+     * whatever kotlinc is here, its own plugin is here too.
+     */
+    val composePlugin = File(kotlincLib, "compose-compiler-plugin.jar")
+
+    /** The libraries, for the compile classpath. */
+    val composeLibs: List<File>
+        get() = File(composeRoot, "libs").listFiles { f -> f.extension == "jar" }
+            ?.sorted() ?: emptyList()
+
+    /** Each library's resources, already through aapt2. */
+    val composeFlatRes: List<File>
+        get() = File(composeRoot, "flat").listFiles { f -> f.extension == "zip" }
+            ?.sorted() ?: emptyList()
+
+    /**
+     * The libraries **and the Kotlin runtime**, already through d8.
+     *
+     * The stdlib is in here deliberately, which is why a Compose build uses
+     * this instead of the separate stdlib cache rather than as well as it —
+     * merging both would be the same classes twice, and d8 refuses that.
+     */
+    val composeDex: List<File>
+        get() = File(composeRoot, "dex").listFiles { f -> f.extension == "dex" }
+            ?.sorted() ?: emptyList()
+
+    /**
+     * Every package that needs an `R` class generated into it.
+     *
+     * A library's compiled code refers to its own `R`, and those classes do
+     * not exist until the app is linked — so `aapt2` has to be told to emit a
+     * copy into each one, or the app dies at runtime looking for them.
+     */
+    val composePackages: List<String>
+        get() = File(composeRoot, "packages.txt")
+            .takeIf { it.isFile }
+            ?.readLines()
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?: emptyList()
+
+    /** Can this bundle build Compose, or is it an older one that cannot? */
+    val hasCompose: Boolean
+        get() = composePlugin.isFile && composeLibs.isNotEmpty() && composeDex.isNotEmpty()
+
     fun manifest(): JSONObject? =
         runCatching { JSONObject(manifestFile.readText()) }.getOrNull()
 

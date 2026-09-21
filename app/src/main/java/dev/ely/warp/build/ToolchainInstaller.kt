@@ -136,7 +136,11 @@ object ToolchainInstaller {
     fun currentState(context: Context): State {
         val toolchain = Toolchain.forContext(context)
         return when {
-            toolchain.isInstalled -> State.Installed(
+            // Stale counts as not installed, which is the whole point of the
+            // check: what is on disk is a *copy* of what was in the APK, and
+            // once the APK moves on, the copy is a previous version of the
+            // compiler with no way to say so.
+            toolchain.isInstalled && !isStale(context) -> State.Installed(
                 version = toolchain.version(),
                 megabytes = directorySize(File(context.filesDir, "toolchain")) / 1_048_576,
             )
@@ -144,6 +148,45 @@ object ToolchainInstaller {
             else -> State.NotInstalled
         }
     }
+
+    /**
+     * Was this toolchain unpacked from an older APK than the one running?
+     *
+     * **The same silence as the bug this file was just fixed for**, one level
+     * up. Installing Warp again with a newer bundle would leave the previous
+     * compiler unpacked and in use for ever: `isInstalled` only asks whether
+     * the files exist, and they do. The Compose kit arriving in a new bundle is
+     * the first time it would have mattered, and it would have looked like
+     * Compose simply not working.
+     *
+     * Keyed on **when the app was last updated**, not on the bundle's own
+     * version string. The version in `MANIFEST.json` is written by hand and did
+     * not change when the Compose kit was added to it — so a version check
+     * would have sailed straight past exactly the case it exists for. Install
+     * time is recorded by Android, cannot be forgotten, and changes on every
+     * update including a reinstall of the same version.
+     */
+    private fun isStale(context: Context): Boolean {
+        val now = lastUpdateTime(context)
+        // Android would not say when it was updated. Not knowing is not a
+        // reason to throw away 300 MB somebody already has.
+        if (now == 0L) return false
+        // **No stamp means unknown, and unknown means replace it.** Every
+        // toolchain unpacked before this check existed is in that state,
+        // including one that predates the Compose kit — and "probably fine" is
+        // the assumption that made a missing compiler invisible in the first
+        // place. Costs one re-unpack, once, on installs that already exist.
+        return stamp(context) != now
+    }
+
+    private fun lastUpdateTime(context: Context): Long = runCatching {
+        context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
+    }.getOrDefault(0L)
+
+    private fun stampFile(context: Context) = File(context.filesDir, "toolchain/.installed-from")
+
+    private fun stamp(context: Context): Long =
+        runCatching { stampFile(context).readText().trim().toLong() }.getOrDefault(0L)
 
     /**
      * Unpack the bundled toolchain into the app's data directory.
@@ -172,6 +215,12 @@ object ToolchainInstaller {
         result.fold(
             onSuccess = { toolchain ->
                 val size = directorySize(target) / 1_048_576
+                // Which APK this copy came out of. Written last, after the
+                // unpack has succeeded, so a half-unpacked toolchain is never
+                // stamped as current.
+                runCatching {
+                    stampFile(context).writeText(lastUpdateTime(context).toString())
+                }
                 Log.i(TAG, "toolchain ${toolchain.version()} installed, $size MB")
                 State.Installed(toolchain.version(), size)
             },

@@ -726,6 +726,84 @@ object DebugServer {
                 200 to out
             }
 
+            /**
+             * Can this phone build Compose, and does the split hold — §8 item 11.
+             *
+             * Offline and free. It does not compile anything: compiling was
+             * proved by hand on the device, and a suite that runs a real
+             * Compose build costs half a minute every time it is run. What this
+             * checks is the part that rots — that the kit is present, that a
+             * Compose project is written as Compose and an XML one as XML, and
+             * that the two never bleed into each other.
+             */
+            "GET /compose" -> {
+                val toolchain = dev.ely.warp.build.Toolchain.forContext(context)
+                val out = JSONObject()
+                    .put("ready", toolchain.hasCompose)
+                    .put("plugin", toolchain.composePlugin.isFile)
+                    .put("libs", toolchain.composeLibs.size)
+                    .put("flatRes", toolchain.composeFlatRes.size)
+                    .put("dex", toolchain.composeDex.size)
+                    .put("packages", toolchain.composePackages.size)
+                    // The stdlib must be inside the kit's dex, because a
+                    // Compose build uses it *instead of* the stdlib cache. A
+                    // spike that got this wrong produced an APK that installed
+                    // cleanly and died on launch.
+                    .put(
+                        "stdlibInKit",
+                        toolchain.composeDex.sumOf { it.length() } > 15_000_000L,
+                    )
+
+                // Two throwaway projects, one of each kind, to check the split.
+                val dir = java.io.File(context.cacheDir, "compose-probe-${System.currentTimeMillis()}")
+                try {
+                    val xmlDir = java.io.File(dir, "xml").apply { mkdirs() }
+                    val cDir = java.io.File(dir, "compose").apply { mkdirs() }
+                    dev.ely.warp.build.NewProject.create(xmlDir, "Plain", "dev.ely.plain")
+                    dev.ely.warp.build.NewProject.create(
+                        cDir, "Modern", "dev.ely.modern", compose = true,
+                    )
+
+                    val xmlMeta = dev.ely.warp.build.NewProject.meta(xmlDir)
+                    val cMeta = dev.ely.warp.build.NewProject.meta(cDir)
+                    val cMain = java.io.File(cDir, "src/MainActivity.kt").readText()
+                    val xmlMain = java.io.File(xmlDir, "src/MainActivity.kt").readText()
+
+                    out.put("xmlFlag", xmlMeta?.compose == false)
+                        .put("composeFlag", cMeta?.compose == true)
+                        // A Compose project must not ship a layout nobody reads.
+                        .put("composeHasNoLayout", !java.io.File(cDir, "res/layout").exists())
+                        .put("xmlHasLayout", java.io.File(xmlDir, "res/layout/activity_main.xml").isFile)
+                        .put("composeUsesSetContent", "setContent {" in cMain)
+                        .put("composeAvoidsSetContentView", "setContentView" !in cMain)
+                        .put("xmlUsesSetContentView", "setContentView" in xmlMain)
+                        // The template is the most-read example in a project.
+                        // If it hard-codes sizes or skips the theme, so will
+                        // everything written after it.
+                        .put("templateUsesDp", ".dp" in cMain)
+                        .put("templateUsesTheme", "MaterialTheme" in cMain)
+                        .put("templateHasState", "remember {" in cMain)
+                        // The summary the model is actually given, per project.
+                        .put(
+                            "brainSplit",
+                            "JETPACK COMPOSE" in
+                                dev.ely.warp.brain.AndroidBrain.summaryFor(true) &&
+                                "NO Compose" in
+                                dev.ely.warp.brain.AndroidBrain.summaryFor(false),
+                        )
+                        .put(
+                            "composeTopicExists",
+                            dev.ely.warp.brain.AndroidBrain.topics.containsKey("compose"),
+                        )
+                        .put("ok", true)
+                } catch (e: Throwable) {
+                    out.put("ok", false).put("failed", "${e.javaClass.name}: ${e.message}")
+                } finally {
+                    dir.deleteRecursively()
+                }
+                200 to out
+            }
+
             "POST /icon/probe" -> {
                 val out = JSONObject()
                 val dir = java.io.File(context.cacheDir, "icon-probe-${System.currentTimeMillis()}")

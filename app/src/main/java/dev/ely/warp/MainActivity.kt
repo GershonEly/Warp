@@ -190,9 +190,21 @@ private fun WarpApp() {
             titler = titler,
             // Composed every turn, so a rule added mid-conversation applies to
             // the very next message rather than the next launch.
-            systemPrompt = {
+            systemPrompt = { conversationId ->
                 listOfNotNull(
                     ChatEngine.DEFAULT_SYSTEM_PROMPT,
+                    // Which Android this project is. Read off disk each turn
+                    // rather than captured, because the answer changes the
+                    // moment new_project runs — mid-conversation, on the very
+                    // turn that creates the app.
+                    //
+                    // Told flatly, never hedged: §5o is what a model does with
+                    // "you have Compose, unless you don't".
+                    dev.ely.warp.brain.AndroidBrain.summaryFor(
+                        compose = dev.ely.warp.build.NewProject.meta(
+                            dev.ely.warp.build.Projects.forConversation(context, conversationId)
+                        )?.compose == true
+                    ),
                     // Composed every turn like the rules, so flipping the switch
                     // reaches the very next message. And told even when it is
                     // off, which is the entire point: a model that only knows it

@@ -68,7 +68,14 @@ object BuildProject : Tool {
         val outcome = runCatching {
             dev.ely.warp.work.Working.during("Compiling ${meta.name}") {
                 engineFor(env.context).build(
-                    BuildEngine.Request(projectDir = env.project, applicationId = meta.applicationId),
+                    BuildEngine.Request(
+                        projectDir = env.project,
+                        applicationId = meta.applicationId,
+                        // Read from the project, not chosen here. Which of the
+                        // two toolchains an app is written against was settled
+                        // when it was created.
+                        compose = meta.compose,
+                    ),
                     onLine = { log.appendLine(it.text) },
                 )
             }

@@ -33,8 +33,14 @@ class ChatEngine(
      * always in context and can change between turns. A prompt captured once
      * would carry the rules as they were when the app started, which is exactly
      * how "it forgot my rule" happens.
+     *
+     * Given the conversation id, because some of what the model must be told
+     * depends on **which app is open** rather than on the app's settings — an
+     * XML project and a Compose project want opposite instructions, and §5o is
+     * what happens when a model is told about a toolchain it does not have.
+     * Null before the first message has created a conversation.
      */
-    private val systemPrompt: () -> String? = { DEFAULT_SYSTEM_PROMPT },
+    private val systemPrompt: (String?) -> String? = { DEFAULT_SYSTEM_PROMPT },
     /** Where messages are kept. Null keeps the engine purely in memory. */
     private val store: ConversationStore? = null,
     /** Who gives a conversation its name. Null leaves them unnamed. */
@@ -903,7 +909,7 @@ class ChatEngine(
             // turn back to a provider is meaningless and some reject it.
             messages = (sheet?.messages ?: _messages.value).filter { it.id != replyId },
             systemPrompt = listOfNotNull(
-                systemPrompt(),
+                systemPrompt(_conversationId.value),
                 when (mode) {
                     Mode.PLAN -> PLAN_DIRECTIVE.trim()
                     Mode.GRILL -> GRILL_DIRECTIVE.trim()
@@ -1427,7 +1433,10 @@ class ChatEngine(
             in silence is what makes an assistant look like it does not know
             what it is doing.
 
-            ${dev.ely.warp.brain.AndroidBrain.SUMMARY}
         """.trimIndent()
+        // The Brain's summary is deliberately *not* part of this constant. It
+        // depends on which project is open — an XML one and a Compose one want
+        // opposite instructions — so it is appended per turn by whoever builds
+        // the prompt, from AndroidBrain.summaryFor(compose).
     }
 }
