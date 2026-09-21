@@ -150,7 +150,7 @@ class BuildEngine(
                 timeoutUnit = TimeUnit.MINUTES,
                 onLine = onLine,
             )
-            val result = StageResult(s, r.ok, r.durationMs, r.output)
+            val result = StageResult(s, r.ok, r.durationMs, withoutNoise(r.output))
             stages += result
             return result
         }
@@ -457,6 +457,28 @@ class BuildEngine(
         toolchain.kotlincJars.filter { it.name in RUNTIME_JARS }
 
     /**
+     * Drop the one thing the compiler says on every single run that means
+     * nothing.
+     *
+     * `kotlinc` bundles **jansi**, a library for colouring terminal output. It
+     * tries to load a native `.so` that wants `libc.so.6` — a glibc name that
+     * does not exist on Android — fails, and carries on perfectly happily with
+     * plain text. Entirely harmless.
+     *
+     * It is filtered because of **where** it lands. The model reads the tail of
+     * this output to find out what to fix, and jansi puts an
+     * `UnsatisfiedLinkError` and a stack trace at the top of it. In a real
+     * session the actual error — `unresolved reference 'Bundle'` — sat
+     * underneath what looked like a fatal crash in the compiler itself.
+     *
+     * Filtered rather than disabled with a JVM flag: the flags that suppress
+     * jansi differ between versions, and a flag that silently stops working
+     * would bring the noise back without anyone noticing. Matching the text is
+     * ugly and cannot fail quietly.
+     */
+    private fun withoutNoise(output: String): String = stripNoise(output)
+
+    /**
      * Copy [baseApk] to [out], adding the dex files.
      *
      * aapt2 produces an APK holding only resources; the code has to be added
@@ -489,6 +511,38 @@ class BuildEngine(
 
     companion object {
         private const val TAG = "WarpBuild"
+
+        /** See [withoutNoise]. Here so it can be checked without a build. */
+        internal fun stripNoise(output: String): String {
+            if ("jansi" !in output) return output
+            var skipping = false
+            return output.lineSequence().filter { line ->
+                when {
+                    "jansi" in line && ("Failed to load native library" in line ||
+                        "UnsatisfiedLinkError" in line) -> { skipping = true; false }
+                    // The stack trace that follows it, and nothing else:
+                    // indented `at ...` frames stop the moment real output
+                    // resumes.
+                    skipping && line.trimStart().startsWith("at ") -> false
+                    "jansi" in line && line.isNotBlank() -> false
+                    else -> { skipping = false; true }
+                }
+            }.joinToString("\n")
+        }
+
+        /**
+         * True when the noise is gone and the real error survived.
+         *
+         * Both halves matter. A filter that removed everything would pass a
+         * check for "no jansi" and throw away the compiler error the model
+         * needs — which is a worse bug than the one being fixed.
+         */
+        internal fun filtersNoise(sample: String): Boolean {
+            val cleaned = stripNoise(sample)
+            return "jansi" !in cleaned &&
+                "UnsatisfiedLinkError" !in cleaned &&
+                "unresolved reference 'Bundle'" in cleaned
+        }
 
         private const val KOTLIN_COMPILER_MAIN = "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler"
         private const val D8_MAIN = "com.android.tools.r8.D8"

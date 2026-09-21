@@ -700,6 +700,52 @@ object DebugServer {
              * unpacked, and neither they nor the person who gave it to them had
              * any way to find that out. One request now says it.
              */
+            /**
+             * What is Warp actually telling the model about this project?
+             *
+             * Added because the question was unanswerable from outside, and it
+             * cost two wrong diagnoses. A chat asked for Compose and was told
+             * "this toolchain has no Compose"; the summary was fixed, the same
+             * thing happened again, and only then did it turn out the model had
+             * read it from `android_docs("layout")` instead — a page making an
+             * absolute claim about the whole toolchain.
+             *
+             * Both halves are returned, because the model reads both and either
+             * can contradict the other.
+             *
+             * @param id conversation to answer for. Omitted means a new chat,
+             *   which is its own state and the one that was wrong.
+             */
+            "GET /brain" -> {
+                val id = query["id"]
+                val project = dev.ely.warp.build.Projects.forConversation(context, id)
+                val compose = if (id == null) null
+                    else dev.ely.warp.build.NewProject.meta(project)?.compose
+
+                val summary = dev.ely.warp.brain.AndroidBrain.summaryFor(compose)
+                val topics = dev.ely.warp.brain.AndroidBrain.topics
+
+                // The claim that caused it, wherever it is still made. An
+                // absolute "Compose will not compile" is now only ever correct
+                // inside the XML summary, which is given to XML projects alone.
+                val lying = topics.filterValues { "Compose will not compile" in it }.keys
+
+                200 to JSONObject()
+                    .put("conversation", id ?: JSONObject.NULL)
+                    .put(
+                        "projectKind",
+                        when (compose) {
+                            null -> "none yet"
+                            true -> "compose"
+                            false -> "xml"
+                        },
+                    )
+                    .put("summary", summary)
+                    .put("saysComposeUnavailable", "NO Compose" in summary)
+                    .put("topics", JSONArray(topics.keys.toList()))
+                    .put("topicsClaimingNoCompose", JSONArray(lying.toList()))
+            }
+
             "GET /toolchain" -> {
                 val state = dev.ely.warp.build.ToolchainInstaller.state.value
                 val out = JSONObject()
@@ -887,6 +933,22 @@ object DebugServer {
                 } finally {
                     dir.deleteRecursively()
                 }
+
+                // Not an icon check, but it needs a real compiler run to be
+                // worth anything and this is the group that has one. jansi
+                // fails to load on every single kotlinc run and puts an
+                // UnsatisfiedLinkError at the top of the output the model reads
+                // to find out what to fix — in a real session the actual error
+                // sat underneath what looked like a crash in the compiler.
+                out.put(
+                    "noiseFiltered",
+                    dev.ely.warp.build.BuildEngine.filtersNoise(
+                        "Failed to load native library:jansi-2.4.0-x-libjansi.so\n" +
+                            "java.lang.UnsatisfiedLinkError: /data/jansi.so: dlopen failed\n" +
+                            "\tat org.fusesource.jansi.internal.JansiLoader.load\n" +
+                            "src/MainActivity.kt:43:5: error: unresolved reference 'Bundle'."
+                    ),
+                )
 
                 // The chosen model and its price, so the suite can check that the
                 // picker and the card agree about what a tap costs.

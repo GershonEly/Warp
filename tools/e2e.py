@@ -1449,6 +1449,14 @@ if want("icons"):
     check("there is a real choice to make", (r.get("options") or 0) >= 4,
           f"got {r.get('options')} options")
 
+    # Not about icons, but it needs a real toolchain and this group has one.
+    # jansi fails to load on every kotlinc run and lands an UnsatisfiedLinkError
+    # at the top of the output the model reads to find out what to fix. In a
+    # real session the actual error sat underneath what looked like a crash in
+    # the compiler itself. Checks both halves: noise gone, error kept.
+    check("the fake compiler crash is filtered, the real error kept",
+          r.get("noiseFiltered") is True)
+
     check("the default is the cheap one that is made for this",
           r.get("modelName") == "Nano Banana", r.get("modelName"))
     check("and its price is on the card, not left to be discovered",
@@ -1541,6 +1549,20 @@ if want("compose"):
     check("a chat with no project yet is not told Compose is missing",
           r.get("newChatOffersCompose") is True,
           "otherwise it makes an XML project and the lie becomes true")
+
+    # The second half of the same bug, and the reason the first fix did not
+    # take. The summary was corrected; the model then read
+    # android_docs("layout"), which said "Compose will not compile" as a flat
+    # fact about the toolchain, and believed that instead. Two places told it
+    # opposite things and it picked the wrong one.
+    s, b = call("GET", "/brain", timeout=30)
+    check("a new chat is offered both kinds of project",
+          b.get("projectKind") == "none yet"
+          and b.get("saysComposeUnavailable") is False,
+          f"kind={b.get('projectKind')} saysUnavailable={b.get('saysComposeUnavailable')}")
+    check("and no doc page contradicts it",
+          b.get("topicsClaimingNoCompose") == [],
+          f"these still say Compose will not compile: {b.get('topicsClaimingNoCompose')}")
     check("and has somewhere to read the details",
           r.get("composeTopicExists") is True)
 

@@ -333,16 +333,21 @@ object AndroidBrain {
     private val LAYOUT = """
         # Building a screen here — read this before writing any UI
 
-        ## What this toolchain has, and has not
+        ## What an XML project has, and has not
+
+        **This page is about projects built with XML layouts.** If you have not
+        created the project yet, you can choose Compose instead — it compiles
+        here and is the default. Read android_docs("compose") for that.
 
         **You have: XML layouts, drawables, themes, styles, colours, and the
         whole `android.widget` set.** `aapt2` compiles the entire `res/` folder
         and generates `R`, so every one of these already works.
 
-        **You do not have: Compose, AppCompat, Material Components, or any
-        other library.** There is no dependency resolution on the phone — only
-        the Android framework and what you write. Compose will not compile. If a
-        task really needs it, say so plainly and build what you can without it.
+        **You do not have, in an XML project: AppCompat, Material Components,
+        or any other library.** There is no dependency resolution on the phone —
+        only the Android framework and what you write. Compose is not used in
+        *this* kind of project; that is a property of the project, not of the
+        toolchain, and it was fixed once by choosing XML at creation.
 
         ## The mistake that ruins apps built here
 
