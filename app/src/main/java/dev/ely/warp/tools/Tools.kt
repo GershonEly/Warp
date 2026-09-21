@@ -429,11 +429,10 @@ object AndroidDocs : Tool {
     override val description =
         "Read what Warp already knows about Android — how to build a screen " +
             "here, making it look designed, icon sizes, project layout, " +
-            "permissions and the things that fail quietly. Read `layout` " +
-            "before writing any UI: this toolchain has no Compose and no " +
-            "libraries, and sizes written in Kotlin are pixels. Use this " +
-            "instead of asking the user, and instead of guessing. Topics: " +
-            AndroidBrain.names.joinToString(", ")
+            "permissions and the things that fail quietly. Read `compose` or " +
+            "`layout` before writing any UI, whichever this project uses. Use " +
+            "this instead of asking the user, and instead of guessing. " +
+            "Topics: " + AndroidBrain.names.joinToString(", ")
 
     override val schemaJson = """
         {"type":"object","properties":{
@@ -453,7 +452,22 @@ object AndroidDocs : Tool {
                 "no topic called \"$topic\" — there is: ${AndroidBrain.names.joinToString(", ")}"
             )
 
-        return ToolResult.Ok("$topic · ${text.lines().size} lines", text)
+        // `design` is two pages behind one name: making an app look considered
+        // means `colors.xml` and a theme in one kind of project, and a
+        // `ColorScheme` in the other. One name because the model should not
+        // have to know which page it needs before it knows what it needs, and
+        // because a name it can guess wrong is a dead end it cannot see.
+        //
+        // Served from the project rather than asked about, so it cannot be got
+        // wrong: a Compose app was handed the XML page, which opens by saying
+        // MaterialTheme is not available. It is the most important thing in a
+        // Compose app. The model believed it and used the defaults.
+        val forProject = AndroidBrain.pageFor(
+            topic,
+            compose = dev.ely.warp.build.NewProject.meta(env.project)?.compose,
+        ) ?: text
+
+        return ToolResult.Ok("$topic · ${forProject.lines().size} lines", forProject)
     }
 }
 

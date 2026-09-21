@@ -68,8 +68,15 @@ object AndroidBrain {
         @Composable functions. There is no layout XML, no findViewById and no
         setContentView — MainActivity calls setContent { }. Material 3 is
         available: MaterialTheme, Scaffold, Card, Button, Text.
-        Read android_docs("compose") before writing your first screen.
+        Read android_docs("compose") before writing your first screen, and
+        android_docs("design") before choosing any colour or size.
         Sizes are always .dp — 16.dp, never a bare 16.
+
+        Material 3's defaults are restrained on purpose, for dense screens.
+        Taking them is a decision and usually the wrong one: choose a palette
+        from what the person asked for, make one action obviously the main one,
+        and never use dynamicColorScheme — it takes colours from the wallpaper,
+        so the app is not what anyone chose.
 
         Available: the Android framework, Compose, Material 3, coroutines.
         Nothing else — no image loaders, no networking libraries, no Room.
@@ -125,6 +132,25 @@ object AndroidBrain {
         null -> SUMMARY_NEW
         true -> SUMMARY_COMPOSE
         false -> SUMMARY
+    }
+
+    /**
+     * The version of a page that suits this project, or null for pages that
+     * have only one version.
+     *
+     * Only `design` is two pages behind one name so far. It is one name rather
+     * than two because the model should not have to know which page it needs
+     * before it knows what it needs — and a name it can guess wrong is a dead
+     * end it cannot see coming.
+     *
+     * @param compose null before a project exists. A design page is no use at
+     *   that point anyway, so the XML one is returned unchanged rather than
+     *   inventing a third.
+     */
+    fun pageFor(topic: String, compose: Boolean?): String? = when {
+        topic != "design" -> null
+        compose == true -> DESIGN_COMPOSE
+        else -> null
     }
 
     /** Every topic, by name. The tool refuses anything not in here. */
@@ -435,35 +461,168 @@ object AndroidBrain {
         never see the rest.
     """.trimIndent()
 
+    /**
+     * Making a Compose app look considered — the page that was missing.
+     *
+     * A Compose project used to be handed [DESIGN], which opens by saying
+     * `MaterialTheme` is not available. It is the most important thing in a
+     * Compose app. The model believed it, took Material 3's defaults, and
+     * produced something correct and characterless beside an XML app that had
+     * been forced to decide everything for itself.
+     *
+     * Material 3's defaults are restrained on purpose — they are built for
+     * dense, information-heavy screens. **Accepting them is a decision, and
+     * usually the wrong one**, which is the single thing this page exists to
+     * say. The rest is the same as the XML page, because the principle does not
+     * change with the syntax: the colours belong to the person who asked.
+     */
+    private val DESIGN_COMPOSE = """
+        # Making it look like something, in Compose
+
+        Material 3 gives you working components immediately. That is the trap:
+        **its defaults are restrained by design**, built for dense screens full
+        of information. Accept them and you get an app that is correct, quiet
+        and anonymous — every screen the same weight, nothing looking like it
+        matters more than anything else.
+
+        ## The colours are the person's, not yours and not this page's
+
+        **This page will not give you a palette, deliberately.** A fixed example
+        would be copied into every app built here, and they would all look the
+        same — the same fault as defaulting to purple, only harder to spot.
+
+        Work it out in this order:
+
+        1. **What did they say?** *"like a gym app"*, *"make it green"*,
+           *"dark"* — that is the answer. A colour they named is the primary.
+        2. **What is the app?** If they said nothing about looks, pick from what
+           it *is*. A notes app is not a racing game.
+        3. **Say what you picked, in one line**, so they can change it with one
+           sentence instead of describing a palette unprompted.
+
+        **Do not use `dynamicColorScheme`.** It takes the colours from the
+        phone's wallpaper, which means the app is not what anyone chose and
+        looks different on every device. Write the scheme yourself:
+
+        ```kotlin
+        private val Dark = darkColorScheme(
+            primary = Color(0x...),        // the one thing you want tapped
+            onPrimary = Color(0x...),      // text on top of it
+            surface = Color(0x...),        // cards
+            onSurface = Color(0x...),      // text on cards
+            background = Color(0x...),
+            error = Color(0x...),          // destructive actions only
+        )
+
+        MaterialTheme(colorScheme = if (isSystemInDarkTheme()) Dark else Light) { }
+        ```
+
+        Both schemes, and `isSystemInDarkTheme()` between them. A bare
+        `MaterialTheme { }` is **light only** and ignores dark mode entirely.
+
+        After that, never write `Color(0x...)` again — use
+        `MaterialTheme.colorScheme.primary` and friends, so changing the palette
+        is one edit.
+
+        ## Make one thing obviously the main action
+
+        The most common failure here: every button is a `TextButton`, so nothing
+        looks important and the primary action is invisible.
+
+        | Weight | Use | For |
+        |---|---|---|
+        | Loudest | `Button` | the one thing you want tapped |
+        | Middle | `FilledTonalButton`, `OutlinedButton` | secondary |
+        | Quiet | `TextButton` | Cancel, Dismiss |
+        | Floating | `FloatingActionButton` | the single add/create action |
+
+        If a screen's whole point is *start the workout*, that is a `Button`
+        across the width, not a line of text. **Tapping a card with no label is
+        not a button** — if it does something, say so.
+
+        Destructive actions use `MaterialTheme.colorScheme.error`, so Delete
+        never looks like Save.
+
+        ## Size for where it is used
+
+        Material's defaults assume a phone held close, in your hand, with your
+        attention. If the person told you otherwise — *"readable at arm's
+        length"*, *"while I am driving"*, *"my grandmother uses it"* — that is an
+        instruction about size, and defaults will not honour it.
+
+        ```kotlin
+        Text("12", style = MaterialTheme.typography.displayLarge)   // a countdown
+        Button(modifier = Modifier.fillMaxWidth().height(64.dp)) { }
+        ```
+
+        ## Fill the screen or explain the space
+
+        A `Column` with three items leaves the rest blank, and blank reads as
+        unfinished. Either put something there — a list that grows, a big
+        current value, an empty state that says what to do — or centre what you
+        have so the space looks intended.
+
+        ```kotlin
+        if (items.isEmpty()) {
+            Text("No workouts yet. Tap + to make one.")   // not a blank screen
+        }
+        ```
+
+        ## Spacing is a decision too
+
+        `Arrangement.spacedBy(12.dp)` once on a Column beats `padding` scattered
+        over every child, and it stays consistent when the list changes.
+        Group what belongs together and separate what does not — a screen where
+        everything is 8.dp apart has no structure.
+    """.trimIndent()
+
     private val DESIGN = """
         # Making it look like something, with what is here
 
-        Material Components is **not available** — no `MaterialButton`, no
-        `MaterialTheme`. What follows is how to get the same result from a theme,
-        a colour file and some drawables, which you do have.
+        **This page is for a project built with XML layouts.** In one of those,
+        Material Components is not available — no `MaterialButton`, no
+        `MaterialTheme` — so what follows is how to get the same result from a
+        theme, a colour file and some drawables, which you do have. A Compose
+        project has Material 3 and gets a different page under this same name.
 
-        ## Do not default to purple on black
+        ## The colours are the person's, not yours and not this page's
 
-        Purple-on-black is Material's sample palette and it is what every model
-        reaches for when it has not decided anything. It is the look of an app
-        nobody chose the colours for.
+        **This page will not give you a palette, deliberately.** An earlier
+        version printed five hex codes as an example and every app built here
+        copied them exactly — so every app looked the same, which is the same
+        fault as defaulting to purple, only less obvious.
 
-        **Decide a palette and write it down** in `res/values/colors.xml`, then
-        never write a hex code anywhere else:
+        Work it out in this order:
+
+        1. **What did they say?** *"like a gym app"*, *"make it green"*, *"dark"*,
+           *"like Instagram"* — that is the answer, use it. If they named a
+           colour, that colour is the accent.
+        2. **What is the app?** If they said nothing about looks, pick from what
+           it *is*. A notes app is not a racing game; a timer you stare at while
+           exercising is not a bank statement.
+        3. **Say what you picked, in one line.** *"Deep green with a warm
+           accent, since it is a plant app."* Then they can change it with one
+           sentence instead of having to describe a whole palette unprompted.
+
+        Never ask them to choose a palette from nothing — that is a question
+        almost nobody can answer. Pick, say, and let them correct you.
+
+        **Do not default to purple on black.** It is Material's sample palette
+        and the look of an app nobody chose the colours for.
+
+        **Write the palette down** in `res/values/colors.xml` and never put a
+        hex code anywhere else. Two neutrals, one accent and one colour for
+        danger is enough for almost anything:
 
         ```xml
         <resources>
-            <color name="bg">#0E1116</color>
-            <color name="surface">#171B22</color>
-            <color name="text">#ECEFF4</color>
-            <color name="muted">#9AA4B2</color>
-            <color name="accent">#4C8DFF</color>
+            <color name="bg">...</color>
+            <color name="surface">...</color>
+            <color name="text">...</color>
+            <color name="muted">...</color>
+            <color name="accent">...</color>
         </resources>
         ```
-
-        Pick the accent from what the app *is* — a notes app is not a racing
-        game. Two neutrals, one accent, and one colour for danger is enough for
-        almost anything.
 
         ## A theme, or you get the 2011 default
 

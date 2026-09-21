@@ -744,6 +744,37 @@ object DebugServer {
                     .put("saysComposeUnavailable", "NO Compose" in summary)
                     .put("topics", JSONArray(topics.keys.toList()))
                     .put("topicsClaimingNoCompose", JSONArray(lying.toList()))
+                    // The design page is two pages behind one name. A Compose
+                    // project was handed the XML one, which opens by saying
+                    // MaterialTheme is not available — the most important thing
+                    // in a Compose app — so it took Material 3's defaults and
+                    // the result was correct and characterless.
+                    .put(
+                        "designPageIsCompose",
+                        (dev.ely.warp.brain.AndroidBrain.pageFor("design", true) ?: "")
+                            .contains("darkColorScheme"),
+                    )
+                    .put(
+                        "designPageIsXmlOtherwise",
+                        dev.ely.warp.brain.AndroidBrain.pageFor("design", false) == null,
+                    )
+                    // No page may hand out a palette. An earlier version
+                    // printed five hex codes as an example and every app built
+                    // here copied them exactly, so they all looked the same —
+                    // the same fault as defaulting to purple, less obvious.
+                    .put(
+                        "noStockPalette",
+                        topics.values.none { Regex("#[0-9A-Fa-f]{6}").containsMatchIn(it) } &&
+                            (dev.ely.warp.brain.AndroidBrain.pageFor("design", true) ?: "")
+                                .let { !Regex("0xFF[0-9A-Fa-f]{6}").containsMatchIn(it) },
+                    )
+                    // Wallpaper colours are nobody's choice and differ on every
+                    // phone. He was explicit: the palette comes from the prompt.
+                    .put(
+                        "warnsOffDynamicColour",
+                        (dev.ely.warp.brain.AndroidBrain.pageFor("design", true) ?: "")
+                            .contains("Do not use `dynamicColorScheme`"),
+                    )
             }
 
             "GET /toolchain" -> {
@@ -829,6 +860,16 @@ object DebugServer {
                         .put("templateUsesDp", ".dp" in cMain)
                         .put("templateUsesTheme", "MaterialTheme" in cMain)
                         .put("templateHasState", "remember {" in cMain)
+                        // A bare `MaterialTheme { }` is light only and ignores
+                        // dark mode. The template shipped exactly that while
+                        // the design page told everyone not to — and the
+                        // template is the most-read example in any project.
+                        .put(
+                            "templateHandlesDarkMode",
+                            "isSystemInDarkTheme()" in cMain &&
+                                "darkColorScheme" in cMain &&
+                                "lightColorScheme" in cMain,
+                        )
                         // The summary the model is actually given, per project.
                         .put(
                             "brainSplit",

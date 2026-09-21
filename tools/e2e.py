@@ -1534,6 +1534,11 @@ if want("compose"):
     check("wraps everything in MaterialTheme", r.get("templateUsesTheme") is True)
     check("and shows state, not just a static screen",
           r.get("templateHasState") is True)
+    # A bare MaterialTheme { } is light only. The template shipped exactly that
+    # while the design page told everyone not to — and the template is the
+    # most-read example in any project.
+    check("and handles dark mode instead of a bare MaterialTheme",
+          r.get("templateHandlesDarkMode") is True)
 
     check("the model is told which Android it is in, flatly",
           r.get("brainSplit") is True,
@@ -1563,6 +1568,26 @@ if want("compose"):
     check("and no doc page contradicts it",
           b.get("topicsClaimingNoCompose") == [],
           f"these still say Compose will not compile: {b.get('topicsClaimingNoCompose')}")
+
+    # Why the first real Compose app came out characterless. It was handed the
+    # XML design page, which opens by saying MaterialTheme is not available —
+    # the most important thing in a Compose app — so it took Material 3's
+    # defaults, which are restrained by design.
+    check("a Compose project gets a design page it can use",
+          b.get("designPageIsCompose") is True,
+          "otherwise it is told MaterialTheme does not exist")
+    check("and an XML project keeps the one it had",
+          b.get("designPageIsXmlOtherwise") is True)
+
+    # An earlier design page printed five hex codes as an example, and every
+    # app built here copied them exactly — so every app looked the same. That
+    # is the same fault as defaulting to purple, only harder to notice.
+    check("no page hands out a palette",
+          b.get("noStockPalette") is True,
+          "the colours come from the prompt, not from a page")
+    check("and wallpaper colours are ruled out",
+          b.get("warnsOffDynamicColour") is True,
+          "dynamic colour is nobody's choice and differs on every phone")
     check("and has somewhere to read the details",
           r.get("composeTopicExists") is True)
 

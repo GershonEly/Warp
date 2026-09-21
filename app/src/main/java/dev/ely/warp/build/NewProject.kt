@@ -632,6 +632,7 @@ object NewProject {
         import android.os.Bundle
         import androidx.activity.ComponentActivity
         import androidx.activity.compose.setContent
+        import androidx.compose.foundation.isSystemInDarkTheme
         import androidx.compose.foundation.layout.Column
         import androidx.compose.foundation.layout.fillMaxSize
         import androidx.compose.foundation.layout.padding
@@ -641,6 +642,8 @@ object NewProject {
         import androidx.compose.material3.MaterialTheme
         import androidx.compose.material3.Scaffold
         import androidx.compose.material3.Text
+        import androidx.compose.material3.darkColorScheme
+        import androidx.compose.material3.lightColorScheme
         import androidx.compose.runtime.Composable
         import androidx.compose.runtime.getValue
         import androidx.compose.runtime.mutableIntStateOf
@@ -648,7 +651,30 @@ object NewProject {
         import androidx.compose.runtime.setValue
         import androidx.compose.ui.Alignment
         import androidx.compose.ui.Modifier
+        import androidx.compose.ui.graphics.Color
         import androidx.compose.ui.unit.dp
+
+        // The app's colours, in one place.
+        //
+        // REPLACE THESE. They are neutral on purpose — grey is not a decision,
+        // and an app whose colours nobody chose looks like one. Pick from what
+        // the app is, or from what the person asked for, and change them here.
+        //
+        // Both schemes matter: a bare MaterialTheme { } is light only, and
+        // ignores dark mode entirely.
+        private val Dark = darkColorScheme(
+            primary = Color(0xFFB9C3CF),
+            onPrimary = Color(0xFF1B2027),
+            surface = Color(0xFF191C20),
+            onSurface = Color(0xFFE2E6EB),
+        )
+
+        private val Light = lightColorScheme(
+            primary = Color(0xFF3C4858),
+            onPrimary = Color(0xFFFFFFFF),
+            surface = Color(0xFFF6F8FA),
+            onSurface = Color(0xFF1B2027),
+        )
 
         class MainActivity : ComponentActivity() {
             override fun onCreate(savedInstanceState: Bundle?) {
@@ -657,7 +683,9 @@ object NewProject {
                     // Wrap everything once, here. MaterialTheme is where the
                     // colours and text styles come from; without it every
                     // Text below falls back to an unstyled default.
-                    MaterialTheme {
+                    MaterialTheme(
+                        colorScheme = if (isSystemInDarkTheme()) Dark else Light
+                    ) {
                         Scaffold { padding ->
                             HomeScreen(Modifier.padding(padding))
                         }
