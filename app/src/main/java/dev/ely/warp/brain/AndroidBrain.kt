@@ -336,6 +336,51 @@ object AndroidBrain {
         complete palette that works in dark mode for free; a hand-picked colour
         does not, and black-on-black is how a generated app ends up unreadable.
 
+        ## The two errors that cost a build every time
+
+        Both of these were hit by the first real app built here, in one
+        compile. Neither is obvious and both are cheap to avoid.
+
+        **1. Half of Material 3 is still "experimental".** `TopAppBar`,
+        `Scaffold`'s bar slots, `SearchBar`, `ModalBottomSheet` and the pull-to
+        -refresh components all fail to compile without an opt-in:
+
+        ```kotlin
+        @OptIn(ExperimentalMaterial3Api::class)
+        @Composable
+        fun HomeScreen() { TopAppBar(title = { Text("Sprout") }) }
+        ```
+        ```kotlin
+        import androidx.compose.material3.ExperimentalMaterial3Api
+        ```
+
+        The error reads *"this material API is experimental and is likely to
+        change"*. It is not a warning — the build stops.
+
+        **2. A list in state is a `List`, not a `MutableList`.**
+
+        ```kotlin
+        // Right: hold an immutable list, replace it to change it
+        var plants by remember { mutableStateOf(listOf<Plant>()) }
+        plants = plants + Plant("Fern")
+        plants = plants.filter { it.id != target.id }
+        ```
+
+        The error is *"actual type is 'List<Plant>', but 'MutableList<Plant>'
+        was expected"*, and it appears on every line that changes the list at
+        once, which makes it look worse than it is.
+
+        There is a second way, for when you mutate often and never replace:
+
+        ```kotlin
+        val plants = remember { mutableStateListOf<Plant>() }
+        plants.add(Plant("Fern"))       // no `by`, no reassignment
+        ```
+
+        **Pick one and keep it.** Mixing them — declaring
+        `mutableStateListOf` and then assigning a new list to it — is exactly
+        what produces that error.
+
         ## Imports are not automatic
 
         Every composable needs its own import. The common ones:

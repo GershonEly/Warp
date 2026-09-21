@@ -1590,6 +1590,12 @@ if want("compose"):
           "dynamic colour is nobody's choice and differs on every phone")
     check("and has somewhere to read the details",
           r.get("composeTopicExists") is True)
+    # The two errors the first real Compose app hit, in a single compile: a
+    # TopAppBar without @OptIn, and a list in state declared MutableList and
+    # assigned a List. Both predictable, both cost a whole build round.
+    check("and is warned about the two errors that always cost a build",
+          r.get("composeTopicWarnsOfTheTwoErrors") is True,
+          "ExperimentalMaterial3Api opt-in, and List vs MutableList in state")
 
 
 if want("tasks"):

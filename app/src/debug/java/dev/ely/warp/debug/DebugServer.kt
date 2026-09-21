@@ -892,6 +892,17 @@ object DebugServer {
                             "composeTopicExists",
                             dev.ely.warp.brain.AndroidBrain.topics.containsKey("compose"),
                         )
+                        // The two errors the first real Compose app hit in one
+                        // compile. Both are predictable — a top bar needs an
+                        // opt-in, and a list in state is a List rather than a
+                        // MutableList — and both cost a whole build round.
+                        .put(
+                            "composeTopicWarnsOfTheTwoErrors",
+                            (dev.ely.warp.brain.AndroidBrain.topics["compose"] ?: "").let {
+                                "ExperimentalMaterial3Api" in it &&
+                                    "mutableStateListOf" in it
+                            },
+                        )
                         .put("ok", true)
                 } catch (e: Throwable) {
                     out.put("ok", false).put("failed", "${e.javaClass.name}: ${e.message}")
