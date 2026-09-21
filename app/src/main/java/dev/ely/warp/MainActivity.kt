@@ -200,10 +200,14 @@ private fun WarpApp() {
                     //
                     // Told flatly, never hedged: §5o is what a model does with
                     // "you have Compose, unless you don't".
+                    // Null when there is no project yet, and that is the point:
+                    // `?.compose == true` collapsed "no project" into "not
+                    // Compose", so a brand new chat was told Compose does not
+                    // compile — and then created an XML project, making it so.
                     dev.ely.warp.brain.AndroidBrain.summaryFor(
                         compose = dev.ely.warp.build.NewProject.meta(
                             dev.ely.warp.build.Projects.forConversation(context, conversationId)
-                        )?.compose == true
+                        )?.compose
                     ),
                     // Composed every turn like the rules, so flipping the switch
                     // reaches the very next message. And told even when it is

@@ -79,8 +79,53 @@ object AndroidBrain {
         you are unsure of — say what you are unsure about.
     """.trimIndent()
 
-    /** Whichever of the two this project has earned. */
-    fun summaryFor(compose: Boolean): String = if (compose) SUMMARY_COMPOSE else SUMMARY
+    /**
+     * What to say before there is a project at all.
+     *
+     * **The state that made the first version of this a self-fulfilling lie.**
+     * A new conversation has no project, so asking it "is this a Compose
+     * project?" answered *no* — and the model was handed the summary that says
+     * *"this toolchain has NO Compose"*. It believed that, told the person
+     * Compose would not compile, and created an XML project. Which made the
+     * statement true. The person had asked for Compose in their first sentence.
+     *
+     * So the empty state gets its own answer rather than being folded into the
+     * XML one. Nothing is being written yet; the only decision in front of the
+     * model is which kind of project to make, and it needs to know both exist.
+     */
+    val SUMMARY_NEW = """
+        Android knowledge you already have, without asking the user:
+        call android_docs(topic) to read any of these in full, once, when you need it.
+        Topics: project · compose · layout · design · icons · rules · gotchas
+
+        There is no project in this conversation yet. When you create one with
+        new_project you choose how it is built, and that cannot be changed later:
+
+        - Jetpack Compose — the default. Screens are @Composable functions in
+          Kotlin, Material 3 and dark mode come free. Adds about 8 MB.
+        - XML layouts — res/layout and findViewById. About 50 KB, looks plainer.
+
+        Compose IS available here and does compile. Use it unless the person
+        asked for XML or said the app must be as small as possible. Do not ask
+        them to choose between two Android toolkits; pick Compose and say so in
+        one line.
+
+        Never ask the user for icon sizes, folder names, manifest boilerplate or
+        SDK rules. Look them up instead. Do not guess a version number or an API
+        you are unsure of — say what you are unsure about.
+    """.trimIndent()
+
+    /**
+     * Whichever of the three fits.
+     *
+     * @param compose null when there is no project yet — a real state with its
+     *   own answer, not a reason to fall back to "no Compose".
+     */
+    fun summaryFor(compose: Boolean?): String = when (compose) {
+        null -> SUMMARY_NEW
+        true -> SUMMARY_COMPOSE
+        false -> SUMMARY
+    }
 
     /** Every topic, by name. The tool refuses anything not in here. */
     val topics: Map<String, String> by lazy {

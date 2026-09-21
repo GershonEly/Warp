@@ -167,9 +167,9 @@ object ToolchainInstaller {
      * update including a reinstall of the same version.
      */
     private fun isStale(context: Context): Boolean {
-        val now = lastUpdateTime(context)
-        // Android would not say when it was updated. Not knowing is not a
-        // reason to throw away 300 MB somebody already has.
+        val now = bundleId(context)
+        // The asset could not be measured. Not knowing is not a reason to
+        // throw away 300 MB somebody already has.
         if (now == 0L) return false
         // **No stamp means unknown, and unknown means replace it.** Every
         // toolchain unpacked before this check existed is in that state,
@@ -179,8 +179,25 @@ object ToolchainInstaller {
         return stamp(context) != now
     }
 
-    private fun lastUpdateTime(context: Context): Long = runCatching {
-        context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
+    /**
+     * What identifies *this bundle*, as opposed to this build of the app.
+     *
+     * The asset's own size. Two deliberately-rejected alternatives:
+     *
+     * **The version string in `MANIFEST.json`** is written by hand and did not
+     * change when the Compose kit was added — so it would have sailed straight
+     * past the one case this check exists for.
+     *
+     * **The app's install time** catches everything, and that is its problem:
+     * the toolchain is the same 200 MB in most app updates, so keying on the
+     * app meant re-unpacking 344 MB after every single release. Measured doing
+     * exactly that, on a build where only Kotlin had changed.
+     *
+     * Size changes whenever the bundle is rebuilt and is free to read — the
+     * asset is stored uncompressed, so this is a stat, not a scan.
+     */
+    private fun bundleId(context: Context): Long = runCatching {
+        context.assets.openFd(ASSET_NAME).use { it.length }
     }.getOrDefault(0L)
 
     private fun stampFile(context: Context) = File(context.filesDir, "toolchain/.installed-from")
@@ -215,11 +232,11 @@ object ToolchainInstaller {
         result.fold(
             onSuccess = { toolchain ->
                 val size = directorySize(target) / 1_048_576
-                // Which APK this copy came out of. Written last, after the
+                // Which bundle this copy came out of. Written last, after the
                 // unpack has succeeded, so a half-unpacked toolchain is never
                 // stamped as current.
                 runCatching {
-                    stampFile(context).writeText(lastUpdateTime(context).toString())
+                    stampFile(context).writeText(bundleId(context).toString())
                 }
                 Log.i(TAG, "toolchain ${toolchain.version()} installed, $size MB")
                 State.Installed(toolchain.version(), size)

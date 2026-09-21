@@ -470,7 +470,7 @@ object NewProjectTool : Tool {
           "package":{"type":"string",
             "description":"Application id like com.example.notes. Leave out to derive one."},
           "compose":{"type":"boolean","description":
-            "Use Jetpack Compose instead of XML layouts. Compose looks modern, gives you Material 3 for free, and costs about 8 MB of app size. XML makes a 50 KB app that looks plainer. Ask the person which they want rather than choosing for them; if they have no opinion, use Compose for anything with a real interface and XML for something tiny. This cannot be changed later."}},
+            "Use Jetpack Compose instead of XML layouts. Default to true — do NOT ask which one they want. Compose looks modern and gives Material 3, dark mode and proper spacing for free, and the person asking for an app has no way to choose between two Android toolkits they have never heard of. Only pass false if they specifically ask for XML, or say the app must be as small as possible: Compose costs about 8 MB against 50 KB. This cannot be changed later, so if they did not say, pick Compose."}},
          "required":["name"]}
     """.trimIndent()
 

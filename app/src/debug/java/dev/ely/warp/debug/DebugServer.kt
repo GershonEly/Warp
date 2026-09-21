@@ -791,6 +791,16 @@ object DebugServer {
                                 "NO Compose" in
                                 dev.ely.warp.brain.AndroidBrain.summaryFor(false),
                         )
+                        // The state that made the first version self-fulfilling:
+                        // no project yet must NOT read as "no Compose", or the
+                        // model says Compose will not compile and then makes an
+                        // XML project, which makes it true.
+                        .put(
+                            "newChatOffersCompose",
+                            "NO Compose" !in dev.ely.warp.brain.AndroidBrain.summaryFor(null) &&
+                                "Compose IS available" in
+                                dev.ely.warp.brain.AndroidBrain.summaryFor(null),
+                        )
                         .put(
                             "composeTopicExists",
                             dev.ely.warp.brain.AndroidBrain.topics.containsKey("compose"),

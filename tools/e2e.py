@@ -1530,6 +1530,17 @@ if want("compose"):
     check("the model is told which Android it is in, flatly",
           r.get("brainSplit") is True,
           "one summary says JETPACK COMPOSE, the other says NO Compose")
+
+    # The bug the first real Compose app found, within an hour of shipping.
+    #
+    # A new chat has no project, so "is this Compose?" answered no, and the
+    # model was handed the summary saying the toolchain has NO Compose. It
+    # believed it, told the person Compose would not compile, and made an XML
+    # project — which made the statement true. They had asked for Compose in
+    # their first sentence.
+    check("a chat with no project yet is not told Compose is missing",
+          r.get("newChatOffersCompose") is True,
+          "otherwise it makes an XML project and the lie becomes true")
     check("and has somewhere to read the details",
           r.get("composeTopicExists") is True)
 

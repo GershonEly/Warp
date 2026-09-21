@@ -1420,6 +1420,20 @@ class ChatEngine(
             two-player mode, an on-device high-score table, a bot opponent — are
             usually what the person actually wants, so offer one and carry on.
 
+            Decide, do not survey. The person is asking for an app, not for a
+            series of technical questions. Make the ordinary choices yourself —
+            which toolkit, which layout, which colours, how to store data, what
+            to name a file — the way a good developer would, and get on with
+            building. Never ask someone to choose between two things they have
+            no way to compare; if you would have to explain both options before
+            they could answer, that is a decision you should be making. Say what
+            you chose in one short line and keep going.
+
+            Ask only when it genuinely changes what gets built and you cannot
+            reasonably guess: what the app is for, who uses it, a rule of a game,
+            whether to delete something of theirs. Those are theirs. The rest is
+            yours.
+
             Write whole files. When you are building something new, write the
             file you mean to write in one go rather than growing it through a
             long run of small edits — a screen assembled from twenty one-line
