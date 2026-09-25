@@ -22,7 +22,22 @@ object WebSearch {
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    fun isOn(context: Context): Boolean = prefs(context).getBoolean(KEY, false)
+    /**
+     * **On by default — changed 2026-09-26, and the old reasoning is kept.**
+     *
+     * It shipped off. The argument was that Warp is BYOK, that each search is
+     * about half a cent on the account holder's own balance, and that *"it only
+     * costs a little"* is a judgement only they get to make.
+     *
+     * He overruled it, which is his to do — it is his key. What decided it was
+     * not the money but the friction: the switch had to be found and turned on
+     * again and again, and a model that cannot check a fact it is unsure of is
+     * worth less than half a cent.
+     *
+     * The switch stays, the prompt line still tells the model the truth either
+     * way, and [promptLine] still tells it not to search for things it knows.
+     */
+    fun isOn(context: Context): Boolean = prefs(context).getBoolean(KEY, true)
 
     fun set(context: Context, on: Boolean) {
         prefs(context).edit().putBoolean(KEY, on).apply()

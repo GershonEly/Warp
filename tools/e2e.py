@@ -1010,17 +1010,27 @@ if want("web"):
 
     s, r = call("POST", "/tool", {"name": "fetch_url",
                                   "args": {"url": "https://example.com/nope"}}, timeout=60)
-    check("a missing page says which code, not 'failed'",
-          any(c in (r.get("failed") or "") for c in ("404", "answered")),
-          json.dumps(r)[:110])
+    # Skipped off-network for the same reason as the fetch above it, which this
+    # one was missing: with no DNS the answer is "cannot resolve host", which is
+    # correct and has nothing to do with whether a 404 is reported well. It
+    # failed exactly that way once and read as a regression in unrelated work.
+    if r.get("failed") and "resolve" in json.dumps(r).lower():
+        print("  ....  the phone has no network - skipped the 404 check")
+    else:
+        check("a missing page says which code, not 'failed'",
+              any(c in (r.get("failed") or "") for c in ("404", "answered")),
+              json.dumps(r)[:110])
 
-    # Searching is the half that spends money, so it is a switch and it starts
-    # off. The line the model is told about that switch travels in the same
-    # lambda as the rules, which section 9 already proves reaches the provider.
-    s, r = call("POST", "/settings", {"name": "search", "value": "true"})
-    check("web search can be switched on", r.get("value") == "true", json.dumps(r)[:90])
+    # Searching is the half that spends money, so it stays a switch — but it
+    # starts **on** as of 2026-09-26. It shipped off, on the argument that half
+    # a cent of somebody else's key is their judgement to make; he overruled it,
+    # because having to find and flip the switch every time cost more than the
+    # searches did. The line the model is told travels in the same lambda as the
+    # rules, which section 9 already proves reaches the provider.
     s, r = call("POST", "/settings", {"name": "search", "value": "false"})
-    check("and back off again", r.get("value") == "false", json.dumps(r)[:90])
+    check("web search can be switched off", r.get("value") == "false", json.dumps(r)[:90])
+    s, r = call("POST", "/settings", {"name": "search", "value": "true"})
+    check("and back on again", r.get("value") == "true", json.dumps(r)[:90])
 
 
 if want("brain"):
