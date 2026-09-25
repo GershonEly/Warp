@@ -716,6 +716,57 @@ object DebugServer {
              * @param id conversation to answer for. Omitted means a new chat,
              *   which is its own state and the one that was wrong.
              */
+            /**
+             * Does an edit say what it broke — the most expensive small bug here.
+             *
+             * An edit drops the imports above the block it replaces, the tool
+             * reports success, and the failure turns up at the next build as
+             * `unresolved reference 'Bundle'` — a long way from the cause. One
+             * session narrated it: *"I clobbered the earlier imports"*, four
+             * failed builds later.
+             *
+             * **Both directions.** A check that only proves it warns would pass
+             * a version that warned on every edit, which would be noise and
+             * would be learned to ignore within a day.
+             */
+            "POST /edit/guard" -> {
+                val kotlinFile = """
+                    package dev.ely.probe
+                    import android.os.Bundle
+                    import androidx.activity.ComponentActivity
+                    class MainActivity : ComponentActivity() {
+                        override fun onCreate(b: Bundle?) { super.onCreate(b) }
+                    }
+                """.trimIndent()
+
+                // The real case: an edit that rewrites the import block and
+                // loses one that the code below still uses.
+                val oldBlock = "import android.os.Bundle\nimport androidx.activity.ComponentActivity"
+                val newBlock = "import androidx.activity.ComponentActivity"
+                val caught = dev.ely.warp.tools.orphaned(
+                    oldBlock, newBlock, kotlinFile.replace(oldBlock, newBlock),
+                )
+
+                // Removing something *and* its last use is an ordinary edit and
+                // must not warn.
+                val tidy = dev.ely.warp.tools.orphaned(
+                    "import java.io.File\nval f = File(\"x\")",
+                    "",
+                    "package dev.ely.probe\nclass A",
+                )
+
+                // Nor may an untouched import be reported merely for existing.
+                val untouched = dev.ely.warp.tools.orphaned(
+                    "fun a() {}", "fun a() { println(1) }", kotlinFile,
+                )
+
+                200 to JSONObject()
+                    .put("catchesOrphanedImport", caught == listOf("import Bundle"))
+                    .put("caught", JSONArray(caught))
+                    .put("quietWhenUseWentToo", tidy.isEmpty())
+                    .put("quietOnUnrelatedEdit", untouched.isEmpty())
+            }
+
             "GET /brain" -> {
                 val id = query["id"]
                 val project = dev.ely.warp.build.Projects.forConversation(context, id)

@@ -295,11 +295,25 @@ object WriteFile : Tool {
 
         val lines = content.count { it == '\n' } + 1
         val what = if (existed) "replaced ($before → ${file.length()} bytes)" else "created"
+
+        // A Kotlin file whose `package` is not the app's own is the other way
+        // this project loses two builds to one typo. `aapt2` generates `R`
+        // under the application id, so a file declaring a different package
+        // compiles until it touches `R` and then fails with "unresolved
+        // reference: R" — which reads as a resource problem, and sends the
+        // model to look at res/ where nothing is wrong. Seen exactly once and
+        // diagnosed only on the third build: *"the problem is the package"*.
+        val wrongPackage = packageMismatch(env, file, content)
+
         // The read-back is said out loud, because this line is now the
         // whole of what the model is told. Without it the only way to be
         // sure the write landed is to read the file again, which costs
         // more than the four words do.
-        return ToolResult.Ok("$what · $lines lines · read back and matched", content)
+        return ToolResult.Ok(
+            "$what · $lines lines · read back and matched" +
+                if (wrongPackage == null) "" else " · ⚠ $wrongPackage",
+            if (wrongPackage == null) content else "$wrongPackage\n\n$content",
+        )
     }
 }
 
@@ -347,22 +361,117 @@ object EditFile : Tool {
             else -> return ToolResult.Failed("that text appears $hits times — add more context")
         }
 
-        runCatching { file.writeText(text.replace(old, new)) }
+        val after = text.replace(old, new)
+        runCatching { file.writeText(after) }
             .getOrElse { return ToolResult.Failed(it.message ?: "could not write") }
 
         val removed = old.count { it == '\n' } + 1
         val added = new.count { it == '\n' } + 1
+        // What this edit took away that the file still needs — see [orphaned].
+        val broke = orphaned(old, new, after)
         return ToolResult.Ok(
-            "replaced 1 match · -$removed +$added lines",
+            "replaced 1 match · -$removed +$added lines" +
+                if (broke.isEmpty()) "" else " · ⚠ removed ${broke.joinToString(", ")}",
             // A diff rather than the whole file. It is what you look at before
             // saying yes, and what the model needs to see it landed.
             buildString {
+                if (broke.isNotEmpty()) {
+                    appendLine(
+                        "This edit removed ${broke.joinToString(", ")}, which the " +
+                            "rest of the file still uses. Put ${
+                                if (broke.size == 1) "it" else "them"
+                            } back before building, or the compiler will fail " +
+                            "somewhere else and the reason will not be obvious."
+                    )
+                    appendLine()
+                }
                 old.lines().forEach { appendLine("- $it") }
                 new.lines().forEach { appendLine("+ $it") }
             }.trimEnd(),
         )
     }
 }
+
+/**
+ * A `package` line that does not match the app, or null when it is fine.
+ *
+ * Only for Kotlin inside `src/`, and only when the project already knows its
+ * own application id — before `new_project` there is nothing to compare with.
+ *
+ * Subpackages are allowed: `com.example.roll.ui` is a normal thing to write
+ * and `R` still resolves, because `R` lives under the application id and gets
+ * imported. What breaks is a package in a *different* tree, which is what
+ * happened: the project was `com.example.roll` and the file said
+ * `com.warp.roll`.
+ */
+internal fun packageMismatch(env: ToolEnv, file: File, content: String): String? {
+    if (file.extension != "kt") return null
+    val appId = dev.ely.warp.build.NewProject.meta(env.project)?.applicationId ?: return null
+
+    val declared = content.lineSequence()
+        .map { it.trim() }
+        .firstOrNull { it.startsWith("package ") }
+        ?.removePrefix("package ")?.trim()?.trimEnd(';')
+        ?: return null
+
+    if (declared == appId || declared.startsWith("$appId.")) return null
+    return "package is `$declared` but this app is `$appId` — R will not resolve"
+}
+
+/**
+ * What an edit took away that the rest of the file still needs.
+ *
+ * **The most expensive small bug in this project.** An edit replaces a block
+ * and quietly drops the imports above it; the tool reports success, and the
+ * failure turns up at the next build as `unresolved reference 'Bundle'` — a
+ * long way from the edit that caused it, in a file the model then re-reads
+ * looking for a mistake it did not make. One session narrated it exactly:
+ * *"I clobbered the earlier imports"*, four failed builds later.
+ *
+ * Said here, where it happened, rather than left to the compiler.
+ *
+ * **A warning and not a refusal.** Removing something and then removing its
+ * last use in the next call is a perfectly ordinary two-step, and a tool that
+ * blocked it would be wrong more often than it was right. This only has to
+ * arrive before the build does.
+ *
+ * Deliberately shallow: no parser, just names. It catches the case that keeps
+ * happening and will miss cleverer ones, which is the correct trade for a check
+ * that runs on every edit.
+ */
+internal fun orphaned(old: String, new: String, after: String): List<String> {
+    fun namesIn(text: String): Map<String, String> = buildMap {
+        text.lines().forEach { line ->
+            val t = line.trim()
+            when {
+                // `import a.b.C` and `import a.b.C as D` — the name that
+                // matters is the one the code actually types. A star import
+                // introduces no name, so there is nothing to orphan.
+                t.startsWith("import ") && !t.endsWith("*") -> {
+                    val name = t.substringAfterLast(" as ", t.substringAfterLast('.')).trim()
+                    if (name.isNotEmpty()) put(name, "import $name")
+                }
+                else -> DECLARATION.find(t)?.groupValues?.get(2)?.let { put(it, it) }
+            }
+        }
+    }
+
+    val lost = namesIn(old) - namesIn(new).keys
+    if (lost.isEmpty()) return emptyList()
+
+    // What is left once imports are set aside: an import cannot keep itself
+    // alive, and neither can a declaration that is only ever declared.
+    val body = after.lines()
+        .filterNot { it.trim().startsWith("import ") }
+        .joinToString("\n")
+
+    return lost.filterKeys { name ->
+        Regex("\\b${Regex.escape(name)}\\b").containsMatchIn(body)
+    }.values.toList()
+}
+
+private val DECLARATION =
+    Regex("""^\s*(?:private\s+|internal\s+|public\s+|data\s+|open\s+|abstract\s+)*(fun|val|var|class|object|interface)\s+(\w+)""")
 
 // ── asking you ───────────────────────────────────────────────────────────
 

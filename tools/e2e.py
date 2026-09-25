@@ -470,6 +470,43 @@ if want("permissions"):
         "path": "../escaped.txt", "content": "no"}})
     check("a write outside the project is refused", "outside" in (r.get("failed") or ""))
 
+    # The most expensive small bug here: an edit drops the imports above the
+    # block it replaces, the tool reports success, and the failure turns up at
+    # the next build as "unresolved reference 'Bundle'" — a long way from the
+    # cause. One session narrated it word for word: "I clobbered the earlier
+    # imports", four failed builds later.
+    s, g = call("POST", "/edit/guard", timeout=30)
+    check("an edit says when it removed an import the file still uses",
+          g.get("catchesOrphanedImport") is True, json.dumps(g.get("caught")))
+    # Both directions matter. A guard that warned on every edit would be noise,
+    # and noise gets ignored within a day.
+    check("and stays quiet when the use went with it",
+          g.get("quietWhenUseWentToo") is True)
+    check("and stays quiet on an edit that took nothing away",
+          g.get("quietOnUnrelatedEdit") is True)
+
+    # The other two-build typo: aapt2 generates R under the application id, so
+    # a file declaring a different package compiles until it touches R and then
+    # fails with "unresolved reference: R" — which reads as a resource problem
+    # and sends you to look at res/, where nothing is wrong.
+    #
+    # The real id is read rather than assumed: this runs in whichever chat is
+    # open, and a hard-coded package would pass or fail for the wrong reason.
+    app_id = call("GET", "/project")[1].get("applicationId")
+    if not app_id:
+        call("POST", "/tool", {"name": "new_project", "args": {"name": "Guarded"}})
+        app_id = call("GET", "/project")[1].get("applicationId")
+
+    s, r = call("POST", "/tool", {"name": "write_file", "args": {
+        "path": "src/Stray.kt", "content": "package com.somewhere.far\n\nclass Stray\n"}})
+    check("writing a file in the wrong package says so at once",
+          "package is" in json.dumps(r), f"app is {app_id} · {json.dumps(r)[:110]}")
+
+    s, r = call("POST", "/tool", {"name": "write_file", "args": {
+        "path": "src/Fine.kt", "content": f"package {app_id}.ui\n\nclass Fine\n"}})
+    check("while a subpackage is left alone", "package is" not in json.dumps(r),
+          json.dumps(r)[:120])
+
 
 if want("commands"):
     print("\n9. COMMANDS")
