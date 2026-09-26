@@ -252,6 +252,7 @@ class ProviderRegistry(private val context: Context) {
                     // Carried through so the composer can refuse a picture
                     // before it is sent rather than after — §5o, §5h.
                     canSee = model.canSee,
+                    maxOutputTokens = model.maxOutputTokens,
                 )
             }
         }

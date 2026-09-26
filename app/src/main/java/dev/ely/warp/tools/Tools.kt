@@ -144,7 +144,7 @@ object ReadFile : Tool {
     override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult {
         val path = args.optString("path").ifBlank { return ToolResult.Failed("no path given") }
         val file = resolve(env.project, path) ?: return ToolResult.Failed("outside the project")
-        if (!file.isFile) return ToolResult.Failed("no such file")
+        if (!file.isFile) return ToolResult.Failed(noSuchFile(env.project, file, path))
 
         val text = runCatching { file.readText() }
             .getOrElse { return ToolResult.Failed(it.message ?: "could not read") }
@@ -309,10 +309,18 @@ object WriteFile : Tool {
         // whole of what the model is told. Without it the only way to be
         // sure the write landed is to read the file again, which costs
         // more than the four words do.
+        // The warning is deliberately **after** the success and without a
+        // warning symbol. It shipped as "· ⚠ package is ...", which is correct
+        // and reads as a failure — and it landed in a session where the model
+        // was already losing confidence in its file tools. Immediately
+        // afterwards it started telling the person it had none.
+        //
+        // The file was written. That is the headline, and a note about the
+        // package does not get to compete with it.
         return ToolResult.Ok(
-            "$what · $lines lines · read back and matched" +
-                if (wrongPackage == null) "" else " · ⚠ $wrongPackage",
-            if (wrongPackage == null) content else "$wrongPackage\n\n$content",
+            "$what · $lines lines · read back and matched",
+            if (wrongPackage == null) content
+            else "The file was written. One thing to fix in it: $wrongPackage\n\n$content",
         )
     }
 }
@@ -342,7 +350,7 @@ object EditFile : Tool {
     override suspend fun run(env: ToolEnv, args: JSONObject): ToolResult {
         val path = args.optString("path").ifBlank { return ToolResult.Failed("no path given") }
         val file = resolve(env.project, path) ?: return ToolResult.Failed("outside the project")
-        if (!file.isFile) return ToolResult.Failed("no such file")
+        if (!file.isFile) return ToolResult.Failed(noSuchFile(env.project, file, path))
 
         val old = args.optString("old")
         if (old.isEmpty()) return ToolResult.Failed("no text to replace — use write_file to create")
@@ -389,6 +397,42 @@ object EditFile : Tool {
                 new.lines().forEach { appendLine("+ $it") }
             }.trimEnd(),
         )
+    }
+}
+
+/**
+ * "No such file", plus what there is instead.
+ *
+ * **Three identical dead ends taught a model that its tools were broken.** It
+ * had written `src/engine/Math3D.kt`, then tried to edit
+ * `src/com/rl3d/game/GameSurface.kt` — a path it had invented — and got back
+ * `no such file` three times running. Nothing in that answer pointed at the
+ * mistake, so it concluded the file tools did not work, told the person so,
+ * and spent the rest of the conversation refusing to build anything.
+ *
+ * A wrong path is nearly always a near miss, and the fix is almost always
+ * visible in the folder that does exist. Listing it turns a dead end into a
+ * correction.
+ *
+ * Walks up to the nearest folder that is really there, because the invented
+ * path is usually several levels deep and listing the project root would bury
+ * the answer in noise.
+ */
+internal fun noSuchFile(project: File, file: File, path: String): String {
+    val existing = generateSequence(file.parentFile) { it.parentFile }
+        .firstOrNull { it.isDirectory && it.canonicalPath.startsWith(project.canonicalPath) }
+        ?: return "no such file: $path"
+
+    val where = existing.relativeTo(project).path.ifEmpty { "the project root" }
+    val names = existing.listFiles().orEmpty()
+        .sortedBy { it.name }
+        .take(20)
+        .joinToString(", ") { if (it.isDirectory) "${it.name}/" else it.name }
+
+    return if (names.isEmpty()) {
+        "no such file: $path — and $where is empty"
+    } else {
+        "no such file: $path — $where has: $names"
     }
 }
 

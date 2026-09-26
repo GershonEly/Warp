@@ -211,7 +211,7 @@ def watch_build(seconds=140):
 WANTED = {a.lower() for a in sys.argv[1:]}
 GROUP_NAMES = ["surface", "chat", "tools", "permissions", "commands", "grill",
                "goal", "project", "build", "room", "web", "brain", "attach", "budget",
-               "subagent", "settings", "diff", "git", "icons", "compose", "tasks"]
+               "subagent", "settings", "diff", "git", "icons", "truth", "compose", "tasks"]
 
 
 def want(group):
@@ -1529,6 +1529,51 @@ if want("icons"):
     # every build that ever happens. Not excluding it would block everything.
     check("and the file written after every build is not mistaken for an edit",
           r.get("metaIgnored") is True)
+
+
+if want("truth"):
+    # Six things that broke one real conversation, fixed together because they
+    # were one failure with six causes.
+    #
+    # A single prompt produced three turns of ~55,000 characters of thinking
+    # and no output, three identical "no such file" dead ends, a warning
+    # printed over a successful write — and a model that ended up telling him
+    # it had no file tools, could not install an app and could not do 3D. All
+    # false. It had used those tools earlier in the same chat.
+    print("\n22. TELLING THE MODEL THE TRUTH")
+    s, t = call("POST", "/truthful", timeout=60)
+
+    # The cause. Every model was asked for 16,000 tokens; a reasoning model
+    # spends its thinking out of that same budget, so one that reasons for
+    # fifteen thousand tokens is cut off having produced nothing — an empty
+    # turn that was still paid for.
+    check("the model's real output limit is read, not assumed",
+          t.get("readsRealLimit") is True,
+          f"{t.get('model')} -> {t.get('modelMaxOutput')}")
+
+    # Everything below is something it denied having while holding it.
+    check("the prompt says it has file tools", t.get("promptNamesFileTools") is True)
+    check("and that it can install and launch an app",
+          t.get("promptNamesInstallAndLaunch") is True,
+          "it told him it could only compile")
+    check("and that search is not a tool it calls",
+          t.get("promptExplainsSearchIsNotATool") is True,
+          "it is a plugins field, so the model sees no search tool and said so")
+    check("and that 3D works", t.get("promptSays3dWorks") is True,
+          "44 OpenGL classes are in the android.jar it compiles against")
+    check("and forbids announcing a missing tool it never tried",
+          t.get("promptForbidsGuessing") is True)
+
+    check("the compose page shows how to use OpenGL",
+          t.get("brainSaysOpenGl") is True)
+    check("and says assets cannot be downloaded",
+          t.get("brainSaysNoDownloads") is True,
+          "the one limit it got right, and it should stay right")
+
+    # Three identical dead ends taught it the file tools were broken.
+    check("a missing file says what is there instead",
+          t.get("missingFileNamesNeighbours") is True,
+          t.get("missingFileMessage"))
 
 
 if want("compose"):

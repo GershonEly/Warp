@@ -80,6 +80,12 @@ abstract class OpenAiCompatibleProvider(
                             contextTokens = m.optInt("context_length").takeIf { it > 0 },
                             badge = badgeFor(modelId),
                             canSee = seesImages(m),
+                            // What this model will actually let us ask for.
+                            // 451 of 458 say; the rest stay null and take the
+                            // conservative default.
+                            maxOutputTokens = m.optJSONObject("top_provider")
+                                ?.optInt("max_completion_tokens")
+                                ?.takeIf { it > 0 },
                         )
                     )
                 }
@@ -328,7 +334,7 @@ abstract class OpenAiCompatibleProvider(
             put("model", request.model)
             put("messages", messages)
             put("stream", true)
-            put("max_tokens", MAX_TOKENS)
+            put("max_tokens", request.maxOutputTokens ?: MAX_TOKENS)
 
             // Ask for the bill — §5p.
             //
@@ -454,6 +460,20 @@ abstract class OpenAiCompatibleProvider(
         if (e is AiException) e else AiException(ProviderHttp.asAiError(e))
 
     private companion object {
+        /**
+         * What to ask for when the model has not said what it allows.
+         *
+         * **Only a fallback now.** It was the value used for every model, and
+         * for the ones that think it was the wrong number: a reasoning model
+         * spends its thinking out of this same budget, so one that reasons for
+         * fifteen thousand tokens before writing anything is cut off with
+         * nothing to show — no text, no tool call, an empty turn that was still
+         * paid for. Seen three times in one session on a model whose published
+         * ceiling is 131,072.
+         *
+         * [AiRequest.maxOutputTokens] carries the model's own figure where the
+         * provider publishes one, which on OpenRouter is 451 models of 458.
+         */
         const val MAX_TOKENS = 16_000
 
         /** Substrings that mark a model as something other than a chat model. */

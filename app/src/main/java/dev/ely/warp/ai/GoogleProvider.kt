@@ -261,7 +261,13 @@ class GoogleProvider(private val context: Context) : AiProvider {
                 )
             }
 
-            put("generationConfig", JSONObject().put("maxOutputTokens", MAX_TOKENS))
+            put(
+                "generationConfig",
+                JSONObject().put(
+                    "maxOutputTokens",
+                    request.maxOutputTokens ?: MAX_TOKENS,
+                ),
+            )
 
             if (request.tools.isNotEmpty()) {
                 val declarations = JSONArray()
@@ -288,6 +294,20 @@ class GoogleProvider(private val context: Context) : AiProvider {
 
     private companion object {
         const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+        /**
+         * What to ask for when the model has not said what it allows.
+         *
+         * **Only a fallback now.** It was the value used for every model, and
+         * for the ones that think it was the wrong number: a reasoning model
+         * spends its thinking out of this same budget, so one that reasons for
+         * fifteen thousand tokens before writing anything is cut off with
+         * nothing to show — no text, no tool call, an empty turn that was still
+         * paid for. Seen three times in one session on a model whose published
+         * ceiling is 131,072.
+         *
+         * [AiRequest.maxOutputTokens] carries the model's own figure where the
+         * provider publishes one, which on OpenRouter is 451 models of 458.
+         */
         const val MAX_TOKENS = 16_000
     }
 }

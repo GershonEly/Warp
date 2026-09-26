@@ -336,6 +336,32 @@ object AndroidBrain {
         complete palette that works in dark mode for free; a hand-picked colour
         does not, and black-on-black is how a generated app ends up unreadable.
 
+        ## 3D is available — OpenGL ES is in the framework
+
+        `GLSurfaceView`, `GLES20` and `GLES30` compile here with nothing extra;
+        they are part of Android, not a library. A `GLSurfaceView` can sit
+        inside Compose through `AndroidView`, which is the ordinary way to put
+        a game canvas in a Compose app:
+
+        ```kotlin
+        AndroidView(factory = { ctx ->
+            GLSurfaceView(ctx).apply {
+                setEGLContextClientVersion(2)
+                setRenderer(MyRenderer())
+            }
+        })
+        ```
+
+        **What does not exist is a 3D *engine*** — no Unity, no Unreal, no scene
+        graph, no physics library. Meshes are built from float arrays in code,
+        and the matrix maths comes from `android.opengl.Matrix`.
+
+        **And nothing can be downloaded.** There is no tool that fetches a
+        binary, so models, textures, audio files and fonts cannot be brought in
+        from the internet — they have to be generated in code. Say that once if
+        it matters and build what you can; do not say *"there is no 3D"*, which
+        is not true.
+
         ## The two errors that cost a build every time
 
         Both of these were hit by the first real app built here, in one

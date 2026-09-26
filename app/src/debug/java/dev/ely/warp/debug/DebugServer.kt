@@ -767,6 +767,70 @@ object DebugServer {
                     .put("quietOnUnrelatedEdit", untouched.isEmpty())
             }
 
+            /**
+             * The six things that broke one real conversation — §5q.
+             *
+             * A single prompt produced: three turns of ~55,000 characters of
+             * thinking and no output, three identical `no such file` dead ends,
+             * a warning printed over a successful write, and a model that ended
+             * up telling the person it had no file tools, could not install an
+             * app and could not do 3D — all false, and all of it after it had
+             * already used those tools in the same chat.
+             *
+             * Checked together because they were one failure with six causes.
+             */
+            "POST /truthful" -> {
+                val out = JSONObject()
+
+                // The model's real output ceiling, read rather than assumed.
+                // Asking every model for 16,000 is what cut those turns off:
+                // a reasoning model spends thinking out of the same budget.
+                // A fresh registry rather than the screen's: the choice lives in
+                // preferences, so this reads the same value without needing a
+                // chat to be open.
+                val chosen = dev.ely.warp.ai.ProviderRegistry(context).choice
+                out.put("model", chosen.modelId)
+                    .put("modelMaxOutput", chosen.maxOutputTokens ?: JSONObject.NULL)
+                    .put("readsRealLimit", chosen.maxOutputTokens != null)
+
+                // What the model is told it can do. Every line here was
+                // something it denied having while holding it.
+                val prompt = dev.ely.warp.ai.ChatEngine.DEFAULT_SYSTEM_PROMPT
+                out.put("promptNamesFileTools", "creating a project, writing, editing" in prompt)
+                    .put("promptNamesInstallAndLaunch",
+                        "install, launch and logcat" in prompt)
+                    .put("promptExplainsSearchIsNotATool",
+                        "not a tool you call" in prompt)
+                    .put("promptSays3dWorks", "3D works" in prompt)
+                    .put("promptForbidsGuessing",
+                        "never announce that a tool is missing when you have not tried it"
+                            in prompt)
+
+                // The Brain page, for when it goes looking for detail.
+                val composePage = dev.ely.warp.brain.AndroidBrain.topics["compose"] ?: ""
+                out.put("brainSaysOpenGl", "GLSurfaceView" in composePage)
+                    .put("brainSaysNoDownloads", "nothing can be downloaded".lowercase() in
+                        composePage.lowercase())
+
+                // "No such file" now says what is there instead.
+                val dir = java.io.File(context.cacheDir, "truth-${System.currentTimeMillis()}")
+                try {
+                    java.io.File(dir, "src").mkdirs()
+                    java.io.File(dir, "src/Real.kt").writeText("class Real")
+                    val miss = dev.ely.warp.tools.noSuchFile(
+                        dir, java.io.File(dir, "src/made/Up.kt"), "src/made/Up.kt",
+                    )
+                    out.put("missingFileNamesNeighbours", "Real.kt" in miss)
+                        .put("missingFileMessage", miss)
+                } catch (e: Throwable) {
+                    out.put("missingFileNamesNeighbours", false).put("failed", e.message)
+                } finally {
+                    dir.deleteRecursively()
+                }
+
+                200 to out
+            }
+
             "GET /brain" -> {
                 val id = query["id"]
                 val project = dev.ely.warp.build.Projects.forConversation(context, id)

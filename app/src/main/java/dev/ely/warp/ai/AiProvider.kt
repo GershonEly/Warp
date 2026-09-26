@@ -66,6 +66,15 @@ data class AiRequest(
     val effort: Effort = Effort.LOW,
     /** Tools the model may call. Empty means plain chat. */
     val tools: List<ToolSpec> = emptyList(),
+    /**
+     * The most this reply may be, from [AiModel.maxOutputTokens]. Null means
+     * nobody said, and the provider falls back to its own conservative number.
+     *
+     * An upper bound rather than a target — nothing is billed for room that
+     * goes unused — so the cost of setting it generously is nothing, and the
+     * cost of setting it too low is an empty turn that was paid for.
+     */
+    val maxOutputTokens: Int? = null,
 )
 
 /**
@@ -109,6 +118,8 @@ data class ModelChoice(
     val recommended: Boolean = true,
     /** See [AiModel.canSee]. Null means the provider did not say. */
     val canSee: Boolean? = null,
+    /** See [AiModel.maxOutputTokens]. Null means the provider did not say. */
+    val maxOutputTokens: Int? = null,
 ) {
     val label: String get() = if (effort == null) modelName else "$modelName (${effort.label})"
 
@@ -160,6 +171,23 @@ data class AiModel(
      * about where the refusal came from.
      */
     val canSee: Boolean? = null,
+    /**
+     * The most this model may be asked to produce in one reply, or null when
+     * nobody said.
+     *
+     * **Warp asked every model for 16,000 and that is the wrong number for the
+     * models that think.** A reasoning model spends its thinking out of the
+     * same budget as its answer, so one that reasons for 15,000 tokens before
+     * writing anything gets cut off with nothing to show: no text, no tool
+     * call, an empty turn that still costs money. Measured in a real session —
+     * three turns of ~55,000 characters of thinking, each producing nothing,
+     * on a model whose published ceiling is 131,072.
+     *
+     * Nullable like [canSee] and for the same reason: `null` is *nobody said*,
+     * not *no limit*. OpenRouter publishes it for 451 of 458 models; providers
+     * that do not say leave it null and keep the conservative default.
+     */
+    val maxOutputTokens: Int? = null,
 )
 
 data class ToolSpec(

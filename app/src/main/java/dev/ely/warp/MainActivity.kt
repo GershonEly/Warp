@@ -442,6 +442,8 @@ private fun WarpApp() {
             engine.provider = registry.providerFor(choice.providerId)
             engine.model = choice.modelId
             engine.effort = choice.effort ?: dev.ely.warp.ai.Effort.LOW
+            // Belongs to the model, so it moves with it.
+            engine.maxOutputTokens = choice.maxOutputTokens
         }
     }
 
@@ -455,6 +457,7 @@ private fun WarpApp() {
                 engine.provider = registry.providerFor(picked.providerId)
                 engine.model = picked.modelId
                 engine.effort = picked.effort ?: dev.ely.warp.ai.Effort.LOW
+                engine.maxOutputTokens = picked.maxOutputTokens
             },
             onDismiss = { showPicker = false },
         )

@@ -309,6 +309,17 @@ class ChatEngine(
     var effort: Effort = Effort.LOW
 
     /**
+     * The most this model will let one reply be, or null when nobody said.
+     *
+     * Set from the picker beside [model], because it belongs to the model and
+     * changes when the model does. Null keeps the provider's own conservative
+     * default — see [AiModel.maxOutputTokens] for why the old fixed 16,000 was
+     * the wrong number for anything that thinks before it answers.
+     */
+    @Volatile
+    var maxOutputTokens: Int? = null
+
+    /**
      * How this turn is allowed to behave.
      *
      * A property of the turn rather than of the engine, so it cannot leak into
@@ -933,6 +944,7 @@ class ChatEngine(
             // taking the tool away is a boundary. A model asked to focus on
             // planning will still helpfully write the file.
             tools = tools?.specs(mode).orEmpty(),
+            maxOutputTokens = maxOutputTokens,
         )
 
         provider.stream(request).collect { event ->
@@ -992,6 +1004,14 @@ class ChatEngine(
                     it.copy(
                         streaming = false,
                         usage = event.usage?.let { u -> it.usage?.plus(u) ?: u } ?: it.usage,
+                        // A turn that produced nothing says so, rather than
+                        // leaving a blank bubble somebody paid for.
+                        text = it.text.ifBlank {
+                            emptyTurnNote(
+                                event.stopReason, it.thinking, it.toolCalls,
+                                interrupted = steered,
+                            )
+                        },
                     )
                 }
 
@@ -1084,6 +1104,59 @@ class ChatEngine(
         // question is: losing your own words is worse than losing a reply.
         scope.launch { runCatching { persistNow(message.id) } }
         return true
+    }
+
+    /**
+     * What to say when a turn finishes having produced nothing at all.
+     *
+     * **Silence is the one answer a chat cannot show.** A reply with no text
+     * and no tool call used to be saved as an empty bubble: nothing on screen,
+     * no error, and the turn still billed. It happened three times in one
+     * session, each after roughly fifty-five thousand characters of thinking —
+     * a reasoning model spending its whole output budget before it wrote
+     * anything, and being cut off mid-thought.
+     *
+     * The damage was not the wasted turn. It was that the model then reasoned
+     * about *why* nothing was happening, decided its tools must be missing, and
+     * spent the rest of the conversation telling the person so — having
+     * already used those tools successfully earlier in the same chat.
+     *
+     * A turn that only called a tool is **not** empty. That is the ordinary
+     * shape of working, and saying anything there would be noise on every
+     * build.
+     */
+    private fun emptyTurnNote(
+        stopReason: String,
+        thinking: String,
+        toolCalls: List<ToolCall>,
+        interrupted: Boolean,
+    ): String = when {
+        toolCalls.isNotEmpty() -> ""
+
+        // You sent something new while it was thinking, so it dropped what it
+        // was doing. Checked **before** the length reasons below: an
+        // interrupted turn often has a huge thinking block too, and blaming
+        // the model's budget for something the person did would be a confident
+        // wrong answer of exactly the kind this file keeps apologising for.
+        interrupted -> "Stopped — you sent something new."
+
+        // The provider said outright that it ran out of room.
+        stopReason.contains("length", ignoreCase = true) ||
+            stopReason.contains("max_tokens", ignoreCase = true) ->
+            "The model ran out of room before it answered — it used the whole " +
+                "reply on thinking. Ask for something smaller, or pick a model " +
+                "with more room."
+
+        // It did not say, but a turn that thought this hard and said nothing
+        // ran out of room whatever it chose to call the reason.
+        thinking.length > 4_000 ->
+            "The model thought for a long time and then produced nothing. That " +
+                "usually means it used the whole reply on thinking. Ask for " +
+                "something smaller, or pick a model with more room."
+
+        else ->
+            "The model returned an empty reply. Nothing was changed. Try again, " +
+                "or say it differently."
     }
 
     private fun update(id: String, change: (ChatMessage) -> ChatMessage) {
@@ -1419,6 +1492,30 @@ class ChatEngine(
             after you have stated it. Offline versions of those features — a local
             two-player mode, an on-device high-score table, a bot opponent — are
             usually what the person actually wants, so offer one and carry on.
+
+            What you can actually do here, so you never have to guess:
+
+            You have tools for files — creating a project, writing, editing,
+            reading, listing, searching. You have build, install, launch and
+            logcat, so you can compile an app, put it on the phone, open it and
+            read its crash log. You have git. You can generate an app icon.
+            Web search is not a tool you call — results are added to your
+            context automatically when it is switched on, so never say you
+            cannot look something up because there is no search tool.
+
+            3D works. OpenGL ES is part of the Android framework, so
+            GLSurfaceView and GLES20 compile here with nothing extra. What does
+            not exist is a 3D *engine* — no Unity, no Unreal, no scene graph
+            library — and no way to download models, textures, audio files or
+            fonts. Assets have to be generated in code. That is a real limit and
+            it is worth saying once; "there is no 3D" is not true and should
+            never be said.
+
+            **If a tool is not in your list, say what you cannot do — but never
+            announce that a tool is missing when you have not tried it.** A call
+            that fails tells you something true; a guess about your own
+            capabilities does not, and being wrong about it in either direction
+            wastes the person's time.
 
             Decide, do not survey. The person is asking for an app, not for a
             series of technical questions. Make the ordinary choices yourself —
