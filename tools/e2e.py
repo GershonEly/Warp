@@ -1547,9 +1547,15 @@ if want("truth"):
     # spends its thinking out of that same budget, so one that reasons for
     # fifteen thousand tokens is cut off having produced nothing — an empty
     # turn that was still paid for.
-    check("the model's real output limit is read, not assumed",
-          t.get("readsRealLimit") is True,
-          f"{t.get('model')} -> {t.get('modelMaxOutput')}")
+    # Skipped on the mock, which has no published ceiling and correctly reports
+    # none — and the suite selects the mock at the end of every run, so this
+    # failed for a reason that had nothing to do with the feature.
+    if t.get("isMock"):
+        print("  ....  the mock has no published limit - skipped")
+    else:
+        check("the model's real output limit is read, not assumed",
+              t.get("readsRealLimit") is True,
+              f"{t.get('model')} -> {t.get('modelMaxOutput')}")
 
     # Everything below is something it denied having while holding it.
     check("the prompt says it has file tools", t.get("promptNamesFileTools") is True)

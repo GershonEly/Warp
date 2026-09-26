@@ -792,10 +792,23 @@ object DebugServer {
                 out.put("model", chosen.modelId)
                     .put("modelMaxOutput", chosen.maxOutputTokens ?: JSONObject.NULL)
                     .put("readsRealLimit", chosen.maxOutputTokens != null)
+                    // The mock has no published ceiling and correctly reports
+                    // none, so the check above says nothing when it is selected
+                    // — and the suite selects it at the end of every run. Said
+                    // here so the check can skip rather than fail for a reason
+                    // that has nothing to do with the feature.
+                    .put("isMock", chosen.providerId == "mock")
 
                 // What the model is told it can do. Every line here was
                 // something it denied having while holding it.
+                //
+                // Whitespace collapsed before matching, because the prompt is a
+                // wrapped raw string: "install, launch and\n            logcat"
+                // is one phrase to a reader and two to `contains`. Three checks
+                // failed on that and read as missing features rather than as a
+                // badly written test.
                 val prompt = dev.ely.warp.ai.ChatEngine.DEFAULT_SYSTEM_PROMPT
+                    .replace(Regex("\\s+"), " ")
                 out.put("promptNamesFileTools", "creating a project, writing, editing" in prompt)
                     .put("promptNamesInstallAndLaunch",
                         "install, launch and logcat" in prompt)
