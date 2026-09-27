@@ -270,9 +270,14 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(WarpSpace.small)) {
         blocks.forEach { block ->
             when (block) {
+                // Each block decides for itself. A reply that answers in Hebrew
+                // and then shows an English error message gets one right-to-left
+                // paragraph and one left-to-right one, which is what it is —
+                // rather than one direction chosen for the whole message and
+                // wrong for half of it.
                 is Block.Prose -> Text(
                     inline(block.text),
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyLarge.byContent(),
                     color = MaterialTheme.colorScheme.onSurface,
                 )
 
@@ -285,24 +290,34 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier) {
                         1 -> MaterialTheme.typography.titleLarge
                         2 -> MaterialTheme.typography.titleMedium
                         else -> MaterialTheme.typography.titleSmall
-                    },
+                    }.byContent(),
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.padding(top = WarpSpace.small),
                 )
 
-                is Block.Bullet -> Row(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        block.marker,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(end = WarpSpace.small),
-                    )
-                    Text(
-                        inline(block.text),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
+                // The marker sits beside the line rather than inside it, so the
+                // text direction alone would leave a Hebrew bullet with its dot
+                // stranded on the left and its words starting on the right, with
+                // the gap between them in the middle of the row. Flipping the
+                // row is what makes it read as a list instead of as a mistake.
+                //
+                // `padding(end = ...)` flips with it: end is the side the text
+                // starts from, whichever side that turns out to be.
+                is Block.Bullet -> ByContent(block.text) {
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            block.marker,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(end = WarpSpace.small),
+                        )
+                        Text(
+                            inline(block.text),
+                            style = MaterialTheme.typography.bodyLarge.byContent(),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
                 }
 
                 is Block.Code -> CodeBlock(block)

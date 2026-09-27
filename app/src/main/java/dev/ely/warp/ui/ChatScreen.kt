@@ -96,6 +96,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -1177,9 +1178,16 @@ private fun UserMessage(message: ChatMessage) {
             // looks exactly like one that was never attached.
             Column {
                 if (message.text.isNotBlank()) {
+                    // The same rule as the composer, or a Hebrew message would
+                    // swing back to the left the instant you sent it — and the
+                    // bubble you are reading would not match the field you wrote
+                    // it in.
                     Text(
                         message.text,
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            textDirection = TextDirection.Content,
+                            textAlign = TextAlign.Start,
+                        ),
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                     )
                 }
@@ -2024,18 +2032,34 @@ private fun Composer(
         border = BorderStroke(HairlineWidth, border),
     ) {
         Box(modifier = Modifier.background(lit)) {
-        // One row, not two, and the reason is the send button. It is a 52dp
-        // circle, so any row holding it is 52dp tall — and a row holding only the
-        // chip and the button pins them to opposite corners and leaves the middle
-        // empty. Tightening the padding moved that gap by four pixels, because
-        // padding was never what made it.
+        // Two rows, and the first version's own argument is why.
         //
-        // Gemini and ChatGPT both put everything on one line. Claude uses two,
-        // and gets away with it by filling the second row with four controls;
-        // with two, the emptiness is the loudest thing in the card.
+        // It said: "Claude uses two, and gets away with it by filling the second
+        // row with four controls; with two, the emptiness is the loudest thing in
+        // the card." True — and that row held two controls when it was written.
+        // It holds four now: mic, attach, the model chip and send. The condition
+        // the comment named as making two rows work is the condition we are in.
         //
-        // `Bottom` rather than centred: as the message grows to six lines the
-        // text rises and the controls stay where your thumb left them.
+        // What forced it was not taste. On one row the message is a weighted
+        // child, so it gets whatever the furniture leaves, and the furniture is
+        // fixed: 44dp mic + 44dp attach + 44dp send + up to 128dp of model chip +
+        // 24dp of its own padding. **Measured on the phone: the message got 308px
+        // of a 1220px screen — 102dp, 78dp of it usable, 19% of the width.** The
+        // placeholder does not fit in that, so an untouched composer said
+        //
+        //     Message
+        //     Warp
+        //
+        // and on a Samsung with a larger display size, where the same furniture
+        // leaves about 30dp, it said "Mes / sag / e / War / p" — five lines, one
+        // fragment each, before anybody had typed a character. Nothing about it
+        // depended on what you typed, which is what made it look like a rendering
+        // fault rather than a layout one.
+        //
+        // A minimum width would only move the failure: the row would overflow
+        // instead, and the send button would go off the edge. The message needs a
+        // line of its own, because it is the one thing in this card that has no
+        // natural size — everything else does.
         if (listening) {
             VoiceBar(
                 level = level,
@@ -2084,43 +2108,35 @@ private fun Composer(
                 },
             )
         } else {
-        Row(
-            modifier = Modifier.padding(WarpSpace.tiny),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            // Far left, before the message. It is the other way into writing
-            // one, so it sits where writing one starts.
-            if (voice != null) {
-                MicButton(
-                    onClick = ::beginListening,
-                    onLongClick = { pickingLanguage = true },
-                )
-            }
-
+        Column(modifier = Modifier.padding(WarpSpace.tiny)) {
             Box(
                 modifier = Modifier
-                    .weight(1f)
-                    // The same 44dp as the chip and the send button, with the
-                    // text centred inside it. Without the floor this box was
-                    // text-height plus its own padding — about 53dp — and with
-                    // everything bottom-aligned the bottoms lined up while the
-                    // centres did not, leaving the message sitting visibly higher
-                    // than the two controls beside it.
+                    .fillMaxWidth()
+                    // A floor, so an empty composer is not a cramped slot. It was
+                    // 44dp to match the chip and the send button when they shared
+                    // this row; now it is 44dp because that is a comfortable line
+                    // to tap into, and the two reasons happen to agree.
                     .heightIn(min = 44.dp)
-                    // Asymmetric by 4dp, which lifts the centred text 2dp. An
-                    // optical correction, not a fudge: centring a *line box*
-                    // centres the room reserved for ascenders and descenders, so
-                    // a string with descenders — "Message Warp" has g and p —
-                    // always reads low beside a symmetric glyph like the send
-                    // arrow. Measured at 5.5px on this screen, which is 2dp.
-                    .padding(
-                        start = 12.dp,
-                        end = 12.dp,
-                        top = WarpSpace.tiny,
-                        bottom = WarpSpace.tiny + 4.dp,
-                    ),
+                    // Symmetric again. The old 4dp asymmetry was an optical
+                    // correction for centring text against the send arrow *in the
+                    // same row* — descenders in "Message Warp" made it read low.
+                    // Nothing sits beside it now, so the correction would only
+                    // tilt it.
+                    .padding(horizontal = 12.dp, vertical = WarpSpace.tiny),
                 contentAlignment = Alignment.CenterStart,
             ) {
+                // A text field is not a `Text`, and finding that out cost a
+                // build. `TextDirection.Content` puts Hebrew the right way round
+                // *inside* the line — bidi does that much — but a field takes
+                // which edge it starts from off the **layout** direction, not off
+                // its own text style. Seeded with a Hebrew draft and screenshot,
+                // the words read correctly and the line still sat on the left.
+                //
+                // So the layout direction is set from the draft itself, and the
+                // field follows it: caret on the right for Hebrew, on the left
+                // for English, and the placeholder left where it belongs because
+                // an empty draft has nothing strong in it to point the other way.
+                ByContent(value) {
                 // BasicTextField rather than OutlinedTextField: the stock field
                 // brings a label, a container and an outline that cannot be
                 // fully removed, and its shape is one of the things that reads
@@ -2131,8 +2147,21 @@ private fun Composer(
                     modifier = Modifier
                         .fillMaxWidth()
                         .onFocusChanged { focused = it.isFocused },
+                    // The direction comes from what you are writing, not from the
+                    // phone's language. Type Hebrew and the line starts on the
+                    // right, with the cursor and the punctuation where they
+                    // belong; type English and it starts on the left. Switching
+                    // language mid-message is handled by Unicode bidi inside the
+                    // line, so a quoted `MainActivity.kt` in a Hebrew sentence
+                    // still reads left to right without the sentence moving.
+                    //
+                    // An empty field resolves to left-to-right, which is right:
+                    // the placeholder is English, and the first Hebrew letter
+                    // moves the caret across — the same as every messaging app.
                     textStyle = MaterialTheme.typography.bodyLarge.copy(
                         color = MaterialTheme.colorScheme.onSurface,
+                        textDirection = TextDirection.Content,
+                        textAlign = TextAlign.Start,
                     ),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     maxLines = 6,
@@ -2162,27 +2191,55 @@ private fun Composer(
                         }
                     },
                 )
+                }
             }
 
-            AttachButton(onAttach = onAttach)
-
-            ModelChip(label = modelLabel, onClick = onPickModel)
-            // A picture is a message. Send has to light up for one even with
-            // nothing typed, or showing it a screenshot means typing a word
-            // first to unlock the button.
-            // Stop, until you start typing — then it is Send again — §5i item 7.
+            // Everything that acts on the message, under the message.
             //
-            // While it works, the one thing you can do is stop it. The moment
-            // there is something to say, saying it is the better answer to "this
-            // is going wrong", and a Stop button sitting over a written
-            // correction offers you the destructive option for work you were
-            // about to save.
-            val correcting = value.isNotBlank() || attachments.isNotEmpty()
-            SendButton(
-                busy = busy && !correcting,
-                enabled = busy || (correcting && !elsewhere),
-            ) {
-                if (busy && !correcting) onStop() else onSend()
+            // The three on the left are ways *into* one — speak it, attach to it,
+            // choose who answers it — and they keep the order they had when they
+            // shared the line with it. Send is alone on the right, which is the
+            // arrangement the old comment credited Claude with, and it is the
+            // reason a second row does not read as empty: the gap between the
+            // group and the button is the only gap, so it looks deliberate.
+            //
+            // Centred, not bottom-aligned. Bottom mattered when these sat beside
+            // a message that grew upward to six lines; now the message grows
+            // above them and they never move.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (voice != null) {
+                    MicButton(
+                        onClick = ::beginListening,
+                        onLongClick = { pickingLanguage = true },
+                    )
+                }
+
+                AttachButton(onAttach = onAttach)
+
+                ModelChip(label = modelLabel, onClick = onPickModel)
+
+                // Takes the slack, so the chip keeps its place on the left
+                // however long the model name is. On one row that slack was the
+                // message's only width; here there is nothing to steal.
+                Spacer(Modifier.weight(1f))
+
+                // A picture is a message. Send has to light up for one even with
+                // nothing typed, or showing it a screenshot means typing a word
+                // first to unlock the button.
+                // Stop, until you start typing — then it is Send again — §5i item 7.
+                //
+                // While it works, the one thing you can do is stop it. The moment
+                // there is something to say, saying it is the better answer to
+                // "this is going wrong", and a Stop button sitting over a written
+                // correction offers you the destructive option for work you were
+                // about to save.
+                val correcting = value.isNotBlank() || attachments.isNotEmpty()
+                SendButton(
+                    busy = busy && !correcting,
+                    enabled = busy || (correcting && !elsewhere),
+                ) {
+                    if (busy && !correcting) onStop() else onSend()
+                }
             }
         }
         }
@@ -2323,9 +2380,13 @@ private fun ModelChip(label: String, onClick: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            // Capped. Sharing one row with the message means a long model name
-            // would otherwise eat the space you are trying to type in.
-            modifier = Modifier.widthIn(max = 108.dp),
+            // Still capped, but 108dp was the price of sharing a row with the
+            // message — it was the number that stopped a long model name eating
+            // the space you type in. It does not share that row any more, and at
+            // 108dp "Z.ai: GLM 5.3 …" was cut off mid-name, which is the one
+            // thing this chip exists to tell you. 180dp fits the long names and
+            // still leaves the send button its corner on a 360dp phone.
+            modifier = Modifier.widthIn(max = 180.dp),
         )
         Spacer(Modifier.size(4.dp))
         Icon(
