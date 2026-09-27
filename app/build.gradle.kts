@@ -1,3 +1,9 @@
+// Imported rather than written as `java.util.Properties`, because inside a
+// Gradle build script `java` resolves to the Java plugin's extension and
+// shadows the package of the same name.
+import java.io.File
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     // AGP 9.0+ ships Kotlin support built in — the standalone
@@ -8,6 +14,34 @@ plugins {
     // is the difference between a build you wait for and one you don't.
     alias(libs.plugins.ksp)
 }
+
+// ── Release signing ─────────────────────────────────────────────────────────
+//
+// An APK nobody signed will not install on any phone, so a release build needs
+// a key. The key and its password live in `keystore.properties`, which is in
+// `.gitignore`, and the keystore file itself is kept **outside the repository**
+// — belt and braces, because a signing key committed once is committed for
+// ever. Git history keeps it even after a delete, and the only real fix at that
+// point is destroying the repository.
+//
+// Missing properties are not an error. Anyone who clones this can still run
+// `assembleRelease`; they simply get an unsigned APK, which is the correct
+// outcome — they are not us, and should not be able to sign as us.
+//
+// To set it up on a new machine:
+//
+//     keytool -genkeypair -keystore <path>.jks -alias warp \
+//             -keyalg RSA -keysize 4096 -validity 10000 \
+//             -dname "CN=Warp, OU=Warp, O=Warp, L=Unknown, ST=Unknown, C=IL"
+//
+// then write storeFile / storePassword / keyAlias / keyPassword into
+// `keystore.properties` at the project root.
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+val hasSigningKey = keystoreProperties.getProperty("storeFile")
+    ?.let { File(it).exists() } == true
 
 android {
     namespace = "dev.ely.warp"
@@ -40,6 +74,37 @@ android {
         versionName = "0.1.0-step0"
     }
 
+    signingConfigs {
+        if (hasSigningKey) {
+            create("release") {
+                storeFile = File(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+
+                // v2 and v3, and **not** v1.
+                //
+                // v1 is JAR signing, and it is only needed below API 24. minSdk
+                // here is 28, so every phone that can install Warp reads v2 —
+                // asking for v1 as well signs the APK twice for nobody. (Set it
+                // once on the theory that "Android 9 needs v1"; it does not, v2
+                // landed in Android 7. Checked with apksigner rather than left
+                // to belief.)
+                //
+                // v3 matters for a reason specific to this project: it is the
+                // scheme that carries a **key rotation** record. Without it, the
+                // signing key can never be changed for phones that already have
+                // Warp. With it there is at least a path, provided the old key
+                // still exists — which is not a substitute for backing the key
+                // up, but it is the difference between one bad day and a dead
+                // end.
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
@@ -50,6 +115,13 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+
+            // Only when a key is actually present. Without this the build fails
+            // on a machine that has no keystore, which would stop anyone who
+            // cloned the repo from building at all.
+            if (hasSigningKey) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

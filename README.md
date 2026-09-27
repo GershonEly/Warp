@@ -121,6 +121,22 @@ the fast path for working on the UI:
 ./gradlew assembleDebug -Pwarp.includeToolchain=false   # small, quick APK
 ```
 
+### Building a release APK
+
+`./gradlew assembleRelease` works with no setup, but produces an **unsigned**
+APK, which no phone will install. To sign it, make your own key:
+
+```bash
+keytool -genkeypair -keystore <somewhere-outside-this-repo>.jks -alias warp \
+        -keyalg RSA -keysize 4096 -validity 10000 \
+        -dname "CN=Warp, OU=Warp, O=Warp, L=Unknown, ST=Unknown, C=IL"
+```
+
+then put `storeFile`, `storePassword`, `keyAlias` and `keyPassword` in
+`keystore.properties` at the project root. That filename is in `.gitignore`, and
+the keystore belongs outside the repository — a signing key committed once stays
+in git history even after it is deleted.
+
 ---
 
 ## 🔌 Connecting an AI
