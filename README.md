@@ -103,9 +103,23 @@ cd Warp
 ./gradlew assembleDebug
 ```
 
-The build automatically downloads the on-device toolchain (**202 MB**) from
-GitHub Releases and packs it into the APK. **The toolchain is not stored in this
-repo** — GitHub rejects files over 100 MB.
+**The toolchain is not in this repo** — it is 202 MB and GitHub rejects files
+over 100 MB. You build it once, on a PC:
+
+```bash
+py toolchain/build_toolchain.py --sdk <path-to-android-sdk>
+```
+
+Gradle then copies the newest bundle out of `toolchain/build/` into the app's
+assets, so it ships inside the APK.
+
+Without it the Gradle build still succeeds — you just get a Warp that cannot
+compile anything until a bundle is supplied. That is deliberate, and it is also
+the fast path for working on the UI:
+
+```bash
+./gradlew assembleDebug -Pwarp.includeToolchain=false   # small, quick APK
+```
 
 ---
 
