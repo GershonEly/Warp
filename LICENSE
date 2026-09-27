@@ -4,11 +4,6 @@ Warp is free to use, study, change and share for any **noncommercial**
 purpose. Commercial use needs written permission from the copyright holder —
 ask, and it may well be granted.
 
-Versions up to and including commit 26ea085 were released under the MIT
-licence. That does not reach backwards: anyone holding one of those copies
-keeps their MIT rights to it. Everything from this commit onward is under the
-terms below.
-
 Third-party components keep their own licences, which this file does not
 change. In particular the on-device toolchain ships OpenJDK under GPL-2.0
 with the Classpath Exception, and Kotlin, aapt2 and d8 under Apache-2.0;
