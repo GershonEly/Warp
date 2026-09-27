@@ -158,4 +158,11 @@ Android 16.
 
 ## 📄 License
 
-[MIT](LICENSE)
+[PolyForm Noncommercial 1.0.0](LICENSE) — free to use, study, change and share
+for any **noncommercial** purpose.
+
+Commercial use needs written permission. If you want to use Warp in a business,
+in a product, or in anything that makes money, **ask** — it may well be granted.
+
+The on-device toolchain is third-party software and keeps its own licences,
+listed in [`toolchain/sources.json`](toolchain/sources.json).
