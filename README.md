@@ -13,19 +13,6 @@ compiles the APK, and installs it.
 
 ---
 
-## 🔑 Warp ships with **no API key**
-
-You bring your own. It is stored encrypted in Android Keystore on your device
-and never leaves it.
-
-**There is no key anywhere in this repository, and there never will be.**
-
-The AI runs remotely — that is what your key is for. Everything *after* the AI
-answers happens on the phone: the compiler, the linker, the signer and your
-files never leave it.
-
----
-
 ## ✨ What it does
 
 | | |
@@ -51,24 +38,6 @@ time. Everything else is a sentence.
 **Permissions, by what a tool can cost you:** reading inside your project never
 asks; writing asks once and offers *Always*; running asks every time; anything
 that leaves the device asks per domain.
-
----
-
-## 🙅 What it does not do
-
-Stated plainly, because a README that lists only wins is a README you cannot
-trust.
-
-- **It cannot see whether your app *works*.** It can tell you the build passed,
-  the app installed, and nothing crashed — all of which can be true of an app
-  that is completely wrong. This is the real ceiling today.
-- **No MCP, no skills, no plugin system.** Deferred; the reasons are in the
-  plan.
-- **No terminal.** Deliberately cut — `build`, `install`, `launch` and `logcat`
-  exist as real tools that ask permission and report what happened, which is a
-  Linux userland's job done in four doors instead of one hole.
-- **No Google Sign-In.** Your name is local to the device.
-- **iOS, web, native C++ — no.** Android and Kotlin, on purpose.
 
 ---
 
@@ -101,8 +70,9 @@ Measured on a Redmi Note 13 Pro+:
 | **XML app** | ~12 s | ~50 KB |
 | **Compose app** | ~43 s | ~8 MB |
 
-Compose is bigger because the app carries the whole Compose runtime. That is the
-trade, and it is why XML is still there.
+A Compose app carries the whole Compose runtime with it, which is why both
+toolkits are kept: ask for Compose and get a modern app, ask for XML and get one
+that builds in seconds and fits in 50 KB.
 
 ---
 
@@ -116,9 +86,6 @@ The `--bypass-low-target-sdk-block` flag is needed on Android 14+.
 
 The APK is **~285 MB**, because the entire toolchain travels inside it. That is
 the point: once installed, Warp needs no download to build.
-
-> **Play Protect may block the install.** Turning off *Developer options → Verify
-> apps over USB* gets past it. This is a known rough edge for sideloading.
 
 ---
 
