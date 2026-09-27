@@ -1806,26 +1806,21 @@ if want("tasks"):
 
     # Wait for the chat to actually be open, rather than for the route to say so.
     #
-    # `/chat/open` answers 200 the moment it knows the id exists and loads the
-    # conversation on a coroutine behind that — so reading /tasks straight after
-    # the 200 reads the list before it has been put back, and the check failed
-    # against a feature that worked. State, not the status code: the same rule
-    # the rest of this suite is built on.
-    # Retried, because straight after a restart the app answers 404 for a
-    # conversation that certainly exists: `/chat/open` is checked against the
-    # drawer's loaded list rather than against the store, and that list arrives a
-    # moment after the routes do. Observed as exactly that — 404, then 200 a
-    # second later, for the same id.
-    s_open, r_open = 0, {}
-    for _ in range(40):
-        s_open, r_open = call("POST", "/chat/open", {"id": cid})
-        if s_open == 200:
-            break
-        time.sleep(0.25)
-    for _ in range(40):
-        if call("GET", "/state")[1].get("conversationId") == cid:
-            break
-        time.sleep(0.25)
+    # No retry, and no settling loop.
+    #
+    # There were two here. One retried the open, because straight after a
+    # restart the app answered 404 for a conversation that certainly existed —
+    # it was checked against the drawer's loaded list rather than against the
+    # store, and that list arrives a moment after the routes do. The other
+    # waited for the state to catch up, because `/chat/open` answered 200 and
+    # loaded the conversation on a coroutine behind it.
+    #
+    # Both are fixed at the source: the route asks the store, and suspends until
+    # the chat is really open. **The workarounds are gone deliberately** — left
+    # in, they would hide the bugs coming back, which is the only thing worse
+    # than the bugs.
+    s_open, r_open = call("POST", "/chat/open", {"id": cid})
+    check("opening answers only once it is open", s_open == 200, json.dumps(r_open)[:90])
     # The detail is not decoration. This check failed once with nothing to say
     # why, and the answer needed a hand-run reproduction to find.
     check("reopening actually opens the conversation",
