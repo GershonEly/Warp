@@ -31,9 +31,18 @@ object DebugBridge {
     @Volatile
     var navigate: ((String) -> Boolean)? = null
 
-    /** Open a conversation by id. False if it does not exist. */
+    /**
+     * Open a conversation by id. False if there is no such conversation.
+     *
+     * **Suspends until it is actually open**, which is the whole point. It used
+     * to launch the load into a coroutine and answer straight away, so the
+     * route replied 200 while the chat was still the previous one — a test that
+     * opened a conversation and immediately read its messages got whatever had
+     * been on screen before, and did so intermittently, which is the worst way
+     * for a test to be wrong.
+     */
     @Volatile
-    var open: ((String) -> Boolean)? = null
+    var open: (suspend (String) -> Boolean)? = null
 
     /** Start a fresh conversation. */
     @Volatile

@@ -78,6 +78,7 @@ import dev.ely.warp.ui.theme.WarpSuccess
 import dev.ely.warp.ui.theme.WarpTheme
 import dev.ely.warp.ui.theme.WarpWarning
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -358,12 +359,21 @@ private fun WarpApp() {
         }
         DebugBridge.newChat = { engine.clear(); destination = WarpDestination.CHAT }
         DebugBridge.open = { id ->
-            val known = drawer.conversations.any { it.id == id }
+            // Asked of the store, not of the drawer.
+            //
+            // It used to test `drawer.conversations`, which is whatever the UI
+            // has been handed so far — and right after a restart that flow has
+            // not emitted yet, so a conversation that plainly exists answered
+            // 404. The store is the thing that knows.
+            val messages = conversations.loadMessages(id)
+            val known = messages.isNotEmpty() ||
+                conversations.observeDrawer().first().conversations.any { it.id == id }
             if (known) {
-                scope.launch {
-                    engine.open(id, conversations.loadMessages(id), conversations.tasksFor(id))
-                    destination = WarpDestination.CHAT
-                }
+                // Awaited rather than launched. The caller is told it is open
+                // once it is open, so reading the messages straight afterwards
+                // cannot race the load.
+                engine.open(id, messages, conversations.tasksFor(id))
+                destination = WarpDestination.CHAT
             }
             known
         }

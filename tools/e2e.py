@@ -813,6 +813,15 @@ if want("build"):
     # refuses when it is not installed" pass or fail depending on history.
     subprocess.run([ADB, "uninstall", "com.example.crashy"], capture_output=True)
 
+    # A fresh chat, so this group gets an empty project folder of its own.
+    #
+    # Without it the group inherits whichever conversation the previous section
+    # left open. That one already has a project, so `new_project("Crashy")` is
+    # refused, the build compiles the OTHER app, and the three install checks
+    # below go looking for an APK that was never made. Alone they passed,
+    # because the chat before them was empty — which is exactly the shape of a
+    # test that is lying about what it proves.
+    call("POST", "/chat/new")
     wipe_project()
     check("build refuses with no project, and names the fix",
           "new_project" in (call("POST", "/tool", {"name": "build", "args": {}},
@@ -883,14 +892,22 @@ if want("build"):
     # itself can still be proven installable, which is the part that could break.
     import tempfile, os
     apk = os.path.join(tempfile.gettempdir(), "e2e-built.apk")
+    # The conversation's own copy, not the shared workspace.
+    #
+    # `files/work/build/` holds exactly ONE build — BuildEngine says so in its
+    # own comment, which is why it copies the result out — so reading from there
+    # means reading whatever was compiled last by anyone. `app.apk` beside the
+    # project is the signed artefact this chat produced, and nothing else can
+    # overwrite it.
+    #
+    # The path is read back from the app rather than guessed, so a mismatch
+    # fails as "no APK recorded" instead of as an empty file.
+    built = call("GET", "/project")[1].get("lastApk") or ""
+    if not built:
+        check("the build recorded where the APK landed", False, "no lastApk in /project")
     with open(apk, "wb") as f:
         f.write(subprocess.run(
-            [ADB, "exec-out", "run-as", "dev.ely.warp",
-             # The shared build workspace, not the conversation's folder. The two
-             # are different things: `files/work/build/` is where the toolchain
-             # assembles, and `files/projects/<id>/app.apk` is the copy handed
-             # back to the chat. The signed APK to install is the first one.
-             "cat", "files/work/build/com.example.crashy.apk"],
+            [ADB, "exec-out", "run-as", "dev.ely.warp", "cat", built],
             capture_output=True).stdout)
     # Both streams, and the size. adb writes "Performing Streamed Install" to
     # stdout and the *reason* to stderr, so reporting stdout first meant every

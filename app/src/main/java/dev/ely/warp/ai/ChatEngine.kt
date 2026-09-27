@@ -769,6 +769,9 @@ class ChatEngine(
         var repeats = 0
         var lastSignature: String? = null
 
+        /** The round a tool was refused in, or -1. See the check in the loop. */
+        var deniedAt = -1
+
         /** Every round's calls, so a second look at the same thing is visible. */
         val lookedAt = mutableSetOf<String>()
 
@@ -798,6 +801,22 @@ class ChatEngine(
             // "Stopped after 8 rounds of tool calls".
             val calls = sheet?.find(replyId)?.toolCalls.orEmpty()
             val onlyAsked = calls.isNotEmpty() && calls.all { it.name == "ask" }
+
+            // **A refusal ends the rounds — after the model has answered it.**
+            //
+            // Saying no already stops the same tool being asked about twice in
+            // a turn, but it did not stop the turn: the model took "you said no"
+            // and carried on spending rounds looking for another way round, on
+            // a person who had just said they did not want it.
+            //
+            // One more round, deliberately, and only one. The round after a
+            // refusal is where the model reads it and says something back —
+            // ending immediately would leave you staring at a denied card with
+            // no reply. Ending after it is what stops the negotiation.
+            if (calls.any { it.status == ToolCall.Status.DENIED }) {
+                deniedAt = round
+            }
+            if (deniedAt >= 0 && round > deniedAt) return replyId
 
             // The steps are not saved from here — the board says when it changed
             // and the save hangs off that, so it happens wherever a tool was run

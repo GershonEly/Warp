@@ -212,11 +212,14 @@ object DebugServer {
                 200 to JSONObject().put("ok", true)
             }
 
-            "POST /chat/open" -> {
+            // Answers once the conversation is really open — see
+            // [DebugBridge.open] for why that had to change.
+            "POST /chat/open" -> runBlocking {
                 val id = json.optString("id").takeIf { it.isNotBlank() }
-                    ?: return 400 to error("expected {\"id\": \"...\"}")
-                val open = DebugBridge.open ?: return 503 to error("no chat on screen")
-                if (!open(id)) return 404 to error("no conversation $id")
+                    ?: return@runBlocking 400 to error("expected {\"id\": \"...\"}")
+                val open = DebugBridge.open
+                    ?: return@runBlocking 503 to error("no chat on screen")
+                if (!open(id)) return@runBlocking 404 to error("no conversation $id")
                 200 to JSONObject().put("conversationId", id)
             }
 
@@ -448,6 +451,18 @@ object DebugServer {
                     .put("exists", dev.ely.warp.build.NewProject.exists(dir))
                     .put("name", meta?.name ?: JSONObject.NULL)
                     .put("applicationId", meta?.applicationId ?: JSONObject.NULL)
+                    // Where the last successful build actually landed.
+                    //
+                    // The suite used to install from `files/work/build/`, which
+                    // is the shared workspace and holds exactly one build — so
+                    // it was really installing whatever had been compiled most
+                    // recently by anyone. This is the copy that belongs to this
+                    // conversation, and nothing else can overwrite it.
+                    .put(
+                        "lastApk",
+                        dev.ely.warp.build.NewProject.lastApk(dir)?.absolutePath
+                            ?: JSONObject.NULL,
+                    )
                     .put(
                         "files",
                         JSONArray(
