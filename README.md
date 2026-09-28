@@ -9,6 +9,10 @@ compiles the APK, and installs it.
 
 *No computer. No build server. 100 % Kotlin.*
 
+### [⬇ Download Warp for Android](https://github.com/GershonEly/Warp/releases/latest/download/warp.apk)
+
+*264 MB · Android 9+ · arm64*
+
 </div>
 
 ---
@@ -78,13 +82,23 @@ that builds in seconds and fits in 50 KB.
 
 ## 📦 Install
 
+**On the phone**, which is the whole idea:
+
+1. Open [**this link**](https://github.com/GershonEly/Warp/releases/latest/download/warp.apk)
+   on the phone and let it download
+2. Tap the downloaded file
+3. Android asks whether to allow installing from your browser — allow it
+4. Open Warp
+
+**From a computer**, if you prefer:
+
 ```bash
 adb install --bypass-low-target-sdk-block warp.apk
 ```
 
 The `--bypass-low-target-sdk-block` flag is needed on Android 14+.
 
-The APK is **~285 MB**, because the entire toolchain travels inside it. That is
+The APK is **264 MB**, because the entire toolchain travels inside it. That is
 the point: once installed, Warp needs no download to build.
 
 ---
