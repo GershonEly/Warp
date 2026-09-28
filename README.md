@@ -193,13 +193,6 @@ Android 16.
 
 ---
 
-## 📖 Documentation
-
-- [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) — full design and roadmap
-- [`PROGRESS.md`](PROGRESS.md) — current state of the build
-
----
-
 ## 📄 License
 
 [PolyForm Noncommercial 1.0.0](LICENSE) — free to use, study, change and share

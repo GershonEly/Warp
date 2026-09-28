@@ -17,5 +17,4 @@ Taken on the development device — Redmi Note 13 Pro+, Android 16, arm64.
 | Chat mirrored | The chat mirrored on a Hebrew phone. Tabs reversed and bubbles swapped sides, because Android mirrors the layout while every label in Warp is English. |
 
 Both bugs were found only by running on a real phone in a real language. The
-descriptions live here and the fixes are recorded in `PROGRESS.md`, so the
-reasoning survives even though the images do not.
+descriptions live here so the reasoning survives even though the images do not.
