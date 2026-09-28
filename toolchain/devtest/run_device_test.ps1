@@ -15,7 +15,7 @@
 #>
 
 param(
-    [string]$Adb = "C:\Users\ely\Android\Sdk\platform-tools\adb.exe",
+    [string]$Adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe",
     [string]$Package = "dev.ely.warp",
     [switch]$SkipInstall,
     [switch]$SkipPush
@@ -61,7 +61,7 @@ if (-not $SkipPush) {
               Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if (-not $bundle) {
         Write-Host "No bundle found. Run the builder first:" -ForegroundColor Red
-        Write-Host "  py toolchain\build_toolchain.py --sdk C:\Users\ely\Android\Sdk" -ForegroundColor Red
+        Write-Host "  py toolchain\build_toolchain.py --sdk C:\path\to\Android\Sdk" -ForegroundColor Red
         exit 1
     }
     Write-Host ("  {0} ({1:N1} MB)" -f $bundle.Name, ($bundle.Length / 1MB))

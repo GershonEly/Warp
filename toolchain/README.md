@@ -19,7 +19,7 @@ Google does not ship those for Android. So we assemble them ourselves.
 ## How to build the bundle
 
 ```powershell
-py toolchain/build_toolchain.py --sdk "C:\Users\ely\Android\Sdk"
+py toolchain/build_toolchain.py --sdk "C:\path\to\Android\Sdk"
 ```
 
 Add `--strict` for a release build. That makes it fail if any source is missing

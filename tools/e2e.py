@@ -9,9 +9,24 @@ import sys
 import threading
 import time
 import urllib.request
+import os
+import shutil
 import subprocess
 
-ADB = r"C:\Users\ely\Android\Sdk\platform-tools\adb.exe"
+# Found rather than hardcoded. A path with somebody's username in it works on
+# exactly one machine, and publishes that username to everyone else.
+ADB = shutil.which("adb") or next(
+    (
+        c for c in (
+            os.path.join(os.environ.get("ANDROID_HOME", ""), "platform-tools", "adb.exe"),
+            os.path.join(os.environ.get("ANDROID_SDK_ROOT", ""), "platform-tools", "adb.exe"),
+            os.path.join(os.path.expanduser("~"), "Android", "Sdk", "platform-tools", "adb.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Android", "Sdk", "platform-tools", "adb.exe"),
+        )
+        if c and os.path.exists(c)
+    ),
+    "adb",
+)
 
 # 127.0.0.1, never "localhost".
 #

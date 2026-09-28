@@ -88,9 +88,3 @@ temp/
 # Python bytecode, from running the checks in tools/
 __pycache__/
 *.pyc
-
-# Working notes — kept locally, deliberately not published. They are a record
-# of how the app was designed and decided, which is not what a repository is
-# for, and they read as a conversation rather than as documentation.
-IMPLEMENTATION_PLAN.md
-PROGRESS.md

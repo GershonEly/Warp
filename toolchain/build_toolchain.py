@@ -5,7 +5,7 @@ Assemble the Warp on-device toolchain for arm64 Android.
 Run this on a PC. It produces a single bundle that Warp unpacks on the phone
 into its own data directory and then executes.
 
-    py toolchain/build_toolchain.py --sdk "C:/Users/ely/Android/Sdk"
+    py toolchain/build_toolchain.py --sdk "C:/path/to/Android/Sdk"
 
 What it does, in order:
 
